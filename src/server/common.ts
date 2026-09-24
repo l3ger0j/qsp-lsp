@@ -324,13 +324,16 @@ export function createQspServer(
     Promise.all([
       connection.workspace.getConfiguration({ section: 'qsp' }),
       connection.workspace.getConfiguration({ section: 'files' }),
-    ]).then(([qspConfig, filesConfig]) => {
+    ]).then(async ([qspConfig, filesConfig]) => {
       fileEncoding = filesConfig?.encoding ?? 'utf8';
       settings = parseSettingsFromConfig(qspConfig as Record<string, unknown> | undefined);
       project.embeddedExecEnabled = settings.embeddedExec.enabled;
       connection.console.log(`[QSP] Server ready (encoding: ${fileEncoding}, project: ${settings.project.enabled}, embeddedExec: ${settings.embeddedExec.enabled})`);
       if (settings.project.enabled) {
-        project.init(fsProvider!, fileEncoding, () => collectCallTypesPerTarget(documentStates), (ownUri: string) => collectPeerDocs(documentStates, ownUri), settings.diagnostics);
+        // Async: scans the workspace and reads/parses files off the main
+        // synchronous path so other LSP requests keep being served while
+        // a large project loads. See ProjectModeService.init().
+        await project.init(fsProvider!, fileEncoding, () => collectCallTypesPerTarget(documentStates), (ownUri: string) => collectPeerDocs(documentStates, ownUri), settings.diagnostics);
       }
     }).catch((err: unknown) => {
       console.error('[QSP] Failed to read initial configuration:', err);
@@ -339,21 +342,27 @@ export function createQspServer(
 
   connection.onDidChangeWatchedFiles((params) => {
     if (!settings.project.enabled) return;
-    for (const change of params.changes) {
-      project.handleFileChange(
-        change.uri, change.type, fsProvider, fileEncoding,
-        settings.diagnostics,
-        () => collectCallTypesPerTarget(documentStates),
-        (ownUri: string) => collectPeerDocs(documentStates, ownUri),
-      );
-    }
+    // Apply the whole batch of changes and rebuild project aggregates
+    // ONCE at the end, instead of once per changed file (a `git
+    // checkout` touching hundreds of files used to trigger hundreds of
+    // full project rebuilds). Fire-and-forget: this is a notification
+    // handler, so nothing awaits its result; rejections are caught here
+    // so they can't become unhandled rejections that crash the server.
+    project.handleWatchedFileChanges(
+      params.changes, fsProvider, fileEncoding,
+      settings.diagnostics,
+      () => collectCallTypesPerTarget(documentStates),
+      (ownUri: string) => collectPeerDocs(documentStates, ownUri),
+    ).catch((err: unknown) => {
+      console.error('[QSP] Failed to handle watched file changes:', err);
+    });
   });
 
   connection.onDidChangeConfiguration((_change) => {
     Promise.all([
       connection.workspace.getConfiguration({ section: 'qsp' }),
       connection.workspace.getConfiguration({ section: 'files' }),
-    ]).then(([qspConfig, filesConfig]) => {
+    ]).then(async ([qspConfig, filesConfig]) => {
       fileEncoding = filesConfig?.encoding ?? 'utf8';
       const prevProjectEnabled = settings.project.enabled;
       const prevEmbeddedExec = settings.embeddedExec.enabled;
@@ -371,7 +380,7 @@ export function createQspServer(
       // Handle project mode toggling
       if (settings.project.enabled && !prevProjectEnabled) {
         connection.console.log('[QSP] project.enabled: false → true');
-        project.init(fsProvider!, fileEncoding, () => collectCallTypesPerTarget(documentStates), (ownUri: string) => collectPeerDocs(documentStates, ownUri), settings.diagnostics);
+        await project.init(fsProvider!, fileEncoding, () => collectCallTypesPerTarget(documentStates), (ownUri: string) => collectPeerDocs(documentStates, ownUri), settings.diagnostics);
       } else if (!settings.project.enabled && prevProjectEnabled) {
         connection.console.log('[QSP] project.enabled: true → false');
         project.teardown();
@@ -467,15 +476,17 @@ export function createQspServer(
 
     // In project mode, re-read the file from disk so its symbols remain
     // in the project aggregates (the editor no longer holds the text).
+    // Fire-and-forget: onDidClose is a synchronous notification handler,
+    // and the read/parse is off the main path so it doesn't block other
+    // requests while this file is (re-)analyzed.
     if (settings.project.enabled && fsProvider && project.projectFileUris.has(uri)) {
-      try {
-        const filePath = fsProvider.uriToPath(uri);
-        const text = fsProvider.readFile(filePath, fileEncoding);
+      const filePath = fsProvider.uriToPath(uri);
+      fsProvider.readFile(filePath, fileEncoding).then((text) => {
         project.analyzeFile(uri, text);
         projectRebuildAndReanalyze();
-      } catch {
+      }).catch(() => {
         // File may have been deleted — that's fine, the watcher handles it
-      }
+      });
     } else {
       // Clear any diagnostics we previously published for this URI so
       // they don't linger in the Problems panel after the editor closes
@@ -937,6 +948,18 @@ export function createQspServer(
     if (prevState?.perLocationCache && prevState.locationIndex.length > 0) {
       if (tryIncrementalPerLocationUpdate(doc, text, prevState)) return;
     }
+
+    // Per-location parsing owns location-level trees, not a single
+    // document-wide one. If this document was previously analysed by
+    // analyzeDocumentFullTree (below the threshold, or on first load
+    // before this size check ran), tsParser still holds that whole-file
+    // tree keyed by doc.uri. Release it now: otherwise it lingers,
+    // leaking WASM memory, AND `getTree(doc.uri)` (used by hover /
+    // document-highlight in lspFeatures.ts) keeps returning that stale
+    // tree instead of falling back to `perLocationCache` as intended.
+    // Idempotent — a no-op once this document is already in
+    // per-location mode.
+    tsParser.removeTree(doc.uri);
 
     // ── Full analysis (initial load or structural change) ─────────
     const locationIndex = buildLocationIndex(text);

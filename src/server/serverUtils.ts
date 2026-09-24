@@ -14,12 +14,21 @@ import { locationNameCol } from './regexFallback';
 /**
  * File-system provider for project mode.
  * Only available in the Node.js server — browser has no direct FS access.
+ *
+ * `readFile` and `findFiles` are async and `findFiles` is an async
+ * iterable (rather than `string[]`/`Promise<string[]>`) specifically so
+ * that project-mode workspace scans (potentially thousands of files) can
+ * be awaited one file at a time. That lets the Node.js event loop
+ * interleave other pending LSP requests between files instead of the
+ * whole scan running as one uninterrupted synchronous block — see
+ * ProjectModeService.init()/handleWatchedFileChanges().
  */
 export interface FsProvider {
   /** Read a file as text, decoded according to the given encoding. */
-  readFile(filePath: string, encoding?: string): string;
-  /** List all files matching glob patterns in a directory (recursive). */
-  findFiles(dir: string, extensions: string[]): string[];
+  readFile(filePath: string, encoding?: string): Promise<string>;
+  /** Enumerate all files matching the given extensions in a directory
+   *  (recursive), skipping common non-project directories. */
+  findFiles(dir: string, extensions: string[]): AsyncIterable<string>;
   /** Convert a file path to a URI string. */
   pathToUri(filePath: string): string;
   /** Convert a URI string to a file path. */

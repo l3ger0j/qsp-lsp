@@ -95,38 +95,52 @@ function swapAndDecode(buf: Buffer): string {
 // handles both canonical (`file:///c%3A/…`) and literal (`file:///c:/…`)
 // forms uniformly.
 
+// Directories that are never part of a QSP project and can be huge
+// (node_modules in particular can hold tens of thousands of files) —
+// skipped outright during the workspace scan below.
+const IGNORED_DIR_NAMES = new Set(['node_modules', '.git', 'out', 'vendor', '.venv']);
+
+/** Yield to the event loop so pending LSP requests get a turn. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 const fsProvider: FsProvider = {
-  readFile(filePath: string, encoding?: string): string {
-    const buf = fs.readFileSync(filePath);
+  async readFile(filePath: string, encoding?: string): Promise<string> {
+    const buf = await fs.promises.readFile(filePath);
     return decodeBuffer(buf, encoding ?? 'utf8');
   },
 
-  findFiles(dir: string, extensions: string[]): string[] {
+  // Async generator: walks the directory tree depth-first, yielding one
+  // matching file path at a time. Awaiting `readdir` and yielding to the
+  // event loop after every directory means a scan of a large workspace
+  // no longer runs as a single uninterrupted synchronous block — see the
+  // FsProvider doc comment in serverUtils.ts for why that matters.
+  async *findFiles(dir: string, extensions: string[]): AsyncIterable<string> {
     const extSet = new Set(extensions);
-    const results: string[] = [];
 
-    function walk(dirPath: string): void {
+    async function* walk(dirPath: string): AsyncGenerator<string> {
       let entries: fs.Dirent[];
       try {
-        entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
       } catch {
         return; // Permission denied or not a directory
       }
+      await yieldToEventLoop();
       for (const entry of entries) {
-        const fullPath = path.join(dirPath, entry.name);
         if (entry.isDirectory()) {
-          walk(fullPath);
+          if (IGNORED_DIR_NAMES.has(entry.name) || entry.name.startsWith('.')) continue;
+          yield* walk(path.join(dirPath, entry.name));
         } else if (entry.isFile()) {
           const ext = path.extname(entry.name).toLowerCase();
           if (extSet.has(ext)) {
-            results.push(fullPath);
+            yield path.join(dirPath, entry.name);
           }
         }
       }
     }
 
-    walk(dir);
-    return results;
+    yield* walk(dir);
   },
 
   pathToUri(filePath: string): string {
