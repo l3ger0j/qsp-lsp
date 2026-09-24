@@ -79,10 +79,23 @@ export function safeSendDiagnostics(
  * Wrapper around arbitrary connection calls that silently ignores
  * `ConnectionErrors.Closed` and `ConnectionErrors.Disposed` errors
  * for the same reason as safeSendDiagnostics.
+ *
+ * `fn` may return a Promise (e.g. `client.register(...)`,
+ * `semanticTokens.refresh()`) — that promise is awaited internally so a
+ * rejection can't become an unhandled rejection and crash the process.
+ * Any rejection other than Closed/Disposed is logged via `console.error`
+ * (not `connection.console.error`: the connection may be the very thing
+ * that's failing).
  */
-export function safeConnectionCall(fn: () => void): void {
+export function safeConnectionCall(fn: () => void | Promise<unknown>): void {
   try {
-    fn();
+    const result = fn();
+    if (result && typeof (result as Promise<unknown>).catch === 'function') {
+      (result as Promise<unknown>).catch((err: unknown) => {
+        if (err instanceof ConnectionError && (err.code === ConnectionErrors.Closed || err.code === ConnectionErrors.Disposed)) return;
+        console.error('[QSP] Unhandled connection call rejection:', err);
+      });
+    }
   } catch (err) {
     if (err instanceof ConnectionError && (err.code === ConnectionErrors.Closed || err.code === ConnectionErrors.Disposed)) return;
     throw err;

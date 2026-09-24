@@ -157,6 +157,9 @@ export function createQspServer(
 ): void {
   const documentStates = new Map<string, DocumentState>();
   const tsParser = new QspTreeSitterParser();
+  // Surface non-timeout parse failures (e.g. a WASM runtime error) in the
+  // server log instead of letting them pass as silent timeouts.
+  tsParser.setErrorReporter((message) => connection.console.error(message));
 
   // ── User settings ──────────────────────────────────────────────────
   // QspSettings is the full configuration shape; the diagnostics half
@@ -306,14 +309,14 @@ export function createQspServer(
   });
 
   connection.onInitialized(() => {
-    connection.client.register(DidChangeConfigurationNotification.type, undefined);
+    safeConnectionCall(() => connection.client.register(DidChangeConfigurationNotification.type, undefined));
 
     // Register file watcher for project mode
     if (fsProvider) {
       const globs = QSP_FILE_EXTENSIONS.map(ext => `**/*${ext}`);
-      connection.client.register(DidChangeWatchedFilesNotification.type, {
+      safeConnectionCall(() => connection.client.register(DidChangeWatchedFilesNotification.type, {
         watchers: globs.map(globPattern => ({ globPattern })),
-      });
+      }));
       connection.console.log(`[QSP] Watching: ${globs.join(', ')}`);
     }
 
@@ -329,6 +332,8 @@ export function createQspServer(
       if (settings.project.enabled) {
         project.init(fsProvider!, fileEncoding, () => collectCallTypesPerTarget(documentStates), (ownUri: string) => collectPeerDocs(documentStates, ownUri), settings.diagnostics);
       }
+    }).catch((err: unknown) => {
+      console.error('[QSP] Failed to read initial configuration:', err);
     });
   });
 
@@ -377,6 +382,8 @@ export function createQspServer(
       } else if (settings.project.enabled) {
         projectRebuildAndReanalyze();
       }
+    }).catch((err: unknown) => {
+      console.error('[QSP] Failed to read updated configuration:', err);
     });
   });
 

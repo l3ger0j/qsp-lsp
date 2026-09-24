@@ -145,6 +145,38 @@ export class QspTreeSitterParser {
   private _lastEdit: { startIndex: number; newEndIndex: number } | null = null;
 
   /**
+   * Optional sink for parse failures that aren't a plain timeout (see
+   * {@link reportUnexpectedParseError}). Kept as a plain callback rather
+   * than importing `vscode-languageserver` here — this module stays
+   * transport-agnostic and usable from the browser bundle. The server
+   * wires this to `connection.console.error` via {@link setErrorReporter}.
+   */
+  private onUnexpectedError?: (message: string) => void;
+
+  /**
+   * Register a callback for parse failures that are NOT a plain
+   * `setTimeoutMicros` timeout (e.g. a WASM runtime error). A plain
+   * timeout is an expected, silent occurrence (the file is just huge or
+   * pathological) and is not reported.
+   */
+  setErrorReporter(onUnexpectedError: (message: string) => void): void {
+    this.onUnexpectedError = onUnexpectedError;
+  }
+
+  /**
+   * Called from every `catch` around `parser.parse()`. web-tree-sitter
+   * throws a plain `Error("Parsing failed")` for an ordinary timeout;
+   * anything else (e.g. a WASM `RuntimeError`) indicates a real bug and
+   * is worth surfacing instead of silently treating it like a timeout.
+   */
+  private reportUnexpectedParseError(err: unknown): void {
+    const isPlainTimeout = err instanceof Error && err.message === 'Parsing failed';
+    if (isPlainTimeout) return;
+    const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    this.onUnexpectedError?.(`[QSP] Unexpected tree-sitter parse failure: ${message}`);
+  }
+
+  /**
    * Initialize the parser. Must be called once before parse().
    * @param wasmLoader Returns the grammar WASM bytes (or path).
    * @param wasmDir    If provided, returns the directory containing
@@ -221,8 +253,16 @@ export class QspTreeSitterParser {
         let tree: Parser.Tree;
         try {
           tree = this.parser.parse(text, oldTree);
-        } catch {
-          // Timeout — oldTree is corrupted by edit(), discard it.
+        } catch (err) {
+          // Timeout (or another parse failure) — oldTree is corrupted by
+          // edit(), discard it. Critically, also reset() the *parser*:
+          // web-tree-sitter resumes a halted parse from where it left off
+          // on the next call unless reset() clears that state, so without
+          // this the next parse() for a *different* document/location
+          // would silently continue this failed parse and produce a
+          // corrupted tree with wrong symbols/diagnostics.
+          this.parser.reset();
+          this.reportUnexpectedParseError(err);
           oldTree.delete();
           this.trees.delete(uri);
           this.oldTexts.delete(uri);
@@ -248,8 +288,13 @@ export class QspTreeSitterParser {
     let tree: Parser.Tree;
     try {
       tree = this.parser.parse(text);
-    } catch {
-      // Initial parse timed out.
+    } catch (err) {
+      // Initial parse timed out (or failed another way) — reset() so the
+      // *next* parse() call (possibly for a different document) doesn't
+      // silently resume this halted parse. See the comment in the
+      // incremental branch above for why this matters.
+      this.parser.reset();
+      this.reportUnexpectedParseError(err);
       this.trees.delete(uri);
       this.oldTexts.delete(uri);
       this._wasLastParseIncremental = false;
@@ -280,8 +325,13 @@ export class QspTreeSitterParser {
     this.parser.setTimeoutMicros(timeoutMicros);
     try {
       return this.parser.parse(text, oldTree);
-    } catch {
-      return null; // timeout
+    } catch (err) {
+      // Timeout (or another parse failure). reset() so the next parse()
+      // (for a different location/document — the parser is shared across
+      // all of them) doesn't resume this halted parse. See parse() above.
+      this.parser.reset();
+      this.reportUnexpectedParseError(err);
+      return null;
     }
   }
 
