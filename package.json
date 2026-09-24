@@ -651,7 +651,7 @@
     }
   },
   "scripts": {
-    "build:grammar": "cd tree-sitter-qsp && npx tree-sitter generate && npx tree-sitter build --wasm && cp tree-sitter-qsp.wasm ../out/",
+    "build:grammar": "mkdir -p out && cd tree-sitter-qsp && npx tree-sitter generate && npx tree-sitter build --wasm && cp tree-sitter-qsp.wasm ../out/",
     "build:server:node": "esbuild src/server/nodeMain.ts --bundle --outfile=out/server/nodeMain.js --platform=node --format=cjs --external:vscode --target=node18",
     "build:server:browser": "esbuild src/server/browserMain.ts --bundle --outfile=out/server/browserMain.js --platform=browser --format=esm --target=es2020 --external:web-tree-sitter",
     "build:client:node": "esbuild src/client/nodeMain.ts --bundle --outfile=out/client/nodeMain.js --platform=node --format=cjs --external:vscode --target=node18 --alias:txt2gamJs=./vendor/txt2gam/txt2gam.js",
