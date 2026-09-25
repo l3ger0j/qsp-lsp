@@ -27,9 +27,10 @@ import {
   collectOrderedUris,
   resolveOutputUri,
   effectiveBuildMode,
+  effectiveMainFilePattern,
   type GameConfig,
 } from './gameConfig';
-import { findOutputCollisions, perFileOutputPath } from '../common/buildPlan';
+import { findMainFile, findOutputCollisions, moveToFront, perFileOutputPath } from '../common/buildPlan';
 import * as logger from './logger';
 
 // UTF-8 BOM — matches what txt2gam CLI emits and what the server's
@@ -99,8 +100,9 @@ export async function combineFiles(
 
 /**
  * Build the project's .qsp file(s) according to its build mode and write
- * the ones whose content changed. Returns every output file in source
- * order, written or already up to date, so the first one is
+ * the ones whose content changed. The main file (`mainFile` pattern) is
+ * moved to the front first. Returns every output file in that order,
+ * written or already up to date, so the first one is
  * the game the player should start; an empty array means there were no
  * source files. Throws with a user-facing message on failure, before
  * anything is written: every file is encoded first so one bad file can't
@@ -112,10 +114,21 @@ export async function buildProjectGame(
   glob: string,
   password: string | undefined,
 ): Promise<vscode.Uri[]> {
-  const uris = await collectOrderedUris(gameCfg, glob);
+  let uris = await collectOrderedUris(gameCfg, glob);
   if (uris.length === 0) return [];
   const mode = effectiveBuildMode(gameCfg);
   logger.log(`[Build] ${uris.length} source file(s), build mode: ${mode}`);
+
+  const mainPattern = effectiveMainFilePattern(gameCfg);
+  if (mainPattern !== undefined) {
+    const relPaths = uris.map(u => vscode.workspace.asRelativePath(u, false).replace(/\\/g, '/'));
+    const { index, matchCount } = findMainFile(relPaths, mainPattern);
+    if (matchCount > 1) {
+      logger.log(`[Build] mainFile "${mainPattern}" matches ${matchCount} files; using the first: ${relPaths[index]}`);
+    }
+    logger.log(`[Build] Main file: ${relPaths[index]}`);
+    uris = moveToFront(uris, index);
+  }
 
   const outputs: { uri: vscode.Uri; bytes: Uint8Array }[] = [];
   if (mode === 'single') {

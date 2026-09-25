@@ -49,7 +49,13 @@ Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Vi
   }
   ```
   `outputFile` is relative to the workspace root (default: `<folder name>.qsp`). `files` controls the order in which source files are combined (each entry is a glob; omit `files` to collect all `.qsps`/`.qsrc` files alphabetically).
-- **Separate module builds** — set `"buildMode": "perFile"` in `txt2gam.json` (or the `qsp.game.buildMode` setting) to build each source file into its own `.qsp` next to it instead of one combined game: `main.qsps` → `main.qsp`, `data.qsps` → `data.qsp`. `outputFile` is not used in this mode. **Run QSP Game** starts the first file in `files` order, and the game loads the other modules itself with `INCLIB 'data.qsp'`. When it creates `txt2gam.json` in this mode, the setup wizard asks which file is the start file (dismiss it to put files from the workspace root first) and writes `buildMode` instead of `outputFile`. A `.qsp` whose content hasn't changed is not rewritten. The `txt2gam.json` value overrides the setting. Two sources that would produce the same `.qsp` (e.g. `a.qsps` and `a.qsrc` in one folder) are reported as an error, and nothing is written if any file fails to build.
+- **Main file** — the file the game starts from: in a combined build its first location is the start location, in a `perFile` build its `.qsp` is the one **Run QSP Game** opens. It is chosen in this order:
+  1. `"mainFile"` in `txt2gam.json`, a regular expression searched case-insensitively in each source's workspace-relative path, e.g. `"^main\\.qsps$"`. The first match in build order wins.
+  2. The `qsp.game.mainFile` setting, same format.
+  3. Otherwise the first file in `files` order. When the setup wizard creates `txt2gam.json`, it asks for the main file with a list; if the list is dismissed, or `qsp.game.mainFileStrategy` is `root`, the first file from the workspace root is used instead. Either way the chosen file is saved as `mainFile`, so `txt2gam.json` always shows which file is the main one.
+
+  A configured pattern that is invalid or matches no source file stops the build with an error.
+- **Separate module builds** — set `"buildMode": "perFile"` in `txt2gam.json` (or the `qsp.game.buildMode` setting) to build each source file into its own `.qsp` next to it instead of one combined game: `main.qsps` → `main.qsp`, `data.qsps` → `data.qsp`. `outputFile` is not used in this mode. **Run QSP Game** starts the main file's `.qsp` (see above), and the game loads the other modules itself with `INCLIB 'data.qsp'`. When it creates `txt2gam.json` in this mode, the setup wizard writes `buildMode` instead of `outputFile`. A `.qsp` whose content hasn't changed is not rewritten. The `txt2gam.json` value overrides the setting. Two sources that would produce the same `.qsp` (e.g. `a.qsps` and `a.qsrc` in one folder) are reported as an error, and nothing is written if any file fails to build.
 
 ### Multi-File Operations
 - **List All Locations** — browse all locations across the file or project
@@ -132,6 +138,8 @@ Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Vi
 | `qsp.trace.server`    | `off`  | Traces LSP communication (`off`, `messages`, `verbose`) |
 | `qsp.semanticHighlighting.enabled` | `true` | Enable semantic token highlighting (requires tree-sitter) |
 | `qsp.game.playerExecutable` | — | Path to the QSP player executable used by Run Game. Set once and persisted globally. |
+| `qsp.game.mainFile` | — | Regular expression for the main file, searched in workspace-relative paths (e.g. `^main\.qsps$`). Overridden by `mainFile` in `txt2gam.json` |
+| `qsp.game.mainFileStrategy` | `ask` | How the setup wizard picks the main file when none is configured: `ask` shows a list (dismiss → root files first), `root` puts root files first without asking |
 | `qsp.game.buildMode` | `single` | `single` builds one combined `.qsp`; `perFile` builds each source into its own `.qsp` next to it. Overridden by `buildMode` in `txt2gam.json` |
 | `qsp.game.password` | — | Default game password for export/import (leave blank for no password) |
 | `qsp.game.promptPassword` | `true` | Prompt for a password before each export |

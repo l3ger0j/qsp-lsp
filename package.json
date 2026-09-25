@@ -591,6 +591,24 @@
           "default": "single",
           "description": "How 'Export QSP Game' and 'Run QSP Game' build a project in project mode. A \"buildMode\" field in txt2gam.json overrides this setting for that project."
         },
+        "qsp.game.mainFile": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Regular expression for the project's main file, searched case-insensitively in each source's workspace-relative path (e.g. `^main\\.qsps$`). The first match in build order is moved to the front: in `single` builds its first location starts the game, in `perFile` builds its `.qsp` is the one **Run QSP Game** opens. A build fails if the pattern is invalid or matches nothing. A `mainFile` field in `txt2gam.json` overrides this setting. Leave empty to use the first file in `txt2gam.json` order."
+        },
+        "qsp.game.mainFileStrategy": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "root"
+          ],
+          "enumDescriptions": [
+            "Ask for the main file with a list; if the list is dismissed, put files from the workspace root first.",
+            "Don't ask: put files from the workspace root first."
+          ],
+          "default": "ask",
+          "markdownDescription": "How the setup wizard chooses the main file when it creates `txt2gam.json` and no main file is set in `qsp.game.mainFile`. Either way, the chosen file is saved as `mainFile` in `txt2gam.json`."
+        },
         "qsp.game.playerExecutable": {
           "type": "string",
           "default": "",

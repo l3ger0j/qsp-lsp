@@ -14,7 +14,8 @@
  *     "main/*.qsps",
  *     "locations/**\/*.qsps"
  *   ],
- *   "buildMode": "perFile"                // optional: "single" | "perFile"
+ *   "buildMode": "perFile",               // optional: "single" | "perFile"
+ *   "mainFile": "^main\\.qsps$"            // optional regexp for the main file
  * }
  *
  * If "files" is absent, all *.qsps / *.qsrc files are collected and
@@ -24,12 +25,26 @@
  *
  * "buildMode" overrides the `qsp.game.buildMode` setting for this project.
  * In "perFile" mode each source becomes its own .qsp next to it and
- * "outputFile" is not used; the first file in order is the one the player
- * starts.
+ * "outputFile" is not used; the main file is the one the player starts.
+ *
+ * "mainFile" is a regular expression searched (case-insensitively) in each
+ * source's workspace-relative path; the first match in build order is the
+ * main file and is moved to the front, so in "single" mode its first
+ * location starts the game. It overrides the `qsp.game.mainFile` setting.
+ * With neither set, the main file is simply the first one in order.
  */
 
 import * as vscode from 'vscode';
-import { orderForEntryPoint, resolveBuildMode, type BuildMode } from '../common/buildPlan';
+import {
+  exactPathPattern,
+  findMainFile,
+  moveToFront,
+  orderForEntryPoint,
+  resolveBuildMode,
+  resolveMainFilePattern,
+  resolveMainFileStrategy,
+  type BuildMode,
+} from '../common/buildPlan';
 import * as logger from './logger';
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -47,6 +62,16 @@ export interface GameConfig {
   files?: string[];
   /** Overrides the `qsp.game.buildMode` setting for this project. */
   buildMode?: BuildMode;
+  /** Regexp for the main file; overrides the `qsp.game.mainFile` setting. */
+  mainFile?: string;
+}
+
+/** Main-file regexp for this project: txt2gam.json, then the `qsp.game.mainFile` setting. */
+export function effectiveMainFilePattern(cfg: GameConfig | undefined): string | undefined {
+  return resolveMainFilePattern(
+    cfg?.mainFile,
+    vscode.workspace.getConfiguration('qsp.game').get<string>('mainFile'),
+  );
 }
 
 /** Build mode for this project: txt2gam.json, then the `qsp.game.buildMode` setting, then `single`. */
@@ -145,6 +170,7 @@ export async function ensureGameConfig(
   // Auto-populate files list from currently discovered QSP sources,
   // collapsing files in the same directory into directory globs.
   let files: string[] | undefined;
+  let mainFile: string | undefined;
   if (qspGlobPattern && root) {
     const uris = await vscode.workspace.findFiles(qspGlobPattern);
     uris.sort((a, b) => a.toString().localeCompare(b.toString()));
@@ -155,14 +181,33 @@ export async function ensureGameConfig(
           ? u.fsPath.slice(rootFsPath.length).replace(/^[/\\]/, '').replace(/\\/g, '/')
           : u.fsPath.replace(/\\/g, '/'),
       );
-      // In perFile mode the first file is the .qsp the player starts, so an
-      // alphabetical guess (data/… before main…) is not good enough: ask.
-      if (mode === 'perFile' && relPaths.length > 1) {
-        const entry = await vscode.window.showQuickPick(relPaths, {
-          title: 'Choose the start file (the .qsp the player opens)',
-          placeHolder: 'Dismiss to put files from the workspace root first',
-        });
-        relPaths = orderForEntryPoint(relPaths, entry);
+      // The first file is the main one: its first location starts the game
+      // (single) or it is the .qsp the player opens (perFile). An
+      // alphabetical guess (data/… before main…) is not good enough.
+      if (relPaths.length > 1) {
+        const settingPattern = effectiveMainFilePattern(undefined);
+        if (settingPattern !== undefined) {
+          // The setting stays in charge at build time; here it only orders the list.
+          try {
+            relPaths = moveToFront(relPaths, findMainFile(relPaths, settingPattern).index);
+          } catch {
+            // A bad pattern is reported by the build itself.
+          }
+        } else {
+          const strategy = resolveMainFileStrategy(
+            vscode.workspace.getConfiguration('qsp.game').get<string>('mainFileStrategy'),
+          );
+          const entry = strategy === 'ask'
+            ? await vscode.window.showQuickPick(relPaths, {
+              title: 'Choose the main file (the game starts from it)',
+              placeHolder: 'Dismiss to put files from the workspace root first',
+            })
+            : undefined;
+          relPaths = orderForEntryPoint(relPaths, entry);
+          // Saved even when root-first order chose it, so txt2gam.json says
+          // which file is the main one instead of leaving it implicit.
+          mainFile = exactPathPattern(relPaths[0]);
+        }
       }
       files = buildGlobList(relPaths);
     }
@@ -171,6 +216,7 @@ export async function ensureGameConfig(
   const cfg: GameConfig = {
     ...(mode === 'perFile' ? { buildMode: 'perFile' as const } : { outputFile }),
     ...(files ? { files } : {}),
+    ...(mainFile ? { mainFile } : {}),
   };
   await writeGameConfig(cfg);
 

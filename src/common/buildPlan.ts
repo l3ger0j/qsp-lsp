@@ -69,3 +69,55 @@ export function orderForEntryPoint(relPaths: string[], entry?: string): string[]
   const nested = relPaths.filter(p => p.includes('/'));
   return [...atRoot, ...nested];
 }
+
+// ── Main file ────────────────────────────────────────────────────────
+
+/**
+ * How the setup wizard picks the main file when neither txt2gam.json nor
+ * the `qsp.game.mainFile` setting names one: `ask` shows a picker and falls
+ * back to `root` when it is dismissed; `root` goes straight to root-first order.
+ */
+export type MainFileStrategy = 'ask' | 'root';
+
+export function resolveMainFileStrategy(settingValue: unknown): MainFileStrategy {
+  return settingValue === 'root' ? 'root' : 'ask';
+}
+
+/** The main-file pattern: txt2gam.json's `mainFile`, then the setting. Blank values don't count. */
+export function resolveMainFilePattern(fileValue: unknown, settingValue: unknown): string | undefined {
+  for (const v of [fileValue, settingValue]) {
+    if (typeof v === 'string' && v.trim() !== '') return v;
+  }
+  return undefined;
+}
+
+/**
+ * Index of the main file in `relPaths` (workspace-relative, `/`-separated,
+ * in build order). `pattern` is a regular expression searched in each path,
+ * case-insensitively; the first match in order wins and `matchCount` tells
+ * the caller whether it was ambiguous. Throws when the pattern is invalid or
+ * matches nothing: an explicitly configured main file must not be ignored.
+ */
+export function findMainFile(relPaths: string[], pattern: string): { index: number; matchCount: number } {
+  let re: RegExp;
+  try {
+    re = new RegExp(pattern, 'i');
+  } catch (err) {
+    throw new Error(`mainFile "${pattern}" is not a valid regular expression: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const matches = relPaths.flatMap((p, i) => (re.test(p) ? [i] : []));
+  if (matches.length === 0) {
+    throw new Error(`mainFile "${pattern}" matches none of the project's source files`);
+  }
+  return { index: matches[0], matchCount: matches.length };
+}
+
+/** A `mainFile` pattern that matches exactly this workspace-relative path. */
+export function exactPathPattern(relPath: string): string {
+  return '^' + relPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$';
+}
+
+/** `items` with the element at `index` moved to the front; the rest keep their order. */
+export function moveToFront<T>(items: T[], index: number): T[] {
+  return [items[index], ...items.slice(0, index), ...items.slice(index + 1)];
+}
