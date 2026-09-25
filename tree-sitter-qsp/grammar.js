@@ -704,6 +704,15 @@ module.exports = grammar({
       prec.left(14, seq($._ml_expression, optional($._nls), alias(choice('+', '-'), $.op_arith), optional($._nls), $._ml_expression)),
       prec.left(16, seq($._ml_expression, optional($._nls), alias(ci('mod'), $.op_mod), optional($._nls), $._ml_expression)),
       prec.left(17, seq($._ml_expression, optional($._nls), alias(choice('*', '/'), $.op_arith), optional($._nls), $._ml_expression)),
+      // Never matches (see _ml_unreachable). It only puts a newline shift
+      // below every operator's precedence into each state after an operand.
+      // Tree-sitter drops a reduce at generate time when every competing
+      // shift has precedence >= it, so without this the loosest operator
+      // (`or`) could not end right before a newline: `(a or b⏎)`,
+      // `[a or b⏎]`, `<<a or b⏎>>` and `f(a or b⏎, c)` would all fail on
+      // the closer. With a lower shift present the conflict stays
+      // unresolved, [$.ml_binary] forks GLR, and the closer picks the branch.
+      prec.left(-1, seq($._ml_expression, $._nls, $._ml_unreachable)),
     ),
 
     _ml_unary: $ => choice($.ml_unary, $._ml_primary),
@@ -992,5 +1001,8 @@ module.exports = grammar({
     // One or more newlines — used in multiline contexts (parens, brackets, <<>>)
     // as optional($._nls) to mean "zero or more newlines".
     _nls: $ => prec.right(repeat1($._newline)),
+
+    // A token that can't occur in source text: see the last ml_binary alternative.
+    _ml_unreachable: $ => token(prec(-1, /\u0000\u0000\u0000/)),
   },
 });
