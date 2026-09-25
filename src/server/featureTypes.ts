@@ -7,14 +7,13 @@
 import type {
   SemanticTokens,
 } from 'vscode-languageserver';
+import type Parser from 'web-tree-sitter';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import type {
   DocumentSymbols,
   LocationSymbols,
   LocationEntry,
-  QspSymbol,
   QspTreeSitterParser,
-  CursorValueEntry,
   PossibleValueEntry,
   SyntaxError,
 } from '../parser';
@@ -34,8 +33,7 @@ export interface PerLocationParseResult {
   errors: SyntaxError[];
   tokens: number[];
   hasErrors: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  tree?: any;
+  tree?: Parser.Tree;
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -53,15 +51,6 @@ export interface DocumentState {
   aggCache?: SymbolAggregates;
   /** Cached call-types-per-target for THIS document. Lazily built. */
   cachedCallTypes?: Map<string, { name: string; types: Set<string> }>;
-  /**
-   * Cached `getCursorEntries` resolver results keyed by `QspSymbol`
-   * object identity.  Symbols from unchanged locations retain their
-   * object identity across incremental re-parses, so their resolver
-   * results survive.  Only entries whose symbol objects changed
-   * (the re-parsed location) need to be recomputed.
-   * Uses WeakMap so stale symbol objects are automatically evicted by GC.
-   */
-  cachedCursorEntries?: WeakMap<QspSymbol, CursorValueEntry[] | null>;
   /**
    * True when the symbol positions (line/column) may be approximate
    * because the symbols were reused from a previous parse cycle

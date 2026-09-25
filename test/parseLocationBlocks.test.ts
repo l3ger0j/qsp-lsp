@@ -320,3 +320,15 @@ describe('parseLocationBlocks', () => {
     expect(blocks[0].endLine).toBe(6); // real --- at the end
   });
 });
+
+// Header names are trimmed with plain string ops: a regex like
+// /^#\s*(.+?)\s*$/ is quadratic on a long space run inside the name.
+describe('parseLocationBlocks header parsing', () => {
+  it('handles a long run of spaces inside a header name quickly', () => {
+    const name = `a${' '.repeat(80_000)}b`;
+    const start = performance.now();
+    const blocks = parseLocationBlocks(`# ${name}  \npl 1\n---\n`);
+    expect(performance.now() - start).toBeLessThan(500);
+    expect(blocks.map(b => b.name)).toEqual([name]);
+  });
+});

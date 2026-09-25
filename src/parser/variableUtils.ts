@@ -55,8 +55,11 @@ export function subtreeReferencesVariable(
       cursor.gotoParent();
     }
   };
-  visit();
-  cursor.delete();
+  try {
+    visit();
+  } finally {
+    cursor.delete();
+  }
   return found;
 }
 

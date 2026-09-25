@@ -197,8 +197,11 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
     if (isInterpolation) interpolationDepth--;
   }
 
-  visit();
-  cursor.delete();
+  try {
+    visit();
+  } finally {
+    cursor.delete();
+  }
 
   // Run the three additional lint passes (reserved-word misuse,
   // prefix-whitespace, function-name-as-lvalue) in a SINGLE shared tree
@@ -328,8 +331,11 @@ function runMergedLintPasses(tree: Parser.Tree): SyntaxError[] {
     if (isErr) errorDepth--;
   }
 
-  visit();
-  cursor.delete();
+  try {
+    visit();
+  } finally {
+    cursor.delete();
+  }
   return errors;
 }
 
@@ -366,9 +372,11 @@ export function hasStructuralErrors(node: Parser.SyntaxNode): boolean {
     return false;
   }
 
-  const result = walk();
-  cursor.delete();
-  return result;
+  try {
+    return walk();
+  } finally {
+    cursor.delete();
+  }
 }
 
 // ── String / brace node types used for error classification ─────────
@@ -573,8 +581,11 @@ function containsLeadingTypePrefix(node: Parser.SyntaxNode): boolean {
       cursor.gotoParent();
     }
   }
-  visit();
-  cursor.delete();
+  try {
+    visit();
+  } finally {
+    cursor.delete();
+  }
   return found;
 }
 
@@ -919,10 +930,13 @@ function findDelimiterMismatches(node: Parser.SyntaxNode): DelimiterMismatches {
     }
   }
   // Descend into children of the root ERROR node (the root itself is named).
-  if (cursor.gotoFirstChild()) {
-    do { visit(); } while (cursor.gotoNextSibling());
-    cursor.gotoParent();
+  try {
+    if (cursor.gotoFirstChild()) {
+      do { visit(); } while (cursor.gotoNextSibling());
+      cursor.gotoParent();
+    }
+  } finally {
+    cursor.delete();
   }
-  cursor.delete();
   return { unclosed: stack, stray };
 }

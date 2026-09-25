@@ -313,6 +313,43 @@ describe('LSP end-to-end: qsp.hover.maxItemsPerCategory setting', () => {
 });
 
 // ──────────────────────────────────────────────────────────────────────
+// Numeric diagnostic settings are validated like `hover.maxItemsPerCategory`:
+// settings.json isn't checked against package.json's `minimum`, so an
+// out-of-range value must fall back to the default instead of silently
+// disabling the check (`maxLocationLines: -1`) or hiding every error
+// behind a summary (`maxErrorsPerLocation: 0`).
+// ──────────────────────────────────────────────────────────────────────
+
+describe('LSP end-to-end: numeric diagnostic settings validation', () => {
+  async function messages(qspConfig: Record<string, unknown>, code: string): Promise<string[]> {
+    const h = await startServer(qspConfig);
+    try {
+      const uri = 'file:///numeric-settings.qsps';
+      // Let the server read `workspace/configuration` before the first analysis.
+      await new Promise((r) => setTimeout(r, 200));
+      h.client.sendNotification(DidOpenTextDocumentNotification.type, {
+        textDocument: { uri, languageId: 'qsp', version: 1, text: code },
+      });
+      return (await h.diagnosticsFor(uri)).diagnostics.map(d => d.message);
+    } finally {
+      h.shutdown();
+    }
+  }
+
+  it('an out-of-range maxLocationLines keeps the default limit', async () => {
+    const code = `# long\n${'pl 1\n'.repeat(600)}---\n`;
+    const msgs = await messages({ diagnostics: { maxLocationLines: -1 } }, code);
+    expect(msgs.some(m => m.includes('lines long (max 500)'))).toBe(true);
+  }, 30_000);
+
+  it('an out-of-range maxErrorsPerLocation still reports individual errors', async () => {
+    const msgs = await messages({ diagnostics: { maxErrorsPerLocation: 0 } }, `# bad\npl (1\n---\n`);
+    expect(msgs.length).toBeGreaterThan(0);
+    expect(msgs.some(m => /has \d+ syntax errors/.test(m))).toBe(false);
+  }, 30_000);
+});
+
+// ──────────────────────────────────────────────────────────────────────
 // Variable hover "N definitions, M usages" splits every occurrence —
 // reads + compound ops (`x += 1`, `hp = hp + 5`) count as usages,
 // plain `=` LHS / `local` / append writes (`$arr[] = …`) count as

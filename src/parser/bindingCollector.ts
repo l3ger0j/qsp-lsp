@@ -114,8 +114,6 @@ export function collectVariableBindings(
 
   const isConsumed = (_id: number): boolean => false;
 
-  const cursor = locBlock.walk();
-
   // ── record(): convert an assignment pair into a BindingInfo ────
   //
   // Always records `stmtText` (the source line) so hover renders the
@@ -571,11 +569,16 @@ export function collectVariableBindings(
       cursor.gotoParent();
     }
   };
-  if (cursor.gotoFirstChild()) {
-    do { visit(inDeferredExecution); } while (cursor.gotoNextSibling());
-    cursor.gotoParent();
+  // Created only here, after the setup above, so a throw there can't leak it.
+  const cursor = locBlock.walk();
+  try {
+    if (cursor.gotoFirstChild()) {
+      do { visit(inDeferredExecution); } while (cursor.gotoNextSibling());
+      cursor.gotoParent();
+    }
+  } finally {
+    cursor.delete();
   }
-  cursor.delete();
 
   // ── Retag pass: non-local binds → local scope ──────────────────
   const retagPass = () => {

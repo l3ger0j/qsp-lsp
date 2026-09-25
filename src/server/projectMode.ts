@@ -103,7 +103,8 @@ export class ProjectModeService {
    * as the whole scan takes. See the FsProvider doc comment for why.
    */
   async init(
-    fsProvider: FsProvider,
+    // Undefined in the browser: only open documents make up the project there.
+    fsProvider: FsProvider | undefined,
     fileEncoding: string,
     collectCallTypes: () => Map<string, { name: string; types: Set<string> }>,
     collectPeerDocs: (ownUri: string) => DocumentSymbols[],
@@ -117,24 +118,26 @@ export class ProjectModeService {
     // few files so a single directory holding thousands of files can't
     // monopolize the event loop between those directory-level yields.
     let processedSinceYield = 0;
-    for (const folder of this.workspaceFolders) {
-      for await (const filePath of fsProvider.findFiles(folder, QSP_FILE_EXTENSIONS)) {
-        const uri = fsProvider.pathToUri(filePath);
-        this.projectFileUris.add(uri);
+    if (fsProvider) {
+      for (const folder of this.workspaceFolders) {
+        for await (const filePath of fsProvider.findFiles(folder, QSP_FILE_EXTENSIONS)) {
+          const uri = fsProvider.pathToUri(filePath);
+          this.projectFileUris.add(uri);
 
-        // If not already open in editor, read from disk and analyze
-        if (!this.documents.get(uri)) {
-          try {
-            const text = await fsProvider.readFile(filePath, fileEncoding);
-            this.analyzeFile(uri, text);
-          } catch (e) {
-            this.connection.console.error(`[QSP] Failed to read project file ${filePath}: ${e}`);
+          // If not already open in editor, read from disk and analyze
+          if (!this.documents.get(uri)) {
+            try {
+              const text = await fsProvider.readFile(filePath, fileEncoding);
+              this.analyzeFile(uri, text);
+            } catch (e) {
+              this.connection.console.error(`[QSP] Failed to read project file ${filePath}: ${e}`);
+            }
           }
-        }
 
-        if (++processedSinceYield >= 20) {
-          processedSinceYield = 0;
-          await yieldToEventLoop();
+          if (++processedSinceYield >= 20) {
+            processedSinceYield = 0;
+            await yieldToEventLoop();
+          }
         }
       }
     }
@@ -183,12 +186,14 @@ export class ProjectModeService {
     } else {
       const tree = this.tsParser.parseOnce(text, fullParseTimeoutMicros(text.length));
       if (tree) {
-        const result = extractSymbols(
-          tree, uri, undefined, undefined,
-          this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
-        );
-        symbols = result.symbols;
-        tree.delete();
+        try {
+          symbols = extractSymbols(
+            tree, uri, undefined, undefined,
+            this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
+          ).symbols;
+        } finally {
+          tree.delete();
+        }
       } else {
         symbols = this.analyzePerLocation(uri, text, locationIndex);
       }
@@ -210,10 +215,15 @@ export class ProjectModeService {
       const locLoc = makeLocSymLoc(uri, text, loc);
       const tree = this.tsParser.parseOnce(locText);
       if (tree) {
-        const result = extractSymbols(
-          tree, uri, undefined, undefined,
-          this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
-        );
+        let result: ReturnType<typeof extractSymbols>;
+        try {
+          result = extractSymbols(
+            tree, uri, undefined, undefined,
+            this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
+          );
+        } finally {
+          tree.delete();
+        }
         // extractSymbols wraps the location in a DocumentSymbols with
         // one entry — pull out its LocationSymbols (same pattern as
         // common.ts's parseLocationBlock).
@@ -225,7 +235,6 @@ export class ProjectModeService {
           const empty = symbols.addLocation(loc.name, locLoc);
           empty.hasErrors = true;
         }
-        tree.delete();
       } else {
         // Tree-sitter failed (timeout) for this one location — fall
         // back to regex extraction for just that location.

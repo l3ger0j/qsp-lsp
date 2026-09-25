@@ -13,7 +13,9 @@ import { DocumentSymbols } from '../parser/symbolTable';
 import type { LocationEntry } from '../common/locations';
 import { parseActName } from './helpers';
 
-const LABEL_RE = /^\s*:([\p{L}_][\p{L}\p{N}_]*)/u;
+// Mirrors `label_name` in grammar.js: everything up to `&` or end of line,
+// trimmed, so `:метка 2` and `:выход-1` are whole names.
+const LABEL_RE = /^(\s*):([^\r\n&{}'"()\[\]]+)/u;
 
 type LocSyms = ReturnType<DocumentSymbols['addLocation']>;
 
@@ -83,9 +85,10 @@ export function extractLabelsFromLines(
 ): void {
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(LABEL_RE);
-    if (m) {
-      const labelName = m[1];
-      const col = lines[i].indexOf(':' + labelName);
+    const labelName = m?.[2].trim();
+    if (m && labelName) {
+      const col = m[1].length;
+      const nameEnd = col + 1 + m[2].trimEnd().length;
       const absLine = startLine + i;
       if (skipLines?.has(absLine)) continue;
       locSymbols.addLabel(labelName, {
@@ -93,7 +96,7 @@ export function extractLabelsFromLines(
         line: absLine,
         column: col,
         endLine: absLine,
-        endColumn: col + labelName.length + 1,
+        endColumn: nameEnd,
       });
     }
   }

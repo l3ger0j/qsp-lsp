@@ -19,10 +19,8 @@ import {
   LocationEntry,
   QspTreeSitterParser,
   computeTreeEdit,
-  type QspSymbol,
   type SyntaxError,
   type WasmLoader,
-  type CursorValueEntry,
 } from '../parser';
 import { collectSemanticTokenTuples, SEMANTIC_TOKENS_LEGEND, GOTO_MODIFIER_BIT, NAMESPACE_TOKEN_TYPE } from './semanticTokens';
 import {
@@ -251,12 +249,18 @@ export function createQspServer(
     const sem = qspConfig?.semanticHighlighting as Record<string, unknown> | undefined;
     const hov = qspConfig?.hover as Record<string, unknown> | undefined;
     const pick = <T>(v: unknown, def: T): T => typeof v === typeof def ? v as T : def;
+    // settings.json isn't checked against package.json's `minimum`, so NaN,
+    // fractions and negatives can arrive here.
+    const pickInt = (v: unknown, def: number, min: number): number =>
+      typeof v === 'number' && Number.isFinite(v) && v >= min ? Math.floor(v) : def;
 
     const dd = defaultSettings.diagnostics;
     const diagnostics = { ...dd } as Record<string, unknown>;
     for (const key of Object.keys(dd) as (keyof DiagnosticSettings)[]) {
       diagnostics[key] = pick(d?.[key], dd[key]);
     }
+    diagnostics.maxErrorsPerLocation = pickInt(d?.maxErrorsPerLocation, dd.maxErrorsPerLocation, 1);
+    diagnostics.maxLocationLines = pickInt(d?.maxLocationLines, dd.maxLocationLines, 0);
     return {
       project: { enabled: pick(proj?.enabled, defaultSettings.project.enabled) },
       embeddedExec: { enabled: pick(emb?.enabled, defaultSettings.embeddedExec.enabled) },
@@ -264,12 +268,7 @@ export function createQspServer(
       semanticHighlighting: { enabled: pick(sem?.enabled, defaultSettings.semanticHighlighting.enabled) },
       hover: {
         possibleValues: pick(hov?.possibleValues, defaultSettings.hover.possibleValues),
-        maxItemsPerCategory: (() => {
-          const v = hov?.maxItemsPerCategory;
-          return typeof v === 'number' && Number.isFinite(v) && v >= 1
-            ? Math.floor(v)
-            : defaultSettings.hover.maxItemsPerCategory;
-        })(),
+        maxItemsPerCategory: pickInt(hov?.maxItemsPerCategory, defaultSettings.hover.maxItemsPerCategory, 1),
       },
     };
   }
@@ -368,7 +367,7 @@ export function createQspServer(
         // Async: scans the workspace and reads/parses files off the main
         // synchronous path so other LSP requests keep being served while
         // a large project loads. See ProjectModeService.init().
-        await project.init(fsProvider!, fileEncoding, () => collectCallTypesPerTarget(documentStates), (ownUri: string) => collectPeerDocs(documentStates, ownUri), settings.diagnostics);
+        await project.init(fsProvider, fileEncoding, () => collectCallTypesPerTarget(documentStates), (ownUri: string) => collectPeerDocs(documentStates, ownUri), settings.diagnostics);
       }
     }).catch((err: unknown) => {
       console.error('[QSP] Failed to read initial configuration:', err);
@@ -415,7 +414,7 @@ export function createQspServer(
       // Handle project mode toggling
       if (settings.project.enabled && !prevProjectEnabled) {
         connection.console.log('[QSP] project.enabled: false → true');
-        await project.init(fsProvider!, fileEncoding, () => collectCallTypesPerTarget(documentStates), (ownUri: string) => collectPeerDocs(documentStates, ownUri), settings.diagnostics);
+        await project.init(fsProvider, fileEncoding, () => collectCallTypesPerTarget(documentStates), (ownUri: string) => collectPeerDocs(documentStates, ownUri), settings.diagnostics);
       } else if (!settings.project.enabled && prevProjectEnabled) {
         connection.console.log('[QSP] project.enabled: true → false');
         project.teardown();
@@ -493,6 +492,18 @@ export function createQspServer(
     }, DEBOUNCE_TREE_MS));
   });
 
+  // After shutdown only `exit` may arrive, so pending debounce timers must not
+  // fire into a disposed parser. Freeing WASM memory matters for hosts that
+  // keep the process alive (tests, embedders).
+  connection.onShutdown(() => {
+    for (const t of fastTimers.values()) clearTimeout(t);
+    for (const t of treeTimers.values()) clearTimeout(t);
+    fastTimers.clear();
+    treeTimers.clear();
+    for (const state of documentStates.values()) releasePerLocationTrees(state);
+    tsParser.dispose();
+  });
+
   documents.onDidClose((event: { document: TextDocument }) => {
     const uri = event.document.uri;
     const ft = fastTimers.get(uri);
@@ -500,12 +511,7 @@ export function createQspServer(
     const tt = treeTimers.get(uri);
     if (tt) { clearTimeout(tt); treeTimers.delete(uri); }
     // Clean up retained per-location trees before discarding state.
-    const state = documentStates.get(uri);
-    if (state?.perLocationCache) {
-      for (const entry of state.perLocationCache.values()) {
-        if (entry.tree) { entry.tree.delete(); entry.tree = undefined; }
-      }
-    }
+    releasePerLocationTrees(documentStates.get(uri));
     documentStates.delete(uri);
     tsParser.removeTree(uri);
     fullParseFailedUris.delete(uri);
@@ -622,6 +628,13 @@ export function createQspServer(
   // for incremental re-parsing (avoids ~1s full parse for 200KB locations).
   const INCREMENTAL_LOC_THRESHOLD = 50_000; // 50 KB
 
+  function releasePerLocationTrees(state: DocumentState | undefined): void {
+    if (!state?.perLocationCache) return;
+    for (const entry of state.perLocationCache.values()) {
+      if (entry.tree) { entry.tree.delete(); entry.tree = undefined; }
+    }
+  }
+
   // Documents whose whole-file parse failed or timed out. They stay on per-location
   // parsing until closed: retrying the whole-file parse after every edit
   // would block the server for the full timeout each time.
@@ -712,14 +725,11 @@ export function createQspServer(
       }
     }
 
+    // Whole-file analysis doesn't use perLocationCache, so trees retained
+    // while the file was above PER_LOCATION_BYTE_THRESHOLD must go now.
+    releasePerLocationTrees(previousState);
     // Invalidate semantic token cache — tokens are built lazily on request.
-    // Carry the cursor-entry resolver cache from the previous state: symbol
-    // objects from locations that weren't changed by tree-sitter's incremental
-    // re-parse retain their identity, so their cached resolver results survive.
-    const prevCursorEntries = documentStates.get(doc.uri)?.cachedCursorEntries;
-    const cursorEntries: WeakMap<QspSymbol, CursorValueEntry[] | null> =
-      prevCursorEntries ?? new WeakMap();
-    documentStates.set(doc.uri, { locationIndex, symbols, cachedSemanticTokens: undefined, cachedCursorEntries: cursorEntries });
+    documentStates.set(doc.uri, { locationIndex, symbols, cachedSemanticTokens: undefined });
 
     // In project mode, rebuild aggregates and re-diagnose all files
     if (settings.project.enabled && project.projectAggregates) {
@@ -797,6 +807,7 @@ export function createQspServer(
 
     if (!tree) return null;
 
+    let keepTree = false;
     try {
       const embedParseFn = settings.embeddedExec.enabled
         ? (t: string) => tsParser.parseOnce(t)
@@ -823,7 +834,7 @@ export function createQspServer(
         locSymbols.hasErrors = true;
       }
 
-      const keepTree = locText.length >= INCREMENTAL_LOC_THRESHOLD;
+      keepTree = locText.length >= INCREMENTAL_LOC_THRESHOLD;
 
       return {
         text: locText,
@@ -834,10 +845,8 @@ export function createQspServer(
         tree: keepTree ? tree : undefined,
       };
     } finally {
-      // If we're NOT keeping the tree, delete it.
-      if (locText.length < INCREMENTAL_LOC_THRESHOLD) {
-        tree.delete();
-      }
+      // keepTree is only set once the result is built, so a throw frees the tree too.
+      if (!keepTree) tree.delete();
     }
   }
 
@@ -957,14 +966,6 @@ export function createQspServer(
       ? prevState.aggCache
       : undefined;
 
-    // Carry the resolver cache across incremental updates.  Unchanged
-    // locations reuse the same QspSymbol objects, so their cached
-    // resolver results remain valid.  The re-parsed location's new
-    // symbol objects will naturally miss the WeakMap and be computed
-    // fresh.  Stale entries from old symbol objects are GC'd automatically.
-    const cachedCursorEntries: WeakMap<QspSymbol, CursorValueEntry[] | null> =
-      prevState.cachedCursorEntries ?? new WeakMap();
-
     documentStates.set(doc.uri, {
       locationIndex: currentIndex,
       symbols,
@@ -972,7 +973,6 @@ export function createQspServer(
       perLocationCache: newCache,
       rawText: text,
       aggCache,
-      cachedCursorEntries,
     });
 
     // ── 7. Send diagnostics ───────────────────────────────────────

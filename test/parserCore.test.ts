@@ -10,6 +10,17 @@ describe('QspTreeSitterParser', () => {
     await parser.init(async () => fs.readFileSync(WASM_PATH));
   });
 
+  it('initializes from an ArrayBuffer, which browser WASM loaders return', async () => {
+    const bytes = fs.readFileSync(WASM_PATH);
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    const fromBuffer = new QspTreeSitterParser();
+    await fromBuffer.init(async () => buffer);
+    const tree = fromBuffer.parseOnce('# a\npl 1\n---\n');
+    expect(tree?.rootNode.hasError).toBe(false);
+    tree?.delete();
+    fromBuffer.dispose();
+  });
+
   it('should parse a simple location', () => {
     const tree = parser.parse('test://doc', `# start
 pl 'hello'

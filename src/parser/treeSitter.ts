@@ -208,7 +208,10 @@ export class QspTreeSitterParser {
 
     this.parser = new TreeSitter();
     const wasmData = await wasmLoader();
-    this.language = await TreeSitter.Language.load(wasmData as string);
+    // Language.load takes string | Uint8Array; browser loaders typically hand over an ArrayBuffer.
+    this.language = await TreeSitter.Language.load(
+      wasmData instanceof ArrayBuffer ? new Uint8Array(wasmData) : wasmData,
+    );
     this.parser.setLanguage(this.language);
   }
 

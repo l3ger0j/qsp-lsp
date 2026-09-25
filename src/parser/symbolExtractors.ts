@@ -352,7 +352,7 @@ export function checkArgCount(
   if (!info) return;
 
   const actual = countCallArgs(node);
-  const min = info.minArgs as number;
+  const min = info.minArgs;
   const max = info.maxArgs;
   if (actual >= min && (max === undefined || actual <= max)) return;
 

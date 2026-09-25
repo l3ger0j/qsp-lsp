@@ -12,7 +12,7 @@ import {
   TextEdit,
   WorkspaceEdit,
 } from 'vscode-languageserver';
-import { buildBlockReplacement } from './helpers';
+import { buildBlockReplacement, startsWithKeyword } from './helpers';
 
 /** Detect a document's line-ending convention by inspecting its first newline. */
 export function detectEol(doc: TextDocument): string {
@@ -117,7 +117,7 @@ export function isBlockKeywordLine(doc: TextDocument, lineNum: number, maxLine: 
     const t = lines[i].trimStart();
     if (t === '') continue;
     const indent = lines[i].length - t.length;
-    if (/^end\b/i.test(t) && indent <= baseIndent) return true;
+    if (startsWithKeyword(t, 'end') && indent <= baseIndent) return true;
     if (/^(#|--)/.test(t)) return false;
   }
   return false;

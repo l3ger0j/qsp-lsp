@@ -416,10 +416,13 @@ export function lookupFunctionReturnType(funcNameLower: string): '#' | '$' | '%'
  */
 export function lookupArgConstraints(
   nameLower: string,
-): BuiltinInfo | undefined {
+): (BuiltinInfo & { minArgs: number }) | undefined {
   const b = builtinMap.get(nameLower);
-  if (!b || b.minArgs === undefined) return undefined;
-  return b;
+  return hasArgConstraints(b) ? b : undefined;
+}
+
+function hasArgConstraints(b: BuiltinInfo | undefined): b is BuiltinInfo & { minArgs: number } {
+  return b?.minArgs !== undefined;
 }
 
 /**

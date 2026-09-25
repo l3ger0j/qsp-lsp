@@ -2,8 +2,23 @@
  * Pure helper functions for QSP server logic.
  * Extracted so they can be unit-tested independently.
  */
+import type { Position, Range } from 'vscode-languageserver';
+import type { TextDocument } from 'vscode-languageserver-textdocument';
 import { URI } from 'vscode-uri';
 import { qspFindInCode, qspScanCreate, qspScanRange, qspInCode, qspScanReset } from '../common/qspStringScanner';
+
+// ── Keywords ─────────────────────────────────────────────────────────
+
+// Same character class as `identifier_text` in grammar.js. JS `\b` treats
+// Cyrillic letters and `№` as non-word characters even with the `u` flag,
+// so `/^end\b/` would wrongly match the QSP variable `endсчёт`.
+const IDENTIFIER_CHAR_RE = /[^\s&'"()\[\]=!<>+\-\/*:,{}]/u;
+
+/** True when `text` starts with one of `keywords` (case-insensitive) as a whole word, not as the start of a longer name. */
+export function startsWithKeyword(text: string, ...keywords: string[]): boolean {
+  const lower = text.toLowerCase();
+  return keywords.some(kw => lower.startsWith(kw) && !IDENTIFIER_CHAR_RE.test(lower.charAt(kw.length)));
+}
 
 // ── URI helpers ───────────────────────────────────────────────────────────────────
 
@@ -112,7 +127,7 @@ export function formatLines(
     }
 
     // 'end' keyword decreases indent before printing
-    if (/^end\b/i.test(trimmed)) {
+    if (startsWithKeyword(trimmed, 'end')) {
       indentLevel = Math.max(0, indentLevel - 1);
       result.push(indentUnit.repeat(indentLevel) + trimmed);
       qspScanRange(trimmed, 0, trimmed.length, scanState);
@@ -120,7 +135,7 @@ export function formatLines(
     }
 
     // 'else' and 'elseif' temporarily decrease for that line
-    if (/^(else\b|elseif\b)/i.test(trimmed)) {
+    if (startsWithKeyword(trimmed, 'else', 'elseif')) {
       const tempIndent = Math.max(0, indentLevel - 1);
       result.push(indentUnit.repeat(tempIndent) + trimmed);
       qspScanRange(trimmed, 0, trimmed.length, scanState);
@@ -184,9 +199,9 @@ export function inferIndentLevel(allLines: string[], startLine: number): number 
       continue;
     }
 
-    if (/^end\b/i.test(trimmed)) {
+    if (startsWithKeyword(trimmed, 'end')) {
       depth = Math.max(0, depth - 1);
-    } else if (/^(else\b|elseif\b)/i.test(trimmed)) {
+    } else if (startsWithKeyword(trimmed, 'else', 'elseif')) {
       // else/elseif temporarily outdents for that line but keeps depth
     } else if (opensBlock(trimmed)) {
       qspScanRange(trimmed, 0, trimmed.length, scanState);
@@ -216,7 +231,7 @@ export function inferIndentLevel(allLines: string[], startLine: number): number 
  */
 export function opensBlock(trimmed: string): boolean {
   // Must start with a block-opening keyword
-  if (!/^(act|if|loop|elseif|else)\b/i.test(trimmed)) return false;
+  if (!startsWithKeyword(trimmed, 'act', 'if', 'loop', 'elseif', 'else')) return false;
 
   const colonIdx = findColonOutsideStrings(trimmed);
 
@@ -230,7 +245,7 @@ export function opensBlock(trimmed: string): boolean {
   // No colon: only bare `else` can open a block.
   // `elseif x` / `else if x` / `else body` fall through naturally —
   // afterElse is non-empty and doesn't start with `!`.
-  if (/^else\b/i.test(trimmed)) {
+  if (startsWithKeyword(trimmed, 'else')) {
     const afterElse = trimmed.slice(4).trim();
     return afterElse === '' || afterElse.startsWith('!');
   }
@@ -410,4 +425,52 @@ export function parseActName(text: string): { name: string; extraLines: number }
   const eol = text.indexOf('\n', startPos);
   const remaining = (eol >= 0 ? text.slice(startPos, eol) : text.slice(startPos)).trim();
   return remaining ? { name: remaining, extraLines: 0 } : null;
+}
+
+// ── Word at cursor ───────────────────────────────────────────────────
+
+const SPACED_STATEMENTS_RE = /(?:add obj|del obj|del act|mod obj|close all)/gi;
+
+// Mirrors `identifier_text` in grammar.js (plus an optional type prefix or `*`),
+// so any name the parser accepts — `счёт№1`, `a.b` — is one word here too.
+const WORD_RE = /[*$#%]?[^\s&'"()\[\]=!<>+\-\/*:,{}@0-9#$%][^\s&'"()\[\]=!<>+\-\/*:,{}]*/gu;
+
+/** The QSP word under `pos`, with any `$`/`#`/`%` prefix split off. */
+export function getWordInfo(doc: TextDocument, pos: Position): { word: string; hasTypePrefix: boolean; range: Range } | null {
+  const line = doc.getText({
+    start: { line: pos.line, character: 0 },
+    end: { line: pos.line, character: Number.MAX_SAFE_INTEGER },
+  });
+
+  // `matchAll` returns a fresh iterator each call, so the early
+  // `return` inside the loop cannot leak `lastIndex` state into the
+  // next invocation — unlike a stateful `re.exec()` loop.
+  for (const m of line.matchAll(SPACED_STATEMENTS_RE)) {
+    const idx = m.index ?? 0;
+    if (pos.character >= idx && pos.character <= idx + m[0].length) {
+      return {
+        word: m[0].toLowerCase(),
+        hasTypePrefix: false,
+        range: {
+          start: { line: pos.line, character: idx },
+          end: { line: pos.line, character: idx + m[0].length },
+        },
+      };
+    }
+  }
+
+  for (const match of line.matchAll(WORD_RE)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    if (pos.character >= start && pos.character <= end) {
+      const raw = match[0];
+      const range: Range = {
+        start: { line: pos.line, character: start },
+        end: { line: pos.line, character: end },
+      };
+      if (/^[$#%]/.test(raw)) return { word: raw.slice(1), hasTypePrefix: true, range };
+      return { word: raw, hasTypePrefix: false, range };
+    }
+  }
+  return null;
 }

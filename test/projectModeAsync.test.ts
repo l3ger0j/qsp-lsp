@@ -166,4 +166,19 @@ describe('ProjectModeService: async, non-blocking, batched project mode', () => 
     // must have run) — this is what cross-file hover relies on.
     expect(state!.symbols.globalBindings.has('g')).toBe(true);
   });
+
+  it('init() without an FsProvider (browser) still builds the project from open documents', async () => {
+    const openDoc = { uri: 'file:///proj/open.qsps', getText: () => '# open\ngt \'other\'\n---\n' };
+    const documents = {
+      get: (uri: string) => (uri === openDoc.uri ? openDoc : undefined),
+      all: () => [openDoc],
+    } as unknown as TextDocuments<TextDocument>;
+    const documentStates = new Map<string, DocumentState>();
+    const project = new ProjectModeService(fakeConnection(), documents, documentStates, tsParser);
+    project.workspaceFolders = ['/proj'];
+
+    await project.init(undefined, 'utf8', () => new Map(), () => [], ALL_DIAGS_OFF);
+
+    expect([...project.projectFileUris]).toEqual([openDoc.uri]);
+  });
 });
