@@ -125,6 +125,19 @@ module.exports = grammar({
     // the LSP re-parses the decoded body separately.
     $._intp_raw_body_sq_ext,
     $._intp_raw_body_dq_ext,
+    // Newlines between an operand and the next binary operator in a
+    // multiline expression, one token per precedence level. The scanner
+    // looks past the newlines and names the operator, so the parser
+    // resolves `(a = 1⏎ or b = 2)` by precedence exactly as it would on
+    // one line. A plain `_newline` there would hide the operator, leaving
+    // GLR to pick between `(a = 1) or …` and `a = (1 or …)` arbitrarily.
+    $._ml_nl_or,
+    $._ml_nl_and,
+    $._ml_nl_cmp,
+    $._ml_nl_amp,
+    $._ml_nl_add,
+    $._ml_nl_mod,
+    $._ml_nl_mul,
   ],
 
   word: $ => $.identifier_text,
@@ -142,14 +155,6 @@ module.exports = grammar({
     [$._stmt_single, $.else_clause],
     // `ELSE IF` could be elseif keyword or else + nested if
     [$.if_inline, $.elseif_inline],
-    // newlines between operands/operators in ml_binary are optional,
-    // creating ambiguity about where \n belongs (end of LHS or start of op).
-    [$.ml_binary],
-    // Unary operators take _ml_expression as their operand so that
-    // higher-precedence binary ops bind tighter (e.g. `no x = 1` →
-    // `no (x = 1)`, not `(no x) = 1`).  The ml context needs an
-    // explicit conflict due to optional newlines creating extra ambiguity.
-    [$.ml_unary, $.ml_binary],
     // ml_func_call without prec.right: after function_name, seeing a token
     // that could start a bare arg (e.g. '-', string, number) the parser
     // must GLR-fork between "consume as bare arg" vs "reduce as no-arg call".
@@ -697,22 +702,13 @@ module.exports = grammar({
     _ml_expression: $ => choice($.ml_binary, $._ml_unary),
 
     ml_binary: $ => choice(
-      prec.left(6,  seq($._ml_expression, optional($._nls), alias(ci('or'),  $.op_or),  optional($._nls), $._ml_expression)),
-      prec.left(7,  seq($._ml_expression, optional($._nls), alias(ci('and'), $.op_and), optional($._nls), $._ml_expression)),
-      prec.left(10, seq($._ml_expression, optional($._nls), $._cmp_op, optional($._nls), $._ml_expression)),
-      prec.left(12, seq($._ml_expression, optional($._nls), alias('&', $.op_amp), optional($._nls), $._ml_expression)),
-      prec.left(14, seq($._ml_expression, optional($._nls), alias(choice('+', '-'), $.op_arith), optional($._nls), $._ml_expression)),
-      prec.left(16, seq($._ml_expression, optional($._nls), alias(ci('mod'), $.op_mod), optional($._nls), $._ml_expression)),
-      prec.left(17, seq($._ml_expression, optional($._nls), alias(choice('*', '/'), $.op_arith), optional($._nls), $._ml_expression)),
-      // Never matches (see _ml_unreachable). It only puts a newline shift
-      // below every operator's precedence into each state after an operand.
-      // Tree-sitter drops a reduce at generate time when every competing
-      // shift has precedence >= it, so without this the loosest operator
-      // (`or`) could not end right before a newline: `(a or b⏎)`,
-      // `[a or b⏎]`, `<<a or b⏎>>` and `f(a or b⏎, c)` would all fail on
-      // the closer. With a lower shift present the conflict stays
-      // unresolved, [$.ml_binary] forks GLR, and the closer picks the branch.
-      prec.left(-1, seq($._ml_expression, $._nls, $._ml_unreachable)),
+      prec.left(6,  seq($._ml_expression, optional($._ml_nl_or),  alias(ci('or'),  $.op_or),  optional($._nls), $._ml_expression)),
+      prec.left(7,  seq($._ml_expression, optional($._ml_nl_and), alias(ci('and'), $.op_and), optional($._nls), $._ml_expression)),
+      prec.left(10, seq($._ml_expression, optional($._ml_nl_cmp), $._cmp_op, optional($._nls), $._ml_expression)),
+      prec.left(12, seq($._ml_expression, optional($._ml_nl_amp), alias('&', $.op_amp), optional($._nls), $._ml_expression)),
+      prec.left(14, seq($._ml_expression, optional($._ml_nl_add), alias(choice('+', '-'), $.op_arith), optional($._nls), $._ml_expression)),
+      prec.left(16, seq($._ml_expression, optional($._ml_nl_mod), alias(ci('mod'), $.op_mod), optional($._nls), $._ml_expression)),
+      prec.left(17, seq($._ml_expression, optional($._ml_nl_mul), alias(choice('*', '/'), $.op_arith), optional($._nls), $._ml_expression)),
     ),
 
     _ml_unary: $ => choice($.ml_unary, $._ml_primary),
@@ -1002,7 +998,5 @@ module.exports = grammar({
     // as optional($._nls) to mean "zero or more newlines".
     _nls: $ => prec.right(repeat1($._newline)),
 
-    // A token that can't occur in source text: see the last ml_binary alternative.
-    _ml_unreachable: $ => token(prec(-1, /\u0000\u0000\u0000/)),
   },
 });
