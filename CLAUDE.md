@@ -87,7 +87,7 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
 Notes:
 - `npm run build` needs network the first time (`scripts/fetchTxt2gam.mjs` downloads into `vendor/`).
 - `build:grammar` copies the WASM to `out/`, so create `out/` first if it's missing (`build.sh` does `mkdir -p out`).
-- CI (`.github/workflows/ci.yml`) runs `scripts/build.sh --check` on Node 20 and 22.
+- CI (`.github/workflows/ci.yml`) runs `scripts/build.sh --check` on Node 22 and 24. Dev tooling (vitest 5, vsce 4) needs Node ≥ 22.12; the bundles still target node18 for VS Code ^1.85.
 - TODO: README says "Press F5" to debug, but `.vscode/launch.json` isn't tracked in the repo. Verify locally.
 
 Before finishing any change: `npx tsc --noEmit && npm test && npm run lint`.
