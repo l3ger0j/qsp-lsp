@@ -55,6 +55,14 @@ Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Vi
   3. Otherwise the first file in `files` order. When the setup wizard creates `txt2gam.json`, it asks for the main file with a list; if the list is dismissed, or `qsp.game.mainFileStrategy` is `root`, the first file from the workspace root is used instead. Either way the chosen file is saved as `mainFile`, so `txt2gam.json` always shows which file is the main one.
 
   A configured pattern that is invalid or matches no source file stops the build with an error.
+- **Player** — **Run QSP Game** launches `"playerExecutable"` from `txt2gam.json` if it is set, otherwise the `qsp.game.playerExecutable` setting; with neither, it asks for the player once and saves it to the setting. In `txt2gam.json` a path with a `/` or `\` is relative to the workspace root (so a player kept in the repository works in any checkout), a bare name such as `qspgui` is looked up on `PATH`, and an absolute path is used as is. Since `txt2gam.json` is usually shared, it can hold one path per OS; an OS without an entry falls back to the setting:
+  ```json
+  "playerExecutable": {
+    "win32": "tools/qspgui/qspgui.exe",
+    "linux": "/usr/bin/qspgui",
+    "darwin": "/Applications/QSP.app/Contents/MacOS/qspgui"
+  }
+  ```
 - **Separate module builds** — set `"buildMode": "perFile"` in `txt2gam.json` (or the `qsp.game.buildMode` setting) to build each source file into its own `.qsp` next to it instead of one combined game: `main.qsps` → `main.qsp`, `data.qsps` → `data.qsp`. `outputFile` is not used in this mode. **Run QSP Game** starts the main file's `.qsp` (see above), and the game loads the other modules itself with `INCLIB 'data.qsp'`. When it creates `txt2gam.json` in this mode, the setup wizard writes `buildMode` instead of `outputFile`. A `.qsp` whose content hasn't changed is not rewritten. The `txt2gam.json` value overrides the setting. Two sources that would produce the same `.qsp` (e.g. `a.qsps` and `a.qsrc` in one folder) are reported as an error, and nothing is written if any file fails to build.
 
 ### Multi-File Operations
@@ -137,7 +145,7 @@ Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Vi
 | `qsp.project.enabled` | `true` | Enable project mode: treat all `.qsps`/`.qsrc` files as one combined game |
 | `qsp.trace.server`    | `off`  | Traces LSP communication (`off`, `messages`, `verbose`) |
 | `qsp.semanticHighlighting.enabled` | `true` | Enable semantic token highlighting (requires tree-sitter) |
-| `qsp.game.playerExecutable` | — | Path to the QSP player executable used by Run Game. Set once and persisted globally. |
+| `qsp.game.playerExecutable` | — | Path to the QSP player executable used by Run Game. Set once and persisted globally. `playerExecutable` in `txt2gam.json` overrides it. |
 | `qsp.game.mainFile` | — | Regular expression for the main file, searched in workspace-relative paths (e.g. `^main\.qsps$`). Overridden by `mainFile` in `txt2gam.json` |
 | `qsp.game.mainFileStrategy` | `ask` | How the setup wizard picks the main file when none is configured: `ask` shows a list (dismiss → root files first), `root` puts root files first without asking |
 | `qsp.game.buildMode` | `single` | `single` builds one combined `.qsp`; `perFile` builds each source into its own `.qsp` next to it. Overridden by `buildMode` in `txt2gam.json` |

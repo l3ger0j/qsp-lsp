@@ -15,7 +15,8 @@
  *     "locations/**\/*.qsps"
  *   ],
  *   "buildMode": "perFile",               // optional: "single" | "perFile"
- *   "mainFile": "^main\\.qsps$"            // optional regexp for the main file
+ *   "mainFile": "^main\\.qsps$",           // optional regexp for the main file
+ *   "playerExecutable": "tools/qspgui"    // optional; or { "win32": …, "linux": …, "darwin": … }
  * }
  *
  * If "files" is absent, Run and Export write the discovered sources into
@@ -33,6 +34,11 @@
  * main file and is moved to the front, so in "single" mode its first
  * location starts the game. It overrides the `qsp.game.mainFile` setting.
  * With neither set, the main file is simply the first one in order.
+ *
+ * "playerExecutable" is the player Run QSP Game launches, overriding the
+ * `qsp.game.playerExecutable` setting. A path with a separator is relative
+ * to the workspace root, a bare name is looked up on PATH. The object form
+ * holds one path per OS, since the file is shared between machines.
  */
 
 import * as vscode from 'vscode';
@@ -65,6 +71,11 @@ export interface GameConfig {
   buildMode?: BuildMode;
   /** Regexp for the main file; overrides the `qsp.game.mainFile` setting. */
   mainFile?: string;
+  /**
+   * Player for Run QSP Game: one path, or one per `process.platform`.
+   * Overrides the `qsp.game.playerExecutable` setting.
+   */
+  playerExecutable?: string | Partial<Record<'win32' | 'darwin' | 'linux', string>>;
 }
 
 /** Main-file regexp for this project: txt2gam.json, then the `qsp.game.mainFile` setting. */
