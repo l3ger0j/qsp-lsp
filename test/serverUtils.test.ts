@@ -1,17 +1,17 @@
 /**
- * `connection.console.*` and `connection.sendDiagnostics` throw
- * synchronously once the LSP connection is closed or disposed — this
- * happens for real when a debounced analysis timer fires after a client
- * disconnects mid-edit. `safeConsole`/`safeSendDiagnostics` must swallow
- * exactly that (Closed/Disposed), and nothing else.
+ * `connection.console.*` throws synchronously once the LSP connection is
+ * closed or disposed, and `connection.sendDiagnostics` can also reject
+ * asynchronously when the write itself fails. Both happen for real when a
+ * debounced analysis timer fires after a client disconnects mid-edit.
+ * `safeConsole`/`safeSendDiagnostics` must swallow exactly Closed/Disposed
+ * and let anything else surface.
  *
- * A real transport is deliberately not used here: destroying the actual
- * duplex streams to provoke this race also races vscode-jsonrpc's own
- * write-queue semaphore, which has its own pre-existing unhandled-rejection
- * behavior on a torn-down stream — a separate, third-party issue, not
- * something introduced or fixed by safeConsole/safeSendDiagnostics. A fake
- * connection that throws exactly the error these wrappers are meant to
- * catch tests the actual fix without that unrelated noise.
+ * A fake connection is used instead of a real transport: tearing down real
+ * streams mid-write also triggers vscode-jsonrpc's `sendRequest`, whose
+ * `new Promise(async …)` executor rethrows the write error after rejecting
+ * the caller's promise. That rethrow rejects a promise nobody holds, so no
+ * caller-side `.catch` can reach it — a third-party issue these wrappers
+ * don't cover.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { ConnectionError, ConnectionErrors } from 'vscode-jsonrpc';
