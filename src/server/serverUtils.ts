@@ -107,17 +107,19 @@ export function makeLocSymLoc(uri: string, text: string, loc: LocationEntry): Sy
  * `ConnectionErrors.Closed` and `ConnectionErrors.Disposed` errors.
  * These occur when a debounced timer fires after the LSP connection has
  * been torn down (e.g. at test teardown), and they are harmless.
+ *
+ * Unlike `connection.console.*` (which vscode-languageserver already
+ * `.catch`es internally), `sendDiagnostics` returns the underlying
+ * `sendNotification` promise uncaught — if the transport write itself
+ * fails (the stream closes between the synchronous not-closed check and
+ * the write completing), that becomes an unhandled rejection unless we
+ * catch it here too.
  */
 export function safeSendDiagnostics(
   connection: Connection,
   params: Parameters<Connection['sendDiagnostics']>[0],
 ): void {
-  try {
-    connection.sendDiagnostics(params);
-  } catch (err) {
-    if (err instanceof ConnectionError && (err.code === ConnectionErrors.Closed || err.code === ConnectionErrors.Disposed)) return;
-    throw err;
-  }
+  safeConnectionCall(() => connection.sendDiagnostics(params));
 }
 
 /**
@@ -145,4 +147,20 @@ export function safeConnectionCall(fn: () => void | Promise<unknown>): void {
     if (err instanceof ConnectionError && (err.code === ConnectionErrors.Closed || err.code === ConnectionErrors.Disposed)) return;
     throw err;
   }
+}
+
+/**
+ * `connection.console.*` throws synchronously (not a rejected promise) once
+ * the connection is closed or disposed — a debounced analysis timer that
+ * fires during test teardown, or after a client disconnects, would crash
+ * the process on its next log line otherwise. Wraps every method with
+ * `safeConnectionCall` so logging after teardown is silently dropped.
+ */
+export function safeConsole(connection: Connection): Pick<Connection['console'], 'error' | 'warn' | 'info' | 'log'> {
+  return {
+    error: (m: string) => safeConnectionCall(() => connection.console.error(m)),
+    warn: (m: string) => safeConnectionCall(() => connection.console.warn(m)),
+    info: (m: string) => safeConnectionCall(() => connection.console.info(m)),
+    log: (m: string) => safeConnectionCall(() => connection.console.log(m)),
+  };
 }

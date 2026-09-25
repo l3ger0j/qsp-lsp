@@ -42,7 +42,7 @@ import {
 import type { DiagnosticSettings } from './diagnostics';
 import type { DocumentState } from './lspFeatures';
 import { computeDiagnostics } from './diagnostics';
-import { stripBom, makeLocSymLoc, QSP_FILE_EXTENSIONS, safeSendDiagnostics, type FsProvider } from './serverUtils';
+import { stripBom, makeLocSymLoc, QSP_FILE_EXTENSIONS, safeSendDiagnostics, safeConsole, type FsProvider } from './serverUtils';
 
 /**
  * Files at or above this size are parsed per-location instead of as one
@@ -90,6 +90,13 @@ export class ProjectModeService {
     private tsParser: QspTreeSitterParser,
   ) {}
 
+  // A debounced/async operation can complete after the connection is
+  // closed/disposed (test teardown, client disconnect) — connection.console.*
+  // throws synchronously in that case, so logging goes through this wrapper.
+  private get log(): ReturnType<typeof safeConsole> {
+    return safeConsole(this.connection);
+  }
+
   // ── Lifecycle ───────────────────────────────────────────────────────
 
   /**
@@ -110,7 +117,7 @@ export class ProjectModeService {
     collectPeerDocs: (ownUri: string) => DocumentSymbols[],
     diagnosticsSettings: DiagnosticSettings,
   ): Promise<void> {
-    this.connection.console.log('[QSP] Initializing project mode...');
+    this.log.log('[QSP] Initializing project mode...');
     this.projectFileUris.clear();
 
     // Discover all QSP files in workspace folders. `findFiles` already
@@ -130,7 +137,7 @@ export class ProjectModeService {
               const text = await fsProvider.readFile(filePath, fileEncoding);
               this.analyzeFile(uri, text);
             } catch (e) {
-              this.connection.console.error(`[QSP] Failed to read project file ${filePath}: ${e}`);
+              this.log.error(`[QSP] Failed to read project file ${filePath}: ${e}`);
             }
           }
 
@@ -150,14 +157,14 @@ export class ProjectModeService {
     // Build aggregates and re-diagnose everything
     this.rebuildAndReanalyzeAll(diagnosticsSettings, collectCallTypes, collectPeerDocs);
 
-    this.connection.console.log(
+    this.log.log(
       `[QSP] Project mode initialized with ${this.projectFileUris.size} files`,
     );
   }
 
   /** Tear down project mode: clear non-open file states, clear aggregates. */
   teardown(): void {
-    this.connection.console.log('[QSP] Tearing down project mode');
+    this.log.log('[QSP] Tearing down project mode');
 
     // Clear diagnostics for non-open files
     for (const uri of this.projectFileUris) {
@@ -413,7 +420,7 @@ export class ProjectModeService {
   ): Promise<void> {
     if (changeType === FileChangeType.Deleted) {
       const label = uri.split('/').pop() ?? uri;
-      this.connection.console.log(`[QSP] File deleted: ${label}`);
+      this.log.log(`[QSP] File deleted: ${label}`);
       // File deleted — remove from project
       this.projectFileUris.delete(uri);
       if (!this.documents.get(uri)) {
@@ -425,7 +432,7 @@ export class ProjectModeService {
 
     // Created or changed
     const label = uri.split('/').pop() ?? uri;
-    this.connection.console.log(`[QSP] File ${changeType === FileChangeType.Created ? 'created' : 'changed'}: ${label}`);
+    this.log.log(`[QSP] File ${changeType === FileChangeType.Created ? 'created' : 'changed'}: ${label}`);
     this.projectFileUris.add(uri);
 
     const openDoc = this.documents.get(uri);
@@ -437,7 +444,7 @@ export class ProjectModeService {
         this.analyzeFile(uri, text);
       } catch (e) {
         const filePath = uri.split('/').pop() ?? uri;
-        this.connection.console.error(`[QSP] Failed to read project file ${filePath}: ${e}`);
+        this.log.error(`[QSP] Failed to read project file ${filePath}: ${e}`);
       }
     } else if (openDoc) {
       // File IS open in editor.  The watcher fires as soon as the file

@@ -32,7 +32,7 @@ import {
 import { type SymbolAggregates, buildFileAggregates, collectCallTypesPerTarget as collectCallTypesPerTargetFromSymbols, isAggContributionStable } from './aggregation';
 import { computeDiagnostics, type DiagnosticSettings } from './diagnostics';
 import { registerLspFeatures, type DocumentState, type PerLocationParseResult } from './lspFeatures';
-import { stripBom, shiftErrors, makeLocSymLoc, perLocationCacheKeys, safeSendDiagnostics, safeConnectionCall, QSP_FILE_EXTENSIONS, type FsProvider } from './serverUtils';
+import { stripBom, shiftErrors, makeLocSymLoc, perLocationCacheKeys, safeSendDiagnostics, safeConnectionCall, safeConsole, QSP_FILE_EXTENSIONS, type FsProvider } from './serverUtils';
 import { ProjectModeService } from './projectMode';
 
 // Re-export FsProvider for backward compatibility.
@@ -159,11 +159,15 @@ export function createQspServer(
   wasmDir?: () => string,
   fsProvider?: FsProvider,
 ): void {
+  // A debounced timer can fire after the connection is closed/disposed (test
+  // teardown, client disconnect) — connection.console.* throws synchronously
+  // in that case, so every log call in this module goes through this wrapper.
+  const log = safeConsole(connection);
   const documentStates = new Map<string, DocumentState>();
   const tsParser = new QspTreeSitterParser();
   // Surface non-timeout parse failures (e.g. a WASM runtime error) in the
   // server log instead of letting them pass as silent timeouts.
-  tsParser.setErrorReporter((message) => connection.console.error(message));
+  tsParser.setErrorReporter((message) => log.error(message));
 
   /**
    * Invalidate every open document's cached semantic tokens, then ask
@@ -282,21 +286,21 @@ export function createQspServer(
     // — project mode is a no-op otherwise.
     if (fsProvider && params.workspaceFolders) {
       project.workspaceFolders = params.workspaceFolders.map(f => fsProvider.uriToPath(f.uri));
-      connection.console.log(`[QSP] Workspace folders: ${project.workspaceFolders.join(', ')}`);
+      log.log(`[QSP] Workspace folders: ${project.workspaceFolders.join(', ')}`);
     }
 
     // Initialize tree-sitter in the background (non-blocking)
     if (wasmLoader) {
       try {
         await tsParser.init(wasmLoader, wasmDir);
-        connection.console.log('[QSP] Tree-sitter parser initialized');
+        log.log('[QSP] Tree-sitter parser initialized');
 
         // Re-analyze all open documents now that tree-sitter is ready
         for (const doc of documents.all()) {
           analyzeDocument(doc);
         }
       } catch (e) {
-        connection.console.error(`[QSP] Tree-sitter init failed: ${e}`);
+        log.error(`[QSP] Tree-sitter init failed: ${e}`);
         // Without tree-sitter every feature silently degrades to regex
         // analysis, so the user must hear about it. window/showMessageRequest
         // is one of the few messages allowed before the initialize response.
@@ -306,7 +310,7 @@ export function createQspServer(
         ));
       }
     } else {
-      connection.console.log('[QSP] Running in lite mode (no tree-sitter parser — regex-only analysis)');
+      log.log('[QSP] Running in lite mode (no tree-sitter parser — regex-only analysis)');
     }
 
     return {
@@ -351,7 +355,7 @@ export function createQspServer(
       safeConnectionCall(() => connection.client.register(DidChangeWatchedFilesNotification.type, {
         watchers: globs.map(globPattern => ({ globPattern })),
       }));
-      connection.console.log(`[QSP] Watching: ${globs.join(', ')}`);
+      log.log(`[QSP] Watching: ${globs.join(', ')}`);
     }
 
     // Read initial settings and potentially start project mode
@@ -362,7 +366,7 @@ export function createQspServer(
       fileEncoding = filesConfig?.encoding ?? 'utf8';
       settings = parseSettingsFromConfig(qspConfig as Record<string, unknown> | undefined);
       project.embeddedExecEnabled = settings.embeddedExec.enabled;
-      connection.console.log(`[QSP] Server ready (encoding: ${fileEncoding}, project: ${settings.project.enabled}, embeddedExec: ${settings.embeddedExec.enabled})`);
+      log.log(`[QSP] Server ready (encoding: ${fileEncoding}, project: ${settings.project.enabled}, embeddedExec: ${settings.embeddedExec.enabled})`);
       if (settings.project.enabled) {
         // Async: scans the workspace and reads/parses files off the main
         // synchronous path so other LSP requests keep being served while
@@ -404,7 +408,7 @@ export function createQspServer(
       project.embeddedExecEnabled = settings.embeddedExec.enabled;
 
       if (settings.embeddedExec.enabled !== prevEmbeddedExec) {
-        connection.console.log(`[QSP] embeddedExec.enabled: ${prevEmbeddedExec} → ${settings.embeddedExec.enabled}`);
+        log.log(`[QSP] embeddedExec.enabled: ${prevEmbeddedExec} → ${settings.embeddedExec.enabled}`);
       }
       // Re-analyze all open documents with new settings
       for (const doc of documents.all()) {
@@ -413,10 +417,10 @@ export function createQspServer(
 
       // Handle project mode toggling
       if (settings.project.enabled && !prevProjectEnabled) {
-        connection.console.log('[QSP] project.enabled: false → true');
+        log.log('[QSP] project.enabled: false → true');
         await project.init(fsProvider, fileEncoding, () => collectCallTypesPerTarget(documentStates), (ownUri: string) => collectPeerDocs(documentStates, ownUri), settings.diagnostics);
       } else if (!settings.project.enabled && prevProjectEnabled) {
-        connection.console.log('[QSP] project.enabled: true → false');
+        log.log('[QSP] project.enabled: true → false');
         project.teardown();
         // Re-analyze open documents without project aggregates
         for (const doc of documents.all()) {
@@ -531,10 +535,10 @@ export function createQspServer(
         (err: unknown) => {
           // A file deleted on disk is dropped from the project by the file watcher.
           if ((err as { code?: unknown } | null)?.code === 'ENOENT') return;
-          safeConnectionCall(() => connection.console.error(`[QSP] Failed to re-read closed project file ${filePath}: ${err}`));
+          log.error(`[QSP] Failed to re-read closed project file ${filePath}: ${err}`);
         },
       ).catch((err: unknown) => {
-        safeConnectionCall(() => connection.console.error(`[QSP] Failed to re-analyze closed project file ${filePath}: ${err}`));
+        log.error(`[QSP] Failed to re-analyze closed project file ${filePath}: ${err}`);
       });
     } else {
       // Clear any diagnostics we previously published for this URI so
@@ -665,7 +669,7 @@ export function createQspServer(
       const tree = tsParser.parse(doc.uri, text);
       if (!tree) {
         const label = doc.uri.split('/').pop() ?? doc.uri;
-        connection.console.warn(`[QSP] Whole-file parse of ${label} failed or timed out, switching to per-location parsing`);
+        log.warn(`[QSP] Whole-file parse of ${label} failed or timed out, switching to per-location parsing`);
         fullParseFailedUris.add(doc.uri);
         analyzeDocumentPerLocation(doc, text);
         return;
@@ -701,7 +705,7 @@ export function createQspServer(
     // gap here so the Outline view stays complete during mid-edit.
     if (treeHasErrors) {
       const label = doc.uri.split('/').pop() ?? doc.uri;
-      connection.console.log(`[QSP] Tree-sitter: parse errors in ${label}`);
+      log.log(`[QSP] Tree-sitter: parse errors in ${label}`);
       for (const loc of locationIndex) {
         // Skip locations reused from a previous incremental parse —
         // they already contain merge results from the previous cycle.
@@ -1020,7 +1024,7 @@ export function createQspServer(
     // ── Full analysis (initial load or structural change) ─────────
     const locationIndex = buildLocationIndex(text);
     const label = doc.uri.split('/').pop() ?? doc.uri;
-    connection.console.log(`[QSP] Per-location parse: ${label} (${locationIndex.length} locations, ${Math.round(text.length / 1024)}kb)`);
+    log.log(`[QSP] Per-location parse: ${label} (${locationIndex.length} locations, ${Math.round(text.length / 1024)}kb)`);
     const symbols = new DocumentSymbols(doc.uri);
     const allErrors: SyntaxError[] = [];
 
