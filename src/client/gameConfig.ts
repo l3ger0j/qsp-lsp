@@ -13,16 +13,23 @@
  *     "intro.qsps",
  *     "main/*.qsps",
  *     "locations/**\/*.qsps"
- *   ]
+ *   ],
+ *   "buildMode": "perFile"                // optional: "single" | "perFile"
  * }
  *
  * If "files" is absent, all *.qsps / *.qsrc files are collected and
  * sorted alphabetically (existing behaviour).
  * Each glob entry's matches are sorted alphabetically among themselves.
  * A file already matched by an earlier entry is not repeated.
+ *
+ * "buildMode" overrides the `qsp.game.buildMode` setting for this project.
+ * In "perFile" mode each source becomes its own .qsp next to it and
+ * "outputFile" is not used; the first file in order is the one the player
+ * starts.
  */
 
 import * as vscode from 'vscode';
+import { resolveBuildMode, type BuildMode } from '../common/buildPlan';
 import * as logger from './logger';
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -35,6 +42,16 @@ export interface GameConfig {
    * Absent → collect all QSP source files alphabetically.
    */
   files?: string[];
+  /** Overrides the `qsp.game.buildMode` setting for this project. */
+  buildMode?: BuildMode;
+}
+
+/** Build mode for this project: txt2gam.json, then the `qsp.game.buildMode` setting, then `single`. */
+export function effectiveBuildMode(cfg: GameConfig | undefined): BuildMode {
+  return resolveBuildMode(
+    cfg?.buildMode,
+    vscode.workspace.getConfiguration('qsp.game').get<string>('buildMode'),
+  );
 }
 
 const CONFIG_FILENAME = 'txt2gam.json';
@@ -99,22 +116,28 @@ export async function ensureGameConfig(
   logger.log('[Config] Creating txt2gam.json...');
   const root = workspaceRoot();
   const defaultName = (root?.path.split('/').pop() ?? 'game') + '.qsp';
-  const defaultUri = root
-    ? vscode.Uri.joinPath(root, defaultName)
-    : vscode.Uri.file(defaultName);
 
-  const saveUri = await vscode.window.showSaveDialog({
-    title: 'Choose output .qsp file',
-    defaultUri,
-    filters: { 'QSP Game': ['qsp'] },
-  });
-  if (!saveUri) return undefined; // cancelled
+  let outputFile = defaultName;
+  // perFile builds write next to each source, so there is no output file to choose.
+  // The default name is still stored for switching back to `single`.
+  if (effectiveBuildMode(undefined) === 'single') {
+    const defaultUri = root
+      ? vscode.Uri.joinPath(root, defaultName)
+      : vscode.Uri.file(defaultName);
 
-  // Store relative to the workspace root if possible, otherwise absolute.
-  const rootFsPath = root?.fsPath ?? '';
-  const outputFile = rootFsPath && saveUri.fsPath.startsWith(rootFsPath)
-    ? saveUri.fsPath.slice(rootFsPath.length).replace(/^[/\\]/, '').replace(/\\/g, '/')
-    : saveUri.fsPath.replace(/\\/g, '/');
+    const saveUri = await vscode.window.showSaveDialog({
+      title: 'Choose output .qsp file',
+      defaultUri,
+      filters: { 'QSP Game': ['qsp'] },
+    });
+    if (!saveUri) return undefined; // cancelled
+
+    // Store relative to the workspace root if possible, otherwise absolute.
+    const rootFsPath = root?.fsPath ?? '';
+    outputFile = rootFsPath && saveUri.fsPath.startsWith(rootFsPath)
+      ? saveUri.fsPath.slice(rootFsPath.length).replace(/^[/\\]/, '').replace(/\\/g, '/')
+      : saveUri.fsPath.replace(/\\/g, '/');
+  }
 
   // Auto-populate files list from currently discovered QSP sources,
   // collapsing files in the same directory into directory globs.

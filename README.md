@@ -49,6 +49,7 @@ Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Vi
   }
   ```
   `outputFile` is relative to the workspace root. `files` controls the order in which source files are combined (each entry is a glob; omit `files` to collect all `.qsps`/`.qsrc` files alphabetically).
+- **Separate module builds** — set `"buildMode": "perFile"` in `txt2gam.json` (or the `qsp.game.buildMode` setting) to build each source file into its own `.qsp` next to it instead of one combined game: `main.qsps` → `main.qsp`, `data.qsps` → `data.qsp`. `outputFile` is not used in this mode. **Run QSP Game** starts the first file in `files` order, and the game loads the other modules itself with `INCLIB 'data.qsp'`. The `txt2gam.json` value overrides the setting. Two sources that would produce the same `.qsp` (e.g. `a.qsps` and `a.qsrc` in one folder) are reported as an error, and nothing is written if any file fails to build.
 
 ### Multi-File Operations
 - **List All Locations** — browse all locations across the file or project
@@ -131,6 +132,7 @@ Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Vi
 | `qsp.trace.server`    | `off`  | Traces LSP communication (`off`, `messages`, `verbose`) |
 | `qsp.semanticHighlighting.enabled` | `true` | Enable semantic token highlighting (requires tree-sitter) |
 | `qsp.game.playerExecutable` | — | Path to the QSP player executable used by Run Game. Set once and persisted globally. |
+| `qsp.game.buildMode` | `single` | `single` builds one combined `.qsp`; `perFile` builds each source into its own `.qsp` next to it. Overridden by `buildMode` in `txt2gam.json` |
 | `qsp.game.password` | — | Default game password for export/import (leave blank for no password) |
 | `qsp.game.promptPassword` | `true` | Prompt for a password before each export |
 

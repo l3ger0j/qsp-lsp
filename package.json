@@ -578,6 +578,19 @@
           "default": true,
           "description": "When exporting a game, prompt for the password. The configured password is shown as the default value. Disable to export silently using only the configured password."
         },
+        "qsp.game.buildMode": {
+          "type": "string",
+          "enum": [
+            "single",
+            "perFile"
+          ],
+          "enumDescriptions": [
+            "Combine all project source files into one .qsp file (the output path comes from txt2gam.json).",
+            "Build each source file into its own .qsp next to it (data.qsps → data.qsp). 'Run QSP Game' starts the first file in txt2gam.json order; the game loads the others with INCLIB."
+          ],
+          "default": "single",
+          "description": "How 'Export QSP Game' and 'Run QSP Game' build a project in project mode. A \"buildMode\" field in txt2gam.json overrides this setting for that project."
+        },
         "qsp.game.playerExecutable": {
           "type": "string",
           "default": "",
