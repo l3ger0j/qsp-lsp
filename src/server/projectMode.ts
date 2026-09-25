@@ -450,8 +450,8 @@ export class ProjectModeService {
    * disk where needed) and rebuilds aggregates + re-diagnoses ONCE at
    * the end, rather than once per change. A single external event (e.g.
    * `git checkout` touching hundreds of files, or a workspace-wide
-   * find-and-replace) previously triggered one full project rebuild per
-   * changed file.
+   * find-and-replace) would otherwise trigger one full project rebuild
+   * per changed file.
    */
   async handleWatchedFileChanges(
     changes: readonly { uri: string; type: number }[],

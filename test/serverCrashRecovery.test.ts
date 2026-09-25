@@ -3,21 +3,20 @@
  * LSP client rejects (or doesn't support) requests the server fires and
  * forgets, or when it starts up with tree-sitter disabled/lite mode.
  *
- * Bug context
- * ───────────
+ * Why
+ * ───
  * `connection.client.register(...)`, `connection.workspace
- * .getConfiguration(...).then(...)` (without `.catch`), and
- * `connection.languages.semanticTokens.refresh()` (called through
- * `safeConnectionCall`, whose `fn` signature used to be `() => void`,
- * silently discarding the returned Promise) all return Promises that
- * were never awaited or given a rejection handler.
+ * .getConfiguration(...)`, and `connection.languages.semanticTokens
+ * .refresh()` all return Promises that the server fires and forgets.
+ * Each needs a rejection handler (`.catch`, or `safeConnectionCall`,
+ * which attaches one when `fn` returns a Promise).
  *
  * Neither `vscode-languageserver` nor `vscode-jsonrpc` installs a
  * process-level `unhandledRejection` handler, so Node's default applies:
  * an unhandled rejection becomes an uncaught exception that kills the
  * process. A perfectly LSP-compliant client that simply doesn't support
- * dynamic registration, or responds slower/differently to
- * `workspace/configuration`, would take the whole server down —
+ * dynamic registration, or responds differently to
+ * `workspace/configuration`, must not take the whole server down —
  * VS Code happens to support all three calls, but other clients
  * (Neovim, Helix, Zed, Sublime via an LSP plugin) may not.
  *

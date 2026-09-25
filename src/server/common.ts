@@ -344,8 +344,8 @@ export function createQspServer(
     if (!settings.project.enabled) return;
     // Apply the whole batch of changes and rebuild project aggregates
     // ONCE at the end, instead of once per changed file (a `git
-    // checkout` touching hundreds of files used to trigger hundreds of
-    // full project rebuilds). Fire-and-forget: this is a notification
+    // checkout` touching hundreds of files would otherwise trigger
+    // hundreds of full project rebuilds). Fire-and-forget: this is a notification
     // handler, so nothing awaits its result; rejections are caught here
     // so they can't become unhandled rejections that crash the server.
     project.handleWatchedFileChanges(

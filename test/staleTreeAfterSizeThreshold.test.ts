@@ -3,28 +3,24 @@
  * `PER_LOCATION_BYTE_THRESHOLD` (500 KB) must not leave hover using a
  * stale, small, whole-document tree-sitter tree.
  *
- * Bug context
- * ───────────
+ * Why
+ * ───
  * `analyzeDocumentFullTree` caches a whole-document tree in
  * `QspTreeSitterParser` keyed by the document URI (`tsParser.parse(uri,
  * text)`). Once a document grows to/above the per-location threshold,
- * `analyzeDocumentPerLocation` takes over and stops calling
- * `tsParser.parse(uri, …)` for the whole document — but it never told
- * `tsParser` to drop the old whole-document tree either. That stale
- * tree lingers in `tsParser`'s internal map (a memory leak), AND
- * `tsParser.getTree(uri)` — used by hover / document-highlight in
- * lspFeatures.ts — kept returning it instead of `null`, so those code
- * paths never fell through to the (correct) `perLocationCache` branch.
+ * `analyzeDocumentPerLocation` takes over and must drop that tree
+ * (`tsParser.removeTree(doc.uri)`). Otherwise it lingers in
+ * `tsParser`'s internal map (a memory leak), AND `tsParser.getTree(uri)`
+ * — used by hover / document-highlight in lspFeatures.ts — keeps
+ * returning it instead of `null`, so those code paths never fall through
+ * to the (correct) `perLocationCache` branch.
  *
  * Concretely: hover's "Possible values" resolver looks up the AST node
- * under the cursor via that tree. If the cursor is now at a line number
+ * under the cursor via that tree. If the cursor is at a line number
  * that only exists in the NEW, much larger content, but the stale tree
  * only has the OLD few-line content, the node lookup fails silently and
  * the resolved value goes missing from the hover — even though the
  * correct per-location tree (with the correct line offset) has it.
- *
- * Fixed by common.ts's analyzeDocumentPerLocation calling
- * `tsParser.removeTree(doc.uri)` before doing per-location analysis.
  *
  * Test approach
  * ─────────────

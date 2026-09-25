@@ -1,29 +1,21 @@
 /**
- * Regression tests for project-mode's synchronous, blocking I/O.
+ * Regression tests: project mode must not block the LSP server.
  *
- * Bug context
- * ───────────
- * `ProjectModeService.init()` used to walk the whole workspace with
- * `readdirSync`/`readFileSync` and parse every file, all synchronously,
- * on the LSP server's single thread — no other request could be served
- * until the entire scan finished. `handleFileChange` rebuilt the full
- * project aggregate and re-diagnosed every project file once PER
- * changed file, so a batch of watcher events (e.g. `git checkout`
- * touching hundreds of files) triggered hundreds of full rebuilds.
- * `analyzeFile` always parsed a project file as a single tree-sitter
- * tree regardless of size, which for a multi-MB file can itself take
- * seconds (the same GLR blowup `PER_LOCATION_BYTE_THRESHOLD` exists to
- * avoid for *open* documents in common.ts).
- *
- * Fixed by:
- *  - making `FsProvider.readFile`/`findFiles` async, and `init()` an
- *    async generator consumer that yields to the event loop between
- *    files (see nodeMain.ts and serverUtils.ts's FsProvider doc comment);
- *  - splitting `handleFileChange` into `applyFileChange` (no rebuild) +
- *    `handleWatchedFileChanges` (applies a whole batch, rebuilds once);
- *  - giving `analyzeFile` the same per-location parsing path as
- *    common.ts's `analyzeDocumentPerLocation` for files at/above
- *    `PROJECT_PER_LOCATION_BYTE_THRESHOLD`.
+ * Why
+ * ───
+ * The server runs on a single thread. A workspace scan that reads and
+ * parses every file in one synchronous block stops every other request
+ * (hover, completion, …) until it finishes, so:
+ *  - `init()` consumes `FsProvider.findFiles` (an async iterable) and
+ *    `await`s each `readFile`, yielding to the event loop between files
+ *    (see the FsProvider doc comment in serverUtils.ts);
+ *  - `handleWatchedFileChanges` applies a whole batch of watcher events
+ *    and rebuilds the project aggregate ONCE — a `git checkout` touching
+ *    hundreds of files must not trigger hundreds of full rebuilds;
+ *  - `analyzeFile` parses files at/above
+ *    `PROJECT_PER_LOCATION_BYTE_THRESHOLD` one location at a time — a
+ *    single multi-MB parse can take seconds (the same GLR blowup
+ *    `PER_LOCATION_BYTE_THRESHOLD` avoids for open documents).
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import * as fs from 'fs';

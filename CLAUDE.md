@@ -60,6 +60,15 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
 ❌ Don't: assume tree-sitter is ready (browser mode, initial load).
 ✅ Do: guard with `tsParser.isReady` and fall back to `regexFallback.ts`.
 
+**Comments** (explain WHY, not WHAT; if unsure whether a comment is obvious, keep it and list it for review)
+❌ Don't: restate the next line or the TS signature.
+   `// increment counter` above `counter++`; `// takes a string, returns a number` above `parse(input: string): number`.
+✅ Do: say what the code can't — a non-obvious choice, a library workaround, a QSP rule, a side effect or ordering dependency.
+   e.g. the `parser.reset()` note in `treeSitter.ts` (web-tree-sitter resumes a halted parse unless reset).
+
+❌ Don't: leave changelog notes (authors, dates, "fixed by X") or commented-out code without a reason.
+✅ Do: put history in commit messages; a TODO/FIXME must say why (and link an issue if there is one).
+
 ## Build & Verification Commands
 
 | Task | Command |
@@ -98,5 +107,13 @@ For grammar changes, also run the corpus tests above.
 - **Project mode** (`projectMode.ts`) merges symbols across files. Cross-file features must work in
   single-file mode and in project mode.
 - **Semantic tokens:** if you change `SEMANTIC_TOKENS_LEGEND`, update `semanticTokenScopes` in `package.json` too.
-- Match the existing style: section banners (`// ── Name ───`), JSDoc on exported functions, `_`-prefixed unused args.
+- Match the existing style: section banners and comments as described in **Comments** below, `_`-prefixed unused args.
 - Don't commit `out/`, `vendor/`, `*.vsix`, or generated tree-sitter sources.
+
+## Comments
+
+Content rules are in **Critical Invariants → Comments**. Style:
+- Section banners: use `// ── Name ───` in new code. Leave existing `// ==== NAME ====` banners and unnamed dividers as they are.
+- `/** */` JSDoc on exported functions, classes and public interface members. Internal helpers get `//` or nothing,
+  unless the logic is non-obvious. Applies to new code only — existing JSDoc on internal helpers stays.
+- `//` for single-line notes, not `/* */`. No comment directly above `return` unless it explains the returned expression.
