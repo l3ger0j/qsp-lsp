@@ -48,8 +48,8 @@ Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Vi
     ]
   }
   ```
-  `outputFile` is relative to the workspace root. `files` controls the order in which source files are combined (each entry is a glob; omit `files` to collect all `.qsps`/`.qsrc` files alphabetically).
-- **Separate module builds** — set `"buildMode": "perFile"` in `txt2gam.json` (or the `qsp.game.buildMode` setting) to build each source file into its own `.qsp` next to it instead of one combined game: `main.qsps` → `main.qsp`, `data.qsps` → `data.qsp`. `outputFile` is not used in this mode. **Run QSP Game** starts the first file in `files` order, and the game loads the other modules itself with `INCLIB 'data.qsp'`. The `txt2gam.json` value overrides the setting. Two sources that would produce the same `.qsp` (e.g. `a.qsps` and `a.qsrc` in one folder) are reported as an error, and nothing is written if any file fails to build.
+  `outputFile` is relative to the workspace root (default: `<folder name>.qsp`). `files` controls the order in which source files are combined (each entry is a glob; omit `files` to collect all `.qsps`/`.qsrc` files alphabetically).
+- **Separate module builds** — set `"buildMode": "perFile"` in `txt2gam.json` (or the `qsp.game.buildMode` setting) to build each source file into its own `.qsp` next to it instead of one combined game: `main.qsps` → `main.qsp`, `data.qsps` → `data.qsp`. `outputFile` is not used in this mode. **Run QSP Game** starts the first file in `files` order, and the game loads the other modules itself with `INCLIB 'data.qsp'`. When it creates `txt2gam.json` in this mode, the setup wizard asks which file is the start file (dismiss it to put files from the workspace root first) and writes `buildMode` instead of `outputFile`. A `.qsp` whose content hasn't changed is not rewritten. The `txt2gam.json` value overrides the setting. Two sources that would produce the same `.qsp` (e.g. `a.qsps` and `a.qsrc` in one folder) are reported as an error, and nothing is written if any file fails to build.
 
 ### Multi-File Operations
 - **List All Locations** — browse all locations across the file or project

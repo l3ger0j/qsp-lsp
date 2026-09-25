@@ -8,7 +8,7 @@
  *
  * Schema:
  * {
- *   "outputFile": "mygame.qsp",          // relative to workspace root
+ *   "outputFile": "mygame.qsp",          // relative to workspace root; default <folder>.qsp
  *   "files": [                            // optional ordered list of globs
  *     "intro.qsps",
  *     "main/*.qsps",
@@ -29,14 +29,17 @@
  */
 
 import * as vscode from 'vscode';
-import { resolveBuildMode, type BuildMode } from '../common/buildPlan';
+import { orderForEntryPoint, resolveBuildMode, type BuildMode } from '../common/buildPlan';
 import * as logger from './logger';
 
 // ── Types ─────────────────────────────────────────────────────────────
 
 export interface GameConfig {
-  /** Output .qsp path, relative to the workspace root. */
-  outputFile: string;
+  /**
+   * Output .qsp path for `single` builds, relative to the workspace root.
+   * Absent → `<workspace folder name>.qsp`. Not used by `perFile` builds.
+   */
+  outputFile?: string;
   /**
    * Ordered list of glob patterns (relative to workspace root).
    * Absent → collect all QSP source files alphabetically.
@@ -96,7 +99,7 @@ export async function writeGameConfig(cfg: GameConfig): Promise<void> {
   if (!uri) throw new Error('No workspace folder open.');
   const json = JSON.stringify(cfg, null, 2) + '\n';
   await vscode.workspace.fs.writeFile(uri, Buffer.from(json, 'utf8'));
-  logger.log(`[Config] Wrote txt2gam.json: outputFile=${cfg.outputFile}`);
+  logger.log(`[Config] Wrote txt2gam.json: ${cfg.buildMode === 'perFile' ? 'buildMode=perFile' : `outputFile=${cfg.outputFile}`}`);
 }
 
 // ── Setup wizard ──────────────────────────────────────────────────────
@@ -117,10 +120,10 @@ export async function ensureGameConfig(
   const root = workspaceRoot();
   const defaultName = (root?.path.split('/').pop() ?? 'game') + '.qsp';
 
-  let outputFile = defaultName;
+  const mode = effectiveBuildMode(undefined);
+  let outputFile: string | undefined;
   // perFile builds write next to each source, so there is no output file to choose.
-  // The default name is still stored for switching back to `single`.
-  if (effectiveBuildMode(undefined) === 'single') {
+  if (mode === 'single') {
     const defaultUri = root
       ? vscode.Uri.joinPath(root, defaultName)
       : vscode.Uri.file(defaultName);
@@ -147,16 +150,28 @@ export async function ensureGameConfig(
     uris.sort((a, b) => a.toString().localeCompare(b.toString()));
     if (uris.length > 0) {
       const rootFsPath = root.fsPath;
-      const relPaths = uris.map(u =>
+      let relPaths = uris.map(u =>
         u.fsPath.startsWith(rootFsPath)
           ? u.fsPath.slice(rootFsPath.length).replace(/^[/\\]/, '').replace(/\\/g, '/')
           : u.fsPath.replace(/\\/g, '/'),
       );
+      // In perFile mode the first file is the .qsp the player starts, so an
+      // alphabetical guess (data/… before main…) is not good enough: ask.
+      if (mode === 'perFile' && relPaths.length > 1) {
+        const entry = await vscode.window.showQuickPick(relPaths, {
+          title: 'Choose the start file (the .qsp the player opens)',
+          placeHolder: 'Dismiss to put files from the workspace root first',
+        });
+        relPaths = orderForEntryPoint(relPaths, entry);
+      }
       files = buildGlobList(relPaths);
     }
   }
 
-  const cfg: GameConfig = { outputFile, ...(files ? { files } : {}) };
+  const cfg: GameConfig = {
+    ...(mode === 'perFile' ? { buildMode: 'perFile' as const } : { outputFile }),
+    ...(files ? { files } : {}),
+  };
   await writeGameConfig(cfg);
 
   // Open the file so the user can review and reorder the list.
@@ -262,13 +277,14 @@ export async function collectOrderedUris(
   return result;
 }
 
-/** Resolve the output .qsp URI from the game config. */
+/** Resolve the output .qsp URI for a `single` build from the game config. */
 export function resolveOutputUri(cfg: GameConfig): vscode.Uri {
-  // Support both relative (to workspace root) and absolute paths.
-  if (cfg.outputFile.startsWith('/') || /^[A-Za-z]:[\\/]/.test(cfg.outputFile)) {
-    return vscode.Uri.file(cfg.outputFile);
-  }
   const root = workspaceRoot();
+  const outputFile = cfg.outputFile ?? (root?.path.split('/').pop() ?? 'game') + '.qsp';
+  // Support both relative (to workspace root) and absolute paths.
+  if (outputFile.startsWith('/') || /^[A-Za-z]:[\\/]/.test(outputFile)) {
+    return vscode.Uri.file(outputFile);
+  }
   if (!root) throw new Error('No workspace folder open.');
-  return vscode.Uri.joinPath(root, cfg.outputFile);
+  return vscode.Uri.joinPath(root, outputFile);
 }

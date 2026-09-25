@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveBuildMode, perFileOutputPath, findOutputCollisions } from '../src/common/buildPlan';
+import { resolveBuildMode, perFileOutputPath, findOutputCollisions, orderForEntryPoint } from '../src/common/buildPlan';
 
 describe('resolveBuildMode', () => {
   it('prefers txt2gam.json over the VS Code setting', () => {
@@ -53,5 +53,21 @@ describe('findOutputCollisions', () => {
 
   it('does not flag the same name in different folders', () => {
     expect(findOutputCollisions(['/g/x/data.qsps', '/g/y/data.qsps'])).toEqual([]);
+  });
+});
+
+describe('orderForEntryPoint', () => {
+  const files = ['data/data.qsps', 'lib/util.qsps', 'main.qsps', 'z.qsps'];
+
+  it('puts the picked entry file first and keeps the rest in order', () => {
+    expect(orderForEntryPoint(files, 'z.qsps')).toEqual(['z.qsps', 'data/data.qsps', 'lib/util.qsps', 'main.qsps']);
+  });
+
+  it('without a pick, puts root files before files in subfolders', () => {
+    expect(orderForEntryPoint(files)).toEqual(['main.qsps', 'z.qsps', 'data/data.qsps', 'lib/util.qsps']);
+  });
+
+  it('ignores a pick that is not in the list', () => {
+    expect(orderForEntryPoint(files, 'missing.qsps')).toEqual(orderForEntryPoint(files));
   });
 });

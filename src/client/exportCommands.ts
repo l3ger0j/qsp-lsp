@@ -99,7 +99,8 @@ export async function combineFiles(
 
 /**
  * Build the project's .qsp file(s) according to its build mode and write
- * them. Returns the written files in source order, so the first one is
+ * the ones whose content changed. Returns every output file in source
+ * order, written or already up to date, so the first one is
  * the game the player should start; an empty array means there were no
  * source files. Throws with a user-facing message on failure, before
  * anything is written: every file is encoded first so one bad file can't
@@ -148,11 +149,35 @@ export async function buildProjectGame(
     }
   }
 
+  // txt2gam output is deterministic for the same text and password, so a
+  // file whose bytes already match the new build is left untouched (its
+  // mtime too). Comparing bytes rather than timestamps stays correct after
+  // a password change and for unsaved editor buffers.
   for (const { uri, bytes } of outputs) {
+    const rel = vscode.workspace.asRelativePath(uri);
+    const onDisk = await compareWithDisk(uri, bytes);
+    if (onDisk === 'same') {
+      logger.log(`[Build] Unchanged: ${rel}`);
+      continue;
+    }
     await vscode.workspace.fs.writeFile(uri, bytes);
-    logger.log(`[Build] Written: ${vscode.workspace.asRelativePath(uri)} (${Math.round(bytes.byteLength / 1024)}kb)`);
+    logger.log(`[Build] Written (${onDisk}): ${rel} (${Math.round(bytes.byteLength / 1024)}kb)`);
   }
   return outputs.map(o => o.uri);
+}
+
+async function compareWithDisk(uri: vscode.Uri, bytes: Uint8Array): Promise<'same' | 'changed' | 'new'> {
+  let existing: Uint8Array;
+  try {
+    existing = await vscode.workspace.fs.readFile(uri);
+  } catch {
+    return 'new';
+  }
+  if (existing.byteLength !== bytes.byteLength) return 'changed';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    if (existing[i] !== bytes[i]) return 'changed';
+  }
+  return 'same';
 }
 
 /** Strip BOM and normalise line endings to LF. */

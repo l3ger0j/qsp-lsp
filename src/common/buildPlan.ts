@@ -54,3 +54,18 @@ export function findOutputCollisions(sourcePaths: string[]): Array<{ output: str
   }
   return [...byOutput.values()].filter(e => e.sources.length > 1);
 }
+
+/**
+ * Put `entry` first, keeping the rest in their current order. Without an
+ * entry (the user dismissed the picker), files at the workspace root go
+ * before files in subfolders: a guess that the main game sits at the root
+ * and modules live in folders. Paths are workspace-relative with `/`.
+ */
+export function orderForEntryPoint(relPaths: string[], entry?: string): string[] {
+  if (entry !== undefined && relPaths.includes(entry)) {
+    return [entry, ...relPaths.filter(p => p !== entry)];
+  }
+  const atRoot = relPaths.filter(p => !p.includes('/'));
+  const nested = relPaths.filter(p => p.includes('/'));
+  return [...atRoot, ...nested];
+}
