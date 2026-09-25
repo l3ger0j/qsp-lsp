@@ -3,6 +3,6 @@
   "compilerOptions": {
     "rootDir": "."
   },
-  "include": ["src/**/*", "test/**/*", "vitest.config.ts"],
+  "include": ["src/**/*", "test/**/*", "vitest.config.mts"],
   "exclude": ["node_modules", "out", "tree-sitter-qsp"]
 }
