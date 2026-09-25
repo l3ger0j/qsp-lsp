@@ -1,5 +1,6 @@
 .vscode/**
 .venv/**
+.claude/**
 .github/**
 scripts/**
 node_modules/**
@@ -7,6 +8,7 @@ src/**
 tree-sitter-qsp/**
 test/**
 examples/**
+CLAUDE.md
 tsconfig.json
 tsconfig.eslint.json
 vitest.config.ts
