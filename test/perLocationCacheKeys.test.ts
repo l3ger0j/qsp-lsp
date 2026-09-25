@@ -1,14 +1,12 @@
 /**
  * Unit tests for `perLocationCacheKeys` — see its doc comment in
- * serverUtils.ts for the bug it fixes: `perLocationCache` used to be
- * keyed by plain `loc.nameLower`, which collapses two locations sharing
- * a name onto the same cache slot. That permanently disabled
- * `tryIncrementalPerLocationUpdate` for the rest of the file's editing
- * session (`currentIndex.length !== prevCache.size` never becomes
- * false again), silently dropped/leaked one duplicate's cache entry in
- * the full-analysis path, and made `buildTokensFromCache` /
- * hover / document-highlight resolve every duplicate past the first
- * against the wrong location's cached data.
+ * serverUtils.ts for why the keys must be distinct per occurrence:
+ * plain `loc.nameLower` collapses two locations sharing a name onto the
+ * same cache slot, which disables `tryIncrementalPerLocationUpdate` for
+ * that file, drops/leaks one duplicate's cache entry in the
+ * full-analysis path, and makes `buildTokensFromCache` / hover /
+ * document-highlight resolve every duplicate past the first against the
+ * wrong location's cached data.
  */
 import { describe, it, expect } from 'vitest';
 import { perLocationCacheKeys } from '../src/server/serverUtils';

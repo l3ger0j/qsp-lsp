@@ -2,29 +2,27 @@
  * Regression test: a duplicate location name in a >500KB file must not
  * permanently disable `tryIncrementalPerLocationUpdate`.
  *
- * Bug context
- * ───────────
- * `perLocationCache` was keyed by plain `loc.nameLower`. Two locations
- * sharing a name collapse onto the same cache slot, so
+ * Why
+ * ───
+ * If `perLocationCache` keys collide for two locations sharing a name,
  * `currentIndex.length !== prevCache.size` (the first check in
  * `tryIncrementalPerLocationUpdate`) is permanently true for that file —
- * every single-character edit anywhere in the file falls back to a full
- * per-location re-analysis (`analyzeDocumentPerLocation`'s "Full
- * analysis" path, logged as "[QSP] Per-location parse: …") instead of
- * the O(1)-location incremental path, for as long as the duplicate
- * exists. Duplicate location names are flagged as an error, but the
- * user may have one for a while mid-edit.
- *
- * Fixed by `perLocationCacheKeys` (serverUtils.ts), which gives each
- * duplicate a distinct, stable cache key.
+ * every edit anywhere in the file falls back to a full per-location
+ * re-analysis (`analyzeDocumentPerLocation`'s "Full analysis" path,
+ * logged as "[QSP] Per-location parse: …") instead of the
+ * O(1)-location incremental path, for as long as the duplicate exists.
+ * Duplicate location names are flagged as an error, but the user may
+ * have one for a while mid-edit. `perLocationCacheKeys`
+ * (serverUtils.ts) gives each duplicate a distinct, stable key.
  *
  * Test approach
  * ─────────────
  * Open a >500KB document containing a duplicate location name, make a
- * few same-length single-character edits to an unrelated location, and
+ * few single-character inserts into an unrelated location (inserts, not
+ * same-length replacements — see the comment in the test body), and
  * count how many times the server logs a full "Per-location parse:"
- * pass. A file with unique names serves as the control — it already
- * uses the incremental path, so both should behave identically.
+ * pass. A file with unique names serves as the control — both should
+ * behave identically.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'fs';

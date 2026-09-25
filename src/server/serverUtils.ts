@@ -59,11 +59,11 @@ export function shiftErrors(errors: SyntaxError[], lineOffset: number, out: Synt
  *
  * `perLocationCache` (used by common.ts's `analyzeDocumentPerLocation`,
  * `tryIncrementalPerLocationUpdate`, and `buildTokensFromCache`, and read
- * directly by hover/document-highlight in lspFeatures.ts) used to be
- * keyed by plain `loc.nameLower`. A file with a duplicate location name
- * — an error the user will see reported, but one they may be mid-typing
- * when this runs — collapses onto the same cache slot:
- * `currentIndex.length !== prevCache.size` then holds forever, so
+ * directly by hover/document-highlight in lspFeatures.ts) can't be keyed
+ * by plain `loc.nameLower`: a file with a duplicate location name — an
+ * error the user will see reported, but one they may be mid-typing when
+ * this runs — would collapse onto the same cache slot.
+ * `currentIndex.length !== prevCache.size` would then hold forever, so
  * `tryIncrementalPerLocationUpdate` never succeeds again for that file
  * (every keystroke pays for a full per-location re-analysis instead of
  * an O(1)-location incremental one); the full-analysis path silently

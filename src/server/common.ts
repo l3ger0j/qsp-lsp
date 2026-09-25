@@ -177,10 +177,10 @@ export function createQspServer(
    * that just changed (see that function's doc comment). Without
    * clearing every document's `cachedSemanticTokens` here, editing
    * document B to add/remove a `gt`-style call targeting a location
-   * defined in document A left A's cached tokens (and its
-   * goto-highlighting) stale until A itself was next edited, even
+   * defined in document A would leave A's cached tokens (and its
+   * goto-highlighting) stale until A itself is next edited, even
    * though the client was told to refresh: our own per-document cache,
-   * not the client's, was serving the stale result.
+   * not the client's, would serve the stale result.
    */
   function refreshSemanticTokens(): void {
     for (const [, state] of documentStates) {

@@ -4,26 +4,20 @@
  * other document's cached semantic tokens (specifically its
  * GOTO_MODIFIER_BIT goto-highlighting).
  *
- * Bug context
- * ───────────
+ * Why
+ * ───
  * A document's semantic tokens depend on `collectCallTypesPerTarget`,
  * which merges call types across EVERY open document (not just itself)
  * to compute which location names are "goto targets" for the
- * goto-highlighting modifier. But `cachedSemanticTokens` was only ever
- * invalidated for the document that had just been re-analysed
- * (`documents.onDidChangeContent`, `analyzeDocumentFullTree`, …) — never
- * for OTHER open documents whose goto-target set the edit could also
- * affect.
+ * goto-highlighting modifier. So an edit to one document can change
+ * another document's tokens.
  *
- * `connection.languages.semanticTokens.refresh()` tells the CLIENT its
- * cached tokens may be stale and to re-request them, but our own
- * server-side `cachedSemanticTokens` map was never told the same thing:
- * when the client re-requested document A's tokens, the handler
- * returned A's untouched, now-stale cache instead of recomputing.
- *
- * Fixed by `refreshSemanticTokens()` (common.ts), which clears every
- * open document's `cachedSemanticTokens` before asking the client to
- * refresh.
+ * `connection.languages.semanticTokens.refresh()` only tells the CLIENT
+ * its cached tokens may be stale. The server keeps its own
+ * `cachedSemanticTokens` per document, so `refreshSemanticTokens()`
+ * (common.ts) must clear that cache for every open document before
+ * asking the client to refresh — otherwise re-requesting document A's
+ * tokens returns A's untouched, now-stale cache.
  *
  * Test approach
  * ─────────────
