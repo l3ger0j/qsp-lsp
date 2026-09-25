@@ -48,6 +48,7 @@ import { buildFileAggregates } from './aggregation';
 import { buildSemanticTokens } from './semanticTokens';
 import { formatLines, inferIndentLevel, uriBasename as basename } from './helpers';
 import { locationNameCol } from './regexFallback';
+import { perLocationCacheKeys } from './serverUtils';
 import {
   detectEol,
   buildExtractToLocationEdit,
@@ -656,7 +657,11 @@ export function registerLspFeatures(ctx: ServerContext): void {
               let lineOffset = 0;
               let tempTree = false;
               if (!tree && state.perLocationCache) {
-                const cached = state.perLocationCache.get(currentLoc.nameLower);
+                // Keyed like the cache's writers (see perLocationCacheKeys'
+                // doc comment) — plain nameLower would only ever find the
+                // FIRST of two same-named locations' cached tree.
+                const cacheKey = perLocationCacheKeys(state.locationIndex)[state.locationIndex.indexOf(currentLoc)];
+                const cached = state.perLocationCache.get(cacheKey);
                 if (cached?.tree) { tree = cached.tree; lineOffset = currentLoc.startLine; }
                 else {
                   const locText = state.rawText?.slice(currentLoc.startOffset, currentLoc.endOffset);
@@ -938,7 +943,11 @@ export function registerLspFeatures(ctx: ServerContext): void {
     if (!tree && state?.perLocationCache) {
       const loc = findLocationAtLine(state.locationIndex, params.position.line);
       if (loc) {
-        const cached = state.perLocationCache.get(loc.nameLower);
+        // Keyed like the cache's writers — see perLocationCacheKeys' doc
+        // comment (plain nameLower would only find the first of two
+        // same-named locations' cached tree).
+        const cacheKey = perLocationCacheKeys(state.locationIndex)[state.locationIndex.indexOf(loc)];
+        const cached = state.perLocationCache.get(cacheKey);
         if (cached?.tree) { tree = cached.tree; lineOffset = loc.startLine; }
         else {
           const locText = state.rawText?.slice(loc.startOffset, loc.endOffset);

@@ -53,6 +53,42 @@ export function shiftErrors(errors: SyntaxError[], lineOffset: number, out: Synt
   }
 }
 
+/**
+ * Compute a `perLocationCache` key for every entry of a `LocationEntry[]`,
+ * in source order, keyed by lowercase name plus an occurrence counter.
+ *
+ * `perLocationCache` (used by common.ts's `analyzeDocumentPerLocation`,
+ * `tryIncrementalPerLocationUpdate`, and `buildTokensFromCache`, and read
+ * directly by hover/document-highlight in lspFeatures.ts) used to be
+ * keyed by plain `loc.nameLower`. A file with a duplicate location name
+ * — an error the user will see reported, but one they may be mid-typing
+ * when this runs — collapses onto the same cache slot:
+ * `currentIndex.length !== prevCache.size` then holds forever, so
+ * `tryIncrementalPerLocationUpdate` never succeeds again for that file
+ * (every keystroke pays for a full per-location re-analysis instead of
+ * an O(1)-location incremental one); the full-analysis path silently
+ * overwrites one duplicate's cache entry with the other's, leaking the
+ * discarded entry's retained tree-sitter tree if it had one; and
+ * semantic tokens / hover / document-highlight for every duplicate past
+ * the first silently get nothing (a lookup by plain name only ever
+ * finds whichever one happens to be stored under it).
+ *
+ * The occurrence counter gives each duplicate a distinct, and — as long
+ * as their relative order doesn't change — *stable* key, so both the
+ * `.size` comparison and normal cache reuse work exactly as they did for
+ * non-duplicate names. Lives here (rather than in common.ts, which
+ * imports lspFeatures.ts) so both common.ts and lspFeatures.ts can use
+ * it without a circular import.
+ */
+export function perLocationCacheKeys(locationIndex: readonly LocationEntry[]): string[] {
+  const occurrenceOf = new Map<string, number>();
+  return locationIndex.map((loc) => {
+    const n = occurrenceOf.get(loc.nameLower) ?? 0;
+    occurrenceOf.set(loc.nameLower, n + 1);
+    return n === 0 ? loc.nameLower : `${loc.nameLower}\u0000${n}`;
+  });
+}
+
 /** Build the `SymbolLocation` for a location header, used by both the
  *  full-tree and per-location analysis paths. */
 export function makeLocSymLoc(uri: string, text: string, loc: LocationEntry): SymbolLocation {

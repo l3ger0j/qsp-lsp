@@ -34,7 +34,7 @@ import {
 import { type SymbolAggregates, buildFileAggregates, collectCallTypesPerTarget as collectCallTypesPerTargetFromSymbols, isAggContributionStable } from './aggregation';
 import { computeDiagnostics, type DiagnosticSettings } from './diagnostics';
 import { registerLspFeatures, type DocumentState, type PerLocationParseResult } from './lspFeatures';
-import { stripBom, shiftErrors, makeLocSymLoc, safeSendDiagnostics, safeConnectionCall, QSP_FILE_EXTENSIONS, type FsProvider } from './serverUtils';
+import { stripBom, shiftErrors, makeLocSymLoc, perLocationCacheKeys, safeSendDiagnostics, safeConnectionCall, QSP_FILE_EXTENSIONS, type FsProvider } from './serverUtils';
 import { ProjectModeService } from './projectMode';
 
 // Re-export FsProvider for backward compatibility.
@@ -119,8 +119,14 @@ function buildTokensFromCache(
   gotoTargets?: ReadonlySet<string>,
 ) {
   const builder = new SemanticTokensBuilder();
-  for (const loc of locationIndex) {
-    const cached = cache.get(loc.nameLower);
+  // Same key scheme as perLocationCache's writers (analyzeDocumentPerLocation /
+  // tryIncrementalPerLocationUpdate) — see perLocationCacheKeys' doc comment.
+  // Plain `loc.nameLower` would only ever hit the FIRST of two same-named
+  // locations' cache entries, leaving every duplicate after it with no
+  // semantic tokens at all.
+  const cacheKeys = perLocationCacheKeys(locationIndex);
+  for (const [i, loc] of locationIndex.entries()) {
+    const cached = cache.get(cacheKeys[i]);
     if (!cached) continue;
     const tuples = cached.tokens;
     const isGoto = gotoTargets?.has(loc.nameLower) ?? false;
@@ -160,6 +166,28 @@ export function createQspServer(
   // Surface non-timeout parse failures (e.g. a WASM runtime error) in the
   // server log instead of letting them pass as silent timeouts.
   tsParser.setErrorReporter((message) => connection.console.error(message));
+
+  /**
+   * Invalidate every open document's cached semantic tokens, then ask
+   * the client to re-request them.
+   *
+   * A document's GOTO_MODIFIER_BIT / NAMESPACE_TOKEN_TYPE styling (see
+   * semanticTokens.ts) depends on `collectCallTypesPerTarget`, which
+   * merges call types across EVERY open document — not just the one
+   * that just changed (see that function's doc comment). Without
+   * clearing every document's `cachedSemanticTokens` here, editing
+   * document B to add/remove a `gt`-style call targeting a location
+   * defined in document A left A's cached tokens (and its
+   * goto-highlighting) stale until A itself was next edited, even
+   * though the client was told to refresh: our own per-document cache,
+   * not the client's, was serving the stale result.
+   */
+  function refreshSemanticTokens(): void {
+    for (const [, state] of documentStates) {
+      state.cachedSemanticTokens = undefined;
+    }
+    safeConnectionCall(() => connection.languages.semanticTokens.refresh());
+  }
 
   // ── User settings ──────────────────────────────────────────────────
   // QspSettings is the full configuration shape; the diagnostics half
@@ -689,7 +717,7 @@ export function createQspServer(
     // Tell VS Code to re-request semantic tokens — a prior request may
     // have been served with stale cached tokens (wrong line positions)
     // before the tree-sitter re-parse completed.
-    safeConnectionCall(() => connection.languages.semanticTokens.refresh());
+    refreshSemanticTokens();
   }
 
   // ── Per-location analysis for large files ──────────────────────────
@@ -811,6 +839,11 @@ export function createQspServer(
   ): boolean {
     const currentIndex = prevState.locationIndex;   // current (from fast tier)
     const prevCache = prevState.perLocationCache!;  // from last full analysis
+    // See perLocationCacheKeys' doc comment: plain nameLower collides on
+    // duplicate location names, which would otherwise wedge this
+    // function into permanently returning false (`.size` mismatch) for
+    // the rest of the file's editing session.
+    const currentKeys = perLocationCacheKeys(currentIndex);
 
     // ── 1. Same number of locations? ──────────────────────────────
     if (currentIndex.length !== prevCache.size) return false;
@@ -822,7 +855,7 @@ export function createQspServer(
     let affIdx = -1;
     for (let i = 0; i < currentIndex.length; i++) {
       const loc = currentIndex[i];
-      const prev = prevCache.get(loc.nameLower);
+      const prev = prevCache.get(currentKeys[i]);
       if (!prev) return false;  // new or renamed location
       const locLen = loc.endOffset - loc.startOffset;
       if (locLen !== prev.text.length) {
@@ -838,7 +871,7 @@ export function createQspServer(
     // ── 3. Re-parse only the changed location ─────────────────────
     const affLoc = currentIndex[affIdx];
     const newLocText = text.slice(affLoc.startOffset, affLoc.endOffset);
-    const prev = prevCache.get(affLoc.nameLower)!;
+    const prev = prevCache.get(currentKeys[affIdx])!;
 
     // Verify it actually changed (guard against hash collisions etc.)
     if (prev.text === newLocText) return false;
@@ -848,7 +881,7 @@ export function createQspServer(
 
     // ── 4. Update cache (shallow copy + replace affected entry) ───
     const newCache = new Map(prevCache);
-    newCache.set(affLoc.nameLower, result);
+    newCache.set(currentKeys[affIdx], result);
 
     // ── 5. Build DocumentSymbols ──────────────────────────────────
     const symbols = new DocumentSymbols(doc.uri);
@@ -857,7 +890,7 @@ export function createQspServer(
 
     for (let i = 0; i < currentIndex.length; i++) {
       const loc = currentIndex[i];
-      const cached = newCache.get(loc.nameLower);
+      const cached = newCache.get(currentKeys[i]);
       if (!cached) continue;
 
       // For unchanged locations, reuse previous absolute-coordinate
@@ -935,7 +968,7 @@ export function createQspServer(
     }
 
     // Tell VS Code to re-request semantic tokens.
-    safeConnectionCall(() => connection.languages.semanticTokens.refresh());
+    refreshSemanticTokens();
 
     return true;
   }
@@ -971,20 +1004,25 @@ export function createQspServer(
     // ── Change detection: reuse unchanged locations ────────────────
     const prevCache = prevState?.perLocationCache;
     const newCache = new Map<string, PerLocationParseResult>();
+    // See perLocationCacheKeys' doc comment: distinct keys even when
+    // two locations share a name, so neither's cache entry (and its
+    // retained tree, if any) is silently overwritten/leaked by the other.
+    const cacheKeys = perLocationCacheKeys(locationIndex);
 
-    for (const loc of locationIndex) {
+    for (const [i, loc] of locationIndex.entries()) {
       const locText = text.slice(loc.startOffset, loc.endOffset);
       const locLoc = makeLocSymLoc(doc.uri, text, loc);
+      const cacheKey = cacheKeys[i];
 
       // Check if we can reuse the previous parse result —
       // simple text comparison: if the location's text is identical to what
       // we cached, the parse result is still valid.
-      const prev = prevCache?.get(loc.nameLower);
+      const prev = prevCache?.get(cacheKey);
       const canReuse = prev !== undefined && prev.text === locText;
 
       if (canReuse && prev) {
         // Reuse cached result
-        newCache.set(loc.nameLower, prev);
+        newCache.set(cacheKey, prev);
 
         // Add symbols with line shift from local → absolute coordinates.
         // In per-location trees the header is always at local line 0,
@@ -996,7 +1034,7 @@ export function createQspServer(
         // Parse this location (incrementally if prev has a retained tree)
         const result = parseLocationBlock(locText, doc.uri, loc.name, prev);
         if (result) {
-          newCache.set(loc.nameLower, result);
+          newCache.set(cacheKey, result);
 
           // Add symbols (local coords) with line shift to absolute
           symbols.addLocationFrom(loc.name, locLoc, result.symbols, loc.startLine);
@@ -1056,7 +1094,7 @@ export function createQspServer(
     }
 
     // Tell VS Code to re-request semantic tokens.
-    safeConnectionCall(() => connection.languages.semanticTokens.refresh());
+    refreshSemanticTokens();
   }
 
   // ── LSP feature handlers ────────────────────────────────────────────
