@@ -48,7 +48,7 @@ Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Vi
     ]
   }
   ```
-  `outputFile` is relative to the workspace root (default: `<folder name>.qsp`). `files` controls the order in which source files are combined (each entry is a glob; omit `files` to collect all `.qsps`/`.qsrc` files alphabetically).
+  `outputFile` is relative to the workspace root (default: `<folder name>.qsp`). `files` controls the order in which source files are combined (each entry is a glob). If `files` is missing, **Run** and **Export** add it: they list the workspace's `.qsps`/`.qsrc` files with the main file first (see below), so the build order is always written down.
 - **Main file** — the file the game starts from: in a combined build its first location is the start location, in a `perFile` build its `.qsp` is the one **Run QSP Game** opens. It is chosen in this order:
   1. `"mainFile"` in `txt2gam.json`, a regular expression searched case-insensitively in each source's workspace-relative path, e.g. `"^main\\.qsps$"`. The first match in build order wins.
   2. The `qsp.game.mainFile` setting, same format.

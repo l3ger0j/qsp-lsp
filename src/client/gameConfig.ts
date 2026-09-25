@@ -18,8 +18,9 @@
  *   "mainFile": "^main\\.qsps$"            // optional regexp for the main file
  * }
  *
- * If "files" is absent, all *.qsps / *.qsrc files are collected and
- * sorted alphabetically (existing behaviour).
+ * If "files" is absent, Run and Export write the discovered sources into
+ * it (main file first); until then all *.qsps / *.qsrc files are collected
+ * and sorted alphabetically.
  * Each glob entry's matches are sorted alphabetically among themselves.
  * A file already matched by an earlier entry is not repeated.
  *
@@ -130,16 +131,31 @@ export async function writeGameConfig(cfg: GameConfig): Promise<void> {
 // ── Setup wizard ──────────────────────────────────────────────────────
 
 /**
- * Interactively create qsp.json if it doesn't exist yet.
+ * Interactively create txt2gam.json if it doesn't exist yet.
  * Prompts for the output file name, then discovers existing QSP source files
- * and writes them as the initial ordered `files` list.
+ * and writes them as the initial ordered `files` list. An existing config
+ * without `files` gets the list added the same way, so the build order is
+ * written down instead of silently following the alphabet.
  * Returns the resulting config, or undefined if the user cancelled.
  */
 export async function ensureGameConfig(
   qspGlobPattern?: string,
 ): Promise<GameConfig | undefined> {
   const existing = await readGameConfig();
-  if (existing) return existing;
+  if (existing) {
+    if (existing.files !== undefined) return existing;
+    const discovered = await discoverFileList(qspGlobPattern, existing);
+    if (!discovered.files) return existing;
+    const cfg: GameConfig = {
+      ...existing,
+      files: discovered.files,
+      ...(discovered.mainFile ? { mainFile: discovered.mainFile } : {}),
+    };
+    await writeGameConfig(cfg);
+    logger.log(`[Config] Added files list to txt2gam.json (${discovered.files.length} entries)`);
+    await revealConfig();
+    return cfg;
+  }
 
   logger.log('[Config] Creating txt2gam.json...');
   const root = workspaceRoot();
@@ -167,51 +183,7 @@ export async function ensureGameConfig(
       : saveUri.fsPath.replace(/\\/g, '/');
   }
 
-  // Auto-populate files list from currently discovered QSP sources,
-  // collapsing files in the same directory into directory globs.
-  let files: string[] | undefined;
-  let mainFile: string | undefined;
-  if (qspGlobPattern && root) {
-    const uris = await vscode.workspace.findFiles(qspGlobPattern);
-    uris.sort((a, b) => a.toString().localeCompare(b.toString()));
-    if (uris.length > 0) {
-      const rootFsPath = root.fsPath;
-      let relPaths = uris.map(u =>
-        u.fsPath.startsWith(rootFsPath)
-          ? u.fsPath.slice(rootFsPath.length).replace(/^[/\\]/, '').replace(/\\/g, '/')
-          : u.fsPath.replace(/\\/g, '/'),
-      );
-      // The first file is the main one: its first location starts the game
-      // (single) or it is the .qsp the player opens (perFile). An
-      // alphabetical guess (data/… before main…) is not good enough.
-      if (relPaths.length > 1) {
-        const settingPattern = effectiveMainFilePattern(undefined);
-        if (settingPattern !== undefined) {
-          // The setting stays in charge at build time; here it only orders the list.
-          try {
-            relPaths = moveToFront(relPaths, findMainFile(relPaths, settingPattern).index);
-          } catch {
-            // A bad pattern is reported by the build itself.
-          }
-        } else {
-          const strategy = resolveMainFileStrategy(
-            vscode.workspace.getConfiguration('qsp.game').get<string>('mainFileStrategy'),
-          );
-          const entry = strategy === 'ask'
-            ? await vscode.window.showQuickPick(relPaths, {
-              title: 'Choose the main file (the game starts from it)',
-              placeHolder: 'Dismiss to put files from the workspace root first',
-            })
-            : undefined;
-          relPaths = orderForEntryPoint(relPaths, entry);
-          // Saved even when root-first order chose it, so txt2gam.json says
-          // which file is the main one instead of leaving it implicit.
-          mainFile = exactPathPattern(relPaths[0]);
-        }
-      }
-      files = buildGlobList(relPaths);
-    }
-  }
+  const { files, mainFile } = await discoverFileList(qspGlobPattern, undefined);
 
   const cfg: GameConfig = {
     ...(mode === 'perFile' ? { buildMode: 'perFile' as const } : { outputFile }),
@@ -219,13 +191,67 @@ export async function ensureGameConfig(
     ...(mainFile ? { mainFile } : {}),
   };
   await writeGameConfig(cfg);
-
-  // Open the file so the user can review and reorder the list.
-  const uri = configUri()!;
-  const doc = await vscode.workspace.openTextDocument(uri);
-  await vscode.window.showTextDocument(doc, { preview: true, preserveFocus: true });
-
+  await revealConfig();
   return cfg;
+}
+
+// Open the config so the user can review and reorder the list.
+async function revealConfig(): Promise<void> {
+  const doc = await vscode.workspace.openTextDocument(configUri()!);
+  await vscode.window.showTextDocument(doc, { preview: true, preserveFocus: true });
+}
+
+/**
+ * Discover the workspace's QSP sources and turn them into a `files` glob
+ * list with the main file first. `mainFile` is returned only when the
+ * wizard chose it; a pattern already in `cfg` or the settings stays in
+ * charge at build time and only orders the list here.
+ */
+async function discoverFileList(
+  qspGlobPattern: string | undefined,
+  cfg: GameConfig | undefined,
+): Promise<{ files?: string[]; mainFile?: string }> {
+  const root = workspaceRoot();
+  if (!qspGlobPattern || !root) return {};
+  const uris = await vscode.workspace.findFiles(qspGlobPattern);
+  if (uris.length === 0) return {};
+  uris.sort((a, b) => a.toString().localeCompare(b.toString()));
+
+  const rootFsPath = root.fsPath;
+  let relPaths = uris.map(u =>
+    u.fsPath.startsWith(rootFsPath)
+      ? u.fsPath.slice(rootFsPath.length).replace(/^[/\\]/, '').replace(/\\/g, '/')
+      : u.fsPath.replace(/\\/g, '/'),
+  );
+  let mainFile: string | undefined;
+  // The first file is the main one: its first location starts the game
+  // (single) or it is the .qsp the player opens (perFile). An
+  // alphabetical guess (data/… before main…) is not good enough.
+  if (relPaths.length > 1) {
+    const pattern = effectiveMainFilePattern(cfg);
+    if (pattern !== undefined) {
+      try {
+        relPaths = moveToFront(relPaths, findMainFile(relPaths, pattern).index);
+      } catch {
+        // A bad pattern is reported by the build itself.
+      }
+    } else {
+      const strategy = resolveMainFileStrategy(
+        vscode.workspace.getConfiguration('qsp.game').get<string>('mainFileStrategy'),
+      );
+      const entry = strategy === 'ask'
+        ? await vscode.window.showQuickPick(relPaths, {
+          title: 'Choose the main file (the game starts from it)',
+          placeHolder: 'Dismiss to put files from the workspace root first',
+        })
+        : undefined;
+      relPaths = orderForEntryPoint(relPaths, entry);
+      // Saved even when root-first order chose it, so txt2gam.json says
+      // which file is the main one instead of leaving it implicit.
+      mainFile = exactPathPattern(relPaths[0]);
+    }
+  }
+  return { files: buildGlobList(relPaths), mainFile };
 }
 
 // ── Glob generation ───────────────────────────────────────────────────
