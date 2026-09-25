@@ -75,6 +75,12 @@ export interface SymbolAggregates {
   definedObjects: Set<string>;
   referencedLocations: Set<string>;
   referencedObjects: Set<string>;
+  /**
+   * True when any contributing location is `regexOnly`. Its references
+   * are missing from `referencedLocations` / `referencedObjects` /
+   * `globallyRead`, so "never used" checks built on them would be wrong.
+   */
+  hasRegexOnlyLocations: boolean;
   globalPrefixes: Map<string, { prefixes: Set<string>; name: string }>;
   /**
    * Transitive local-variable propagation across the call graph.
@@ -288,6 +294,7 @@ export function emptyAggregates(): SymbolAggregates {
     definedObjects: new Set(),
     referencedLocations: new Set(),
     referencedObjects: new Set(),
+    hasRegexOnlyLocations: false,
     globalPrefixes: new Map(),
     propagatedLocals: new Map(),
     shadowedPropagations: new Map(),
@@ -316,6 +323,8 @@ export function isAggContributionStable(
   prev: LocationSymbols,
   next: LocationSymbols,
 ): boolean {
+  if (prev.regexOnly !== next.regexOnly) return false;
+
   // ── Global variables (non-local) ────────────────────────────────
   const prevGlobals = new Map<string, { valueDef: boolean; prefixes: string }>();
   for (const sym of prev.ownedVariables) {
@@ -381,6 +390,7 @@ export function collectAggregates(
   out: SymbolAggregates,
 ): void {
   for (const locSyms of locations) {
+    if (locSyms.regexOnly) out.hasRegexOnlyLocations = true;
     for (const sym of locSyms.ownedVariables) {
       // Local variables are scoped to their location — skip them
       // for cross-location aggregates

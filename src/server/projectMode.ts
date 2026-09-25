@@ -22,6 +22,7 @@ import {
   DocumentSymbols,
   LocationSymbols,
   extractSymbols,
+  fullParseTimeoutMicros,
   QspSymbolKind,
   type QspSymbol,
   type SymbolLocation,
@@ -178,40 +179,9 @@ export class ProjectModeService {
     if (!this.tsParser.isReady) {
       symbols = buildRegexSymbols(uri, locationIndex, text);
     } else if (text.length >= PROJECT_PER_LOCATION_BYTE_THRESHOLD) {
-      // Large project file: parse one location at a time instead of the
-      // whole file as a single tree. See PROJECT_PER_LOCATION_BYTE_THRESHOLD.
-      symbols = new DocumentSymbols(uri);
-      for (const loc of locationIndex) {
-        const locText = text.slice(loc.startOffset, loc.endOffset);
-        const locLoc = makeLocSymLoc(uri, text, loc);
-        const tree = this.tsParser.parseOnce(locText);
-        if (tree) {
-          const result = extractSymbols(
-            tree, uri, undefined, undefined,
-            this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
-          );
-          // extractSymbols wraps the location in a DocumentSymbols with
-          // one entry — pull out its LocationSymbols (same pattern as
-          // common.ts's parseLocationBlock).
-          let locSymbols: LocationSymbols | undefined;
-          for (const [, ls] of result.symbols.locations) { locSymbols = ls; break; }
-          if (locSymbols) {
-            symbols.addLocationFrom(loc.name, locLoc, locSymbols, loc.startLine);
-          } else {
-            const empty = symbols.addLocation(loc.name, locLoc);
-            empty.hasErrors = true;
-          }
-          tree.delete();
-        } else {
-          // Tree-sitter failed (timeout) for this one location — fall
-          // back to regex extraction for just that location.
-          const locSymbols = symbols.addLocation(loc.name, locLoc);
-          extractLocationSymbolsFromText(text, loc, locSymbols, uri);
-        }
-      }
-      symbols.rebuildGlobalBindings();
+      symbols = this.analyzePerLocation(uri, text, locationIndex);
     } else {
-      const tree = this.tsParser.parseOnce(text);
+      const tree = this.tsParser.parseOnce(text, fullParseTimeoutMicros(text.length));
       if (tree) {
         const result = extractSymbols(
           tree, uri, undefined, undefined,
@@ -220,7 +190,7 @@ export class ProjectModeService {
         symbols = result.symbols;
         tree.delete();
       } else {
-        symbols = buildRegexSymbols(uri, locationIndex, text);
+        symbols = this.analyzePerLocation(uri, text, locationIndex);
       }
     }
 
@@ -229,6 +199,42 @@ export class ProjectModeService {
       symbols,
       cachedSemanticTokens: undefined,
     });
+  }
+
+  // Large project files, and files whose whole-file parse timed out, are
+  // parsed one location at a time. See PROJECT_PER_LOCATION_BYTE_THRESHOLD.
+  private analyzePerLocation(uri: string, text: string, locationIndex: LocationEntry[]): DocumentSymbols {
+    const symbols = new DocumentSymbols(uri);
+    for (const loc of locationIndex) {
+      const locText = text.slice(loc.startOffset, loc.endOffset);
+      const locLoc = makeLocSymLoc(uri, text, loc);
+      const tree = this.tsParser.parseOnce(locText);
+      if (tree) {
+        const result = extractSymbols(
+          tree, uri, undefined, undefined,
+          this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
+        );
+        // extractSymbols wraps the location in a DocumentSymbols with
+        // one entry — pull out its LocationSymbols (same pattern as
+        // common.ts's parseLocationBlock).
+        let locSymbols: LocationSymbols | undefined;
+        for (const [, ls] of result.symbols.locations) { locSymbols = ls; break; }
+        if (locSymbols) {
+          symbols.addLocationFrom(loc.name, locLoc, locSymbols, loc.startLine);
+        } else {
+          const empty = symbols.addLocation(loc.name, locLoc);
+          empty.hasErrors = true;
+        }
+        tree.delete();
+      } else {
+        // Tree-sitter failed (timeout) for this one location — fall
+        // back to regex extraction for just that location.
+        const locSymbols = symbols.addLocation(loc.name, locLoc);
+        extractLocationSymbolsFromText(text, loc, locSymbols, uri);
+      }
+    }
+    symbols.rebuildGlobalBindings();
+    return symbols;
   }
 
   // ── Aggregate management ────────────────────────────────────────────

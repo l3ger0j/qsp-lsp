@@ -488,7 +488,7 @@ export function checkPropagation(
     checkExtraArgsToTargetWithoutArgs(ctx, symbols, agg, allLocationDefs);
   }
 
-  if (ctx.settings.unusedLocations) {
+  if (ctx.settings.unusedLocations && !agg.hasRegexOnlyLocations) {
     checkUnusedLocations(
       ctx, symbols, locationIndex, referencedLocations,
       firstLocationKey,

@@ -298,6 +298,13 @@ export function createQspServer(
         }
       } catch (e) {
         connection.console.error(`[QSP] Tree-sitter init failed: ${e}`);
+        // Without tree-sitter every feature silently degrades to regex
+        // analysis, so the user must hear about it. window/showMessageRequest
+        // is one of the few messages allowed before the initialize response.
+        safeConnectionCall(() => connection.window.showWarningMessage(
+          'QSP: the tree-sitter parser failed to load, so the extension is running in limited regex mode. '
+          + 'See the "QSP Language Server" output for details.',
+        ));
       }
     } else {
       connection.console.log('[QSP] Running in lite mode (no tree-sitter parser — regex-only analysis)');
@@ -501,6 +508,7 @@ export function createQspServer(
     }
     documentStates.delete(uri);
     tsParser.removeTree(uri);
+    fullParseFailedUris.delete(uri);
 
     // In project mode, re-read the file from disk so its symbols remain
     // in the project aggregates (the editor no longer holds the text).
@@ -509,11 +517,18 @@ export function createQspServer(
     // requests while this file is (re-)analyzed.
     if (settings.project.enabled && fsProvider && project.projectFileUris.has(uri)) {
       const filePath = fsProvider.uriToPath(uri);
-      fsProvider.readFile(filePath, fileEncoding).then((text) => {
-        project.analyzeFile(uri, text);
-        projectRebuildAndReanalyze();
-      }).catch(() => {
-        // File may have been deleted — that's fine, the watcher handles it
+      fsProvider.readFile(filePath, fileEncoding).then(
+        (text) => {
+          project.analyzeFile(uri, text);
+          projectRebuildAndReanalyze();
+        },
+        (err: unknown) => {
+          // A file deleted on disk is dropped from the project by the file watcher.
+          if ((err as { code?: unknown } | null)?.code === 'ENOENT') return;
+          safeConnectionCall(() => connection.console.error(`[QSP] Failed to re-read closed project file ${filePath}: ${err}`));
+        },
+      ).catch((err: unknown) => {
+        safeConnectionCall(() => connection.console.error(`[QSP] Failed to re-analyze closed project file ${filePath}: ${err}`));
       });
     } else {
       // Clear any diagnostics we previously published for this URI so
@@ -607,10 +622,15 @@ export function createQspServer(
   // for incremental re-parsing (avoids ~1s full parse for 200KB locations).
   const INCREMENTAL_LOC_THRESHOLD = 50_000; // 50 KB
 
+  // Documents whose whole-file parse failed or timed out. They stay on per-location
+  // parsing until closed: retrying the whole-file parse after every edit
+  // would block the server for the full timeout each time.
+  const fullParseFailedUris = new Set<string>();
+
   function analyzeDocument(doc: TextDocument): void {
     const text = stripBom(doc.getText());
 
-    if (text.length >= PER_LOCATION_BYTE_THRESHOLD && tsParser.isReady) {
+    if (tsParser.isReady && (text.length >= PER_LOCATION_BYTE_THRESHOLD || fullParseFailedUris.has(doc.uri))) {
       analyzeDocumentPerLocation(doc, text);
       return;
     }
@@ -630,20 +650,23 @@ export function createQspServer(
     let reusedLocationNames = new Set<string>();
     if (tsParser.isReady) {
       const tree = tsParser.parse(doc.uri, text);
-      if (tree) {
-        // Reuse previous symbols for unchanged locations (incremental only)
-        const prevSymbols = tsParser.wasLastParseIncremental
-          ? previousState?.symbols : undefined;
-        const result = extractSymbols(
-          tree, doc.uri, prevSymbols, tsParser.lastEdit,
-          settings.embeddedExec.enabled ? (t) => tsParser.parseOnce(t) : undefined,
-        );
-        symbols = result.symbols;
-        reusedLocationNames = result.reusedLocations;
-        treeHasErrors = tree.rootNode.hasError;
-      } else {
-        symbols = buildRegexSymbols(doc.uri, locationIndex, text);
+      if (!tree) {
+        const label = doc.uri.split('/').pop() ?? doc.uri;
+        connection.console.warn(`[QSP] Whole-file parse of ${label} failed or timed out, switching to per-location parsing`);
+        fullParseFailedUris.add(doc.uri);
+        analyzeDocumentPerLocation(doc, text);
+        return;
       }
+      // Reuse previous symbols for unchanged locations (incremental only)
+      const prevSymbols = tsParser.wasLastParseIncremental
+        ? previousState?.symbols : undefined;
+      const result = extractSymbols(
+        tree, doc.uri, prevSymbols, tsParser.lastEdit,
+        settings.embeddedExec.enabled ? (t) => tsParser.parseOnce(t) : undefined,
+      );
+      symbols = result.symbols;
+      reusedLocationNames = result.reusedLocations;
+      treeHasErrors = tree.rootNode.hasError;
     } else {
       symbols = buildRegexSymbols(doc.uri, locationIndex, text);
     }

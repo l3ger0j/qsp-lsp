@@ -29,6 +29,16 @@ export type WasmLoader = () => Promise<string | Uint8Array | ArrayBuffer>;
  */
 export type WasmDirProvider = () => string;
 
+/**
+ * Time budget for a from-scratch parse of `textLength` characters.
+ * A normal file parses at roughly 8 µs/char, so this allows about twice that,
+ * with a 2 s floor. Anything slower is GLR blow-up and should give up early.
+ * The server is single-threaded, so every request waits while a parse runs.
+ */
+export function fullParseTimeoutMicros(textLength: number): number {
+  return Math.max(2_000_000, textLength * 16);
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // Incremental edit computation
 // ──────────────────────────────────────────────────────────────────────
@@ -284,7 +294,7 @@ export class QspTreeSitterParser {
 
     // Full parse (initial load, capped suffix, or no prior state).
     if (oldTree) oldTree.delete();
-    this.parser.setTimeoutMicros(30_000_000); // 30 seconds
+    this.parser.setTimeoutMicros(fullParseTimeoutMicros(text.length));
     let tree: Parser.Tree;
     try {
       tree = this.parser.parse(text);

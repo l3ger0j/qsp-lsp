@@ -109,6 +109,7 @@ export function extractLocationSymbolsFromText(
   locSymbols: LocSyms,
   uri: string,
 ): void {
+  locSymbols.regexOnly = true;
   const lines = splitLocationLines(text, loc);
   extractLabelsFromLines(lines, loc.startLine, locSymbols, uri);
   extractActionsFromLines(lines, loc.startLine, locSymbols, uri);

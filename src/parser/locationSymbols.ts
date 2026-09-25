@@ -65,6 +65,12 @@ export class LocationSymbols {
   public readonly embeddedExecErrors: SyntaxError[] = [];
   /** True when the tree-sitter location_block node contained ERROR sub-nodes. */
   public hasErrors = false;
+  /**
+   * True when this location was filled by the regex fallback instead of
+   * tree-sitter. Regex extraction finds only actions and labels, so the
+   * location's outgoing references (locations, objects, variables) are unknown.
+   */
+  public regexOnly = false;
 
   /**
    * Transient: host scope at the syntactic position of a
@@ -673,6 +679,7 @@ export class LocationSymbols {
   ): LocationSymbols {
     const copy = new LocationSymbols(source.locationName);
     copy.hasErrors = source.hasErrors;
+    copy.regexOnly = source.regexOnly;
 
     // Copy scope hierarchy and local-name indices (shared, no line info)
     for (const [k, v] of source.scopeParent) copy.scopeParent.set(k, v);
