@@ -29,6 +29,7 @@ import {
 
 import { registerAnalysisStatus } from './analysisStatus';
 import { registerLocationsView } from './locationsView';
+import { registerJumpGraph } from './jumpGraph';
 import {
   combineProjectCommand,
   exportGameCommand,
@@ -50,6 +51,7 @@ export function registerExtensionFeatures(
   lspClient = client;
   registerAnalysisStatus(context, client);
   registerLocationsView(context, client);
+  registerJumpGraph(context, client);
 
   // ── Status bar: current location ────────────────────────────────────
   statusBarItem = vscode.window.createStatusBarItem(

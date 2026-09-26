@@ -11,6 +11,7 @@ examples/**
 CLAUDE.md
 tsconfig.json
 tsconfig.eslint.json
+tsconfig.webview.json
 vitest.config.mts
 eslint.config.mjs
 **/*.ts

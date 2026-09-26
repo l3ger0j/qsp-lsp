@@ -104,12 +104,16 @@ npm run build:server:node
 npm run build:server:browser
 npm run build:client:node
 npm run build:client:browser
+npm run build:mcp
+npm run build:webview
 npm run build:copy-wasm
 cp tree-sitter-qsp/tree-sitter-qsp.wasm out/
 ok "Bundles built"
 
 step "Type-checking"
 npx tsc --noEmit
+# The Jump Graph webview needs DOM types, which the rest of src/ must not see.
+npx tsc -p tsconfig.webview.json
 ok "Types OK"
 
 step "Running tests"

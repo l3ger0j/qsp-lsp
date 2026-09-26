@@ -72,6 +72,14 @@ A **QSP Locations** section in the Explorer side bar lists every location of the
 - Click a location to open it. The location under the cursor is selected as you move through the code (`qsp.locations.followCursor`).
 - Right-click for **Find References**, **Rename**, **Duplicate** and **Delete**.
 
+### Jump Graph
+**QSP: Show Jump Graph** (the graph button in the editor title bar, `Ctrl+K J`, or **Show in Jump Graph** on a location in QSP Locations) opens a graph of who jumps to or calls whom in a tab beside the editor:
+- **Around location** shows the locations up to 1–3 steps away from one location, in either direction; **whole project** shows everything. With **Follow cursor**, the graph centres on the location you are editing.
+- Arrows are styled by kind: `goto`/`xgoto` (solid), `gosub` and `@` calls as statements (dashed), `func`/`@` in expressions (dotted), `desc` (thin). Each kind can be hidden.
+- The start location is marked with ▶. Locations nothing jumps to are dashed; a target no file defines is shown in red.
+- A jump whose target is an expression (`gt $next`, `gt 'room_' + $n`) goes to a **?** node; hover it to see the expressions.
+- Click a location to open it, double-click to centre on it, click an arrow to open where the jump is written. Hover shows files, lines and the calls.
+
 ### Multi-File Operations
 - **List All Locations** — browse all locations across the file or project
 - **List All Objects** — browse all objects (addobj) with their definition location

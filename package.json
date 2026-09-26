@@ -27,7 +27,9 @@
   "categories": [
     "Programming Languages"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onWebviewPanel:qsp.jumpGraph"
+  ],
   "main": "./out/client/nodeMain.js",
   "browser": "./out/client/browserMain.js",
   "contributes": {
@@ -210,6 +212,12 @@
         "command": "qsp.locations.findReferences",
         "title": "Find References",
         "category": "QSP Locations"
+      },
+      {
+        "command": "qsp.showJumpGraph",
+        "title": "Show Jump Graph",
+        "category": "QSP",
+        "icon": "$(type-hierarchy)"
       }
     ],
     "debuggers": [
@@ -261,6 +269,11 @@
         {
           "command": "qsp.goToLocation",
           "when": "editorLangId == qsp",
+          "group": "navigation"
+        },
+        {
+          "command": "qsp.showJumpGraph",
+          "when": "resourceLangId == qsp",
           "group": "navigation"
         }
       ],
@@ -456,6 +469,11 @@
           "command": "qsp.deleteLocation",
           "when": "view == qsp.locations && viewItem == qspLocation",
           "group": "2_modify@3"
+        },
+        {
+          "command": "qsp.showJumpGraph",
+          "when": "view == qsp.locations && viewItem == qspLocation",
+          "group": "1_open@3"
         }
       ]
     },
@@ -494,6 +512,12 @@
         "command": "qsp.formatLocation",
         "key": "ctrl+shift+f",
         "mac": "cmd+shift+f",
+        "when": "editorLangId == qsp"
+      },
+      {
+        "command": "qsp.showJumpGraph",
+        "key": "ctrl+k j",
+        "mac": "cmd+k j",
         "when": "editorLangId == qsp"
       }
     ],
@@ -820,10 +844,10 @@
     "build:client:browser": "esbuild src/client/browserMain.ts --bundle --outfile=out/client/browserMain.js --platform=browser --format=esm --external:vscode --external:node:fs --target=es2020 --alias:txt2gamJs=./vendor/txt2gam/txt2gam.js",
     "build:copy-wasm": "cp node_modules/web-tree-sitter/tree-sitter.wasm out/server/tree-sitter.wasm && cp vendor/txt2gam/txt2gam.wasm out/client/txt2gam.wasm",
     "build:mcp": "esbuild src/mcp/server.js --outfile=out/mcp/server.js --target=es5 && esbuild src/mcp/main.ts --bundle --outfile=out/mcp/main.js --platform=node --format=cjs --target=node18 --minify-whitespace --minify-syntax --main-fields=module,main --alias:txt2gamJs=./vendor/txt2gam/txt2gam.js",
-    "build:bundles": "npm run build:server:node && npm run build:server:browser && npm run build:client:node && npm run build:client:browser && npm run build:mcp && npm run build:copy-wasm",
+    "build:bundles": "npm run build:server:node && npm run build:server:browser && npm run build:client:node && npm run build:client:browser && npm run build:mcp && npm run build:webview && npm run build:copy-wasm",
     "build:ui-tests": "npm run build:bundles && esbuild test/ui/*.test.ts --outdir=out/test/ui --platform=node --format=cjs --target=node20",
     "fetch:txt2gam": "node scripts/fetchTxt2gam.mjs",
-    "build": "npm run fetch:txt2gam && npm run build:grammar && npm run build:server:node && npm run build:server:browser && npm run build:client:node && npm run build:client:browser && npm run build:mcp && npm run build:copy-wasm",
+    "build": "npm run fetch:txt2gam && npm run build:grammar && npm run build:server:node && npm run build:server:browser && npm run build:client:node && npm run build:client:browser && npm run build:mcp && npm run build:webview && npm run build:copy-wasm",
     "watch:server:node": "esbuild src/server/nodeMain.ts --bundle --outfile=out/server/nodeMain.js --platform=node --format=cjs --external:vscode --target=node18 --watch",
     "watch:server:browser": "esbuild src/server/browserMain.ts --bundle --outfile=out/server/browserMain.js --platform=browser --format=esm --target=es2020 --external:web-tree-sitter --watch",
     "watch:client:node": "esbuild src/client/nodeMain.ts --bundle --outfile=out/client/nodeMain.js --platform=node --format=cjs --external:vscode --target=node18 --alias:txt2gamJs=./vendor/txt2gam/txt2gam.js --watch",
@@ -835,7 +859,8 @@
     "check": "bash scripts/build.sh --check",
     "release": "bash scripts/build.sh",
     "package": "npx @vscode/vsce package",
-    "publish": "npx @vscode/vsce publish"
+    "publish": "npx @vscode/vsce publish",
+    "build:webview": "esbuild src/webview/graph.ts --bundle --outfile=out/webview/graph.js --platform=browser --format=iife --target=es2020 --minify"
   },
   "overrides": {
     "@vscode/test-cli": {
@@ -844,6 +869,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",
+    "cytoscape": "^3.34.3",
+    "cytoscape-dagre": "^4.0.1",
     "jsonc-parser": "^3.3.1",
     "picomatch": "^4.0.7",
     "vscode-languageclient": "^9.0.1",

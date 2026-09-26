@@ -18,7 +18,7 @@ import {
   type LocationTreeNode,
 } from '../common/locationTree';
 import { onAnalysisSettled } from './analysisStatus';
-import { orderedProjectUris, readGameConfig } from './gameConfig';
+import { projectStartFileUri } from './gameConfig';
 import { getCurrentLocationBlock, qspGlob } from './shared';
 
 const VIEW_ID = 'qsp.locations';
@@ -79,7 +79,7 @@ class LocationsProvider implements vscode.TreeDataProvider<LocationTreeNode> {
     this.roots = buildLocationTree(items, {
       grouping: this.grouping,
       relPath: uri => vscode.workspace.asRelativePath(vscode.Uri.parse(uri), false).replace(/\\/g, '/'),
-      startFileUri: project ? await this.startFileUri() : scopeUri,
+      startFileUri: project ? await projectStartFileUri(qspGlob(this.context)) : scopeUri,
       diagnostics: uri => vscode.languages.getDiagnostics(vscode.Uri.parse(uri)).map(toMark),
     });
     this.parents = parentIndex(this.roots);
@@ -90,18 +90,6 @@ class LocationsProvider implements vscode.TreeDataProvider<LocationTreeNode> {
         : project ? 'No locations in the project yet.' : 'Open a QSP file to see its locations.';
     }
     this.changed.fire();
-  }
-
-  // The file the game starts from, ordered as the build orders it. A broken
-  // txt2gam.json or mainFile pattern just leaves the start unmarked here;
-  // the build reports it.
-  private async startFileUri(): Promise<string | undefined> {
-    try {
-      const uris = await orderedProjectUris(await readGameConfig(), qspGlob(this.context));
-      return uris[0]?.toString();
-    } catch {
-      return undefined;
-    }
   }
 
   /** The location node around `line` of `uri`, for revealing the cursor's location. */

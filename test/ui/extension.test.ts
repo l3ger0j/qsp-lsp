@@ -172,4 +172,19 @@ suite('QSP extension', () => {
     assert.strictEqual(editor.document.lineAt(editor.selection.active.line).text, '# data_copy');
     await vscode.commands.executeCommand('workbench.action.files.revert');
   });
+
+  test('Show Jump Graph opens one graph tab beside the editor', async () => {
+    const editor = await vscode.window.showTextDocument(fixtureUri('main.qsps'));
+    await vscode.commands.executeCommand('qsp.showJumpGraph');
+    await vscode.commands.executeCommand('qsp.showJumpGraph', { uri: fixtureUri('main.qsps').toString(), name: 'start', line: 0 });
+
+    const graphTabs = await waitFor('the graph tab', () => {
+      const tabs = vscode.window.tabGroups.all.flatMap(g => g.tabs)
+        .filter(t => t.input instanceof vscode.TabInputWebview && t.label === 'QSP Jump Graph');
+      return tabs.length > 0 ? tabs : undefined;
+    });
+    assert.strictEqual(graphTabs.length, 1, 'a second call must reuse the panel');
+    assert.notStrictEqual(graphTabs[0].group.viewColumn, editor.viewColumn, 'the graph opens beside the editor');
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+  });
 });

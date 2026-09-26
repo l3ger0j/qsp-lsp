@@ -3,6 +3,15 @@
   "compilerOptions": {
     "rootDir": "."
   },
-  "include": ["src/**/*", "test/**/*", "vitest.config.mts"],
-  "exclude": ["node_modules", "out", "tree-sitter-qsp"]
+  "include": [
+    "src/**/*",
+    "test/**/*",
+    "vitest.config.mts"
+  ],
+  "exclude": [
+    "node_modules",
+    "out",
+    "tree-sitter-qsp",
+    "src/webview"
+  ]
 }

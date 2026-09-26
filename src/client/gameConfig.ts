@@ -382,6 +382,21 @@ export async function orderedProjectUris(
   return moveToFront(uris, index);
 }
 
+/**
+ * URI of the file the game starts from (its first location is the start
+ * location), ordered as the build orders it. Undefined when there are no
+ * sources, or when txt2gam.json or the mainFile pattern is broken: views
+ * then just leave the start unmarked, and the build reports the problem.
+ */
+export async function projectStartFileUri(qspGlobPattern: string): Promise<string | undefined> {
+  try {
+    const uris = await orderedProjectUris(await readGameConfig(), qspGlobPattern);
+    return uris[0]?.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 /** Resolve the output .qsp URI for a `single` build from the game config. */
 export function resolveOutputUri(cfg: GameConfig): vscode.Uri {
   const root = workspaceRoot();
