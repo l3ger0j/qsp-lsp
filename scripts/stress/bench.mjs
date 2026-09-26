@@ -94,21 +94,41 @@ function request(method, params) {
 
 const perfLines = [];
 const listeners = new Set();
-let buf = Buffer.alloc(0);
+// Chunks are kept apart until a whole message is in: concatenating on
+// every chunk is quadratic, and a large project's diagnostics can make
+// messages of many megabytes.
+let inChunks = [];
+let inLen = 0;
+let bodyLen;   // set once the current message's header has been read
 child.stdout.on('data', chunk => {
-  buf = Buffer.concat([buf, chunk]);
+  inChunks.push(chunk);
+  inLen += chunk.length;
   for (;;) {
-    const head = buf.indexOf('\r\n\r\n');
-    if (head < 0) return;
-    const len = Number(/Content-Length: (\d+)/i.exec(buf.subarray(0, head).toString())[1]);
-    if (buf.length < head + 4 + len) return;
-    const msg = JSON.parse(buf.subarray(head + 4, head + 4 + len).toString());
-    buf = buf.subarray(head + 4 + len);
-    onMessage(msg);
+    if (bodyLen === undefined) {
+      if (inChunks.length > 1) inChunks = [Buffer.concat(inChunks)];
+      const buf = inChunks[0];
+      const h = buf ? buf.indexOf('\r\n\r\n') : -1;
+      if (h < 0) return;
+      bodyLen = Number(/Content-Length: (\d+)/i.exec(buf.subarray(0, h).toString())[1]);
+      inChunks[0] = buf.subarray(h + 4);
+      inLen -= h + 4;
+    }
+    if (inLen < bodyLen) return;
+    const all = inChunks.length > 1 ? Buffer.concat(inChunks) : inChunks[0];
+    const body = all.subarray(0, bodyLen);
+    const rest = all.subarray(bodyLen);
+    inChunks = rest.length > 0 ? [rest] : [];
+    inLen = rest.length;
+    bodyLen = undefined;
+    onMessage(JSON.parse(body.toString()));
   }
 });
 
+// The latest analysis status: "ready" may come before anyone waits for it.
+let lastStatus;
+
 function onMessage(msg) {
+  if (msg.method === 'qsp/analysisStatus') lastStatus = msg.params;
   if (msg.id !== undefined && msg.method) {
     // Requests from the server: settings, capability registration.
     let result = null;
@@ -180,9 +200,10 @@ for (const f of qspFiles) results.chars += fs.statSync(f).size;
 
 try {
   results.firstDiagnosticsSeconds = await firstDiagnostics;
-  results.readySeconds = await waitFor(m => m.method === 'qsp/analysisStatus'
-    && m.params.configured && m.params.busyUris.length === 0 && m.params.parser !== 'starting'
-    && (!m.params.project || m.params.project.state === 'ready') && elapsed(), timeoutS);
+  const isReady = (st) => st && st.configured && st.busyUris.length === 0 && st.parser !== 'starting'
+    && (!st.project || st.project.state === 'ready');
+  results.readySeconds = isReady(lastStatus) ? elapsed()
+    : await waitFor(m => m.method === 'qsp/analysisStatus' && isReady(m.params) && elapsed(), timeoutS);
   console.log(`\nready after ${results.readySeconds.toFixed(1)} s`);
 
   if (args.graph) {
