@@ -28,6 +28,14 @@ class JumpGraphPanel {
   // message would be lost.
   private pendingFocus: string | undefined;
   private refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  // One graph request at a time. While the server is busy (loading a large
+  // project takes a minute) diagnostics keep changing; queuing a request
+  // for each made the server answer them all at once, each reply megabytes
+  // long, and run out of memory.
+  private requesting = false;
+  private staleWhileRequesting = false;
+  // The last graph sent, so a refresh that changes nothing doesn't redraw.
+  private lastGraphJson = '';
   private readonly disposables: vscode.Disposable[] = [];
 
   constructor(
@@ -63,6 +71,7 @@ class JumpGraphPanel {
   private onMessage(msg: WebviewToHost): void {
     if (msg.type === 'ready') {
       this.ready = true;
+      this.lastGraphJson = '';
       void this.refresh();
       if (this.pendingFocus !== undefined) {
         this.post({ type: 'focus', name: this.pendingFocus, force: true });
@@ -75,6 +84,8 @@ class JumpGraphPanel {
       this.followCursor = msg.enabled;
     } else if (msg.type === 'open') {
       void this.open(msg.uri, msg.line);
+    } else if (msg.type === 'log') {
+      this.client.outputChannel.appendLine(msg.message);
     }
   }
 
@@ -101,6 +112,23 @@ class JumpGraphPanel {
 
   private async refresh(): Promise<void> {
     if (!this.ready || !this.panel.visible) return;
+    if (this.requesting) {
+      this.staleWhileRequesting = true;
+      return;
+    }
+    this.requesting = true;
+    try {
+      await this.requestGraph();
+    } finally {
+      this.requesting = false;
+      if (this.staleWhileRequesting) {
+        this.staleWhileRequesting = false;
+        this.scheduleRefresh();
+      }
+    }
+  }
+
+  private async requestGraph(): Promise<void> {
     const project = vscode.workspace.getConfiguration('qsp').get<boolean>('project.enabled', true);
     const active = vscode.window.activeTextEditor?.document;
     const scopeUri = project
@@ -119,6 +147,9 @@ class JumpGraphPanel {
       if (n.uri && !(n.uri in relPaths)) relPaths[n.uri] = vscode.workspace.asRelativePath(vscode.Uri.parse(n.uri), false);
     }
     const startFileUri = project ? await projectStartFileUri(qspGlob(this.context)) : scopeUri;
+    const json = JSON.stringify([graph, startFileUri]);
+    if (json === this.lastGraphJson) return;
+    this.lastGraphJson = json;
     this.post({ type: 'graph', graph, startFileUri, relPaths });
   }
 
@@ -152,7 +183,11 @@ class JumpGraphPanel {
   .func { border-color: var(--vscode-charts-purple); border-top-style: dotted; }
   .desc { border-color: var(--vscode-charts-orange); }
   .unresolved { border-color: var(--vscode-errorForeground); border-top-style: dashed; }
+  input:not([type]) { color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+                      border: 1px solid var(--vscode-input-border, transparent); width: 14em; }
+  #status { margin-left: auto; color: var(--vscode-descriptionForeground); white-space: nowrap; }
   #notice { color: var(--vscode-descriptionForeground); padding: 0 10px; }
+  #notice a { color: var(--vscode-textLink-foreground); }
   #graph { flex: 1; min-height: 0; }
   #info { padding: 4px 10px; min-height: 1.4em; border-top: 1px solid var(--vscode-panel-border);
           color: var(--vscode-descriptionForeground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -160,8 +195,12 @@ class JumpGraphPanel {
 </head>
 <body>
 <div id="toolbar">
-  <label>Show <select id="mode"><option value="around">around location</option><option value="all">whole project</option></select></label>
+  <label>Show <select id="mode"><option value="around">around location</option><option value="all">whole project</option><option value="files">by file</option></select></label>
   <label>Depth <select id="depth"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
+  <label title="Locations that many others jump to or call (inventory, shared functions) tangle the graph">Hubs <select id="hubs">
+    <option value="0">show all</option><option value="10">hide if 10+ callers</option><option value="20">hide if 20+ callers</option><option value="50">hide if 50+ callers</option>
+  </select></label>
+  <input id="search" list="locations" placeholder="Find location" spellcheck="false"><datalist id="locations"></datalist>
   <label><input type="checkbox" id="follow"> Follow cursor</label>
   <label><input type="checkbox" data-filter="goto"><span class="swatch goto"></span> goto</label>
   <label><input type="checkbox" data-filter="gosub"><span class="swatch gosub"></span> gosub</label>
@@ -169,10 +208,11 @@ class JumpGraphPanel {
   <label><input type="checkbox" data-filter="desc"><span class="swatch desc"></span> desc</label>
   <label><input type="checkbox" data-filter="unresolved"><span class="swatch unresolved"></span> unknown target</label>
   <button id="fit" title="Fit the graph to the panel">Fit</button>
+  <span id="status"></span>
 </div>
 <div id="notice"></div>
 <div id="graph"></div>
-<div id="info">Click a location to open it, double-click to centre on it; click an arrow to open where the jump is written.</div>
+<div id="info">Click a location to open it, double-click to centre on it; click an arrow to open where the jump is written; hover to see its neighbours.</div>
 <script nonce="${n}" src="${script}"></script>
 </body>
 </html>`;

@@ -74,11 +74,14 @@ A **QSP Locations** section in the Explorer side bar lists every location of the
 
 ### Jump Graph
 **QSP: Show Jump Graph** (the graph button in the editor title bar, `Ctrl+K J`, or **Show in Jump Graph** on a location in QSP Locations) opens a graph of who jumps to or calls whom in a tab beside the editor:
-- **Around location** shows the locations up to 1–3 steps away from one location, in either direction; **whole project** shows everything. With **Follow cursor**, the graph centres on the location you are editing.
+- **Around location** shows the locations up to 1–3 steps away from one location, in either direction; **whole project** shows everything; **by file** shows one box per file with the number of jumps between files on the arrows (click a file to open it into its locations, click again to fold it). With **Follow cursor**, the graph centres on the location you are editing; in the whole-project and by-file views it selects that location instead of redrawing.
+- **Hubs**: locations that many others jump to or call (an inventory, shared functions) tangle the graph, so by default those with 20 or more callers are hidden. Their callers get a `↗N` mark, and the hidden hubs are listed above the graph; click one to centre on it. The threshold is in the toolbar.
+- **Find location** in the toolbar selects a location in the graph, or centres the graph on it if it isn't drawn. Hovering a location fades everything but its neighbours.
 - Arrows are styled by kind: `goto`/`xgoto` (solid), `gosub` and `@` calls as statements (dashed), `func`/`@` in expressions (dotted), `desc` (thin). Each kind can be hidden.
 - The start location is marked with ▶. Locations nothing jumps to are dashed; a target no file defines is shown in red.
 - A jump whose target is an expression (`gt $next`, `gt 'room_' + $n`) goes to a **?** node; hover it to see the expressions.
 - Click a location to open it, double-click to centre on it, click an arrow to open where the jump is written. Hover shows files, lines and the calls.
+- Large graphs: up to about 80 locations the graph is drawn in layers; above that a force layout places the nodes, a slice at a time, so the panel stays usable (about 2 s for 1000 locations). Locations keep their places when the graph is redrawn after an edit, and a dragged location stays where you put it. The layout time is written to **QSP: Show Language Server Log**.
 
 ### Multi-File Operations
 - **List All Locations** — browse all locations across the file or project

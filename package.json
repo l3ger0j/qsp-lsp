@@ -871,6 +871,7 @@
     "@modelcontextprotocol/sdk": "^1.30.1",
     "cytoscape": "^3.34.3",
     "cytoscape-dagre": "^4.0.1",
+    "d3-force": "^3.0.0",
     "jsonc-parser": "^3.3.1",
     "picomatch": "^4.0.7",
     "vscode-languageclient": "^9.0.1",
@@ -881,6 +882,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@types/d3-force": "^3.0.10",
     "@types/mocha": "^10.0.10",
     "@types/node": "^25.5.0",
     "@types/picomatch": "^4.0.3",
