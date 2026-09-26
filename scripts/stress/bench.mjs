@@ -129,6 +129,11 @@ let lastStatus;
 
 function onMessage(msg) {
   if (msg.method === 'qsp/analysisStatus') lastStatus = msg.params;
+  if (process.env.BENCH_DEBUG && msg.method) {
+    const extra = msg.method === 'qsp/analysisStatus' ? JSON.stringify(msg.params).slice(0, 200)
+      : msg.method === 'textDocument/publishDiagnostics' ? `${msg.params.diagnostics.length} diagnostics` : '';
+    console.log(`${elapsed().toFixed(1).padStart(6)}s <- ${msg.method} ${extra}`);
+  }
   if (msg.id !== undefined && msg.method) {
     // Requests from the server: settings, capability registration.
     let result = null;

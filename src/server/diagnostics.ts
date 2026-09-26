@@ -64,6 +64,8 @@ export interface DiagnosticSettings {
   shadowsPropagatedLocal: boolean;
   maxErrorsPerLocation: number;
   maxLocationLines: number;
+  /** At most this many diagnostics per file, the most severe first; 0 = all. */
+  maxPerFile: number;
 }
 
 // ── Main entry point ──────────────────────────────────────────────────

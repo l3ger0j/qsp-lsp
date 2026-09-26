@@ -270,7 +270,7 @@ export function checkMissingResultInDyneval(
     const crossSites = agg.crossLocationDispatches.get(locKey);
     if (crossSites) {
       for (const dispatch of crossSites) {
-        if (dispatch.kind !== 'dyneval') continue;
+        if (dispatch.kind !== 'dyneval' || dispatch.truncated) continue;
         if (dispatch.candidates.some(c => c.writesResult)) continue;
         ctx.push(
           DiagnosticSeverity.Warning,
@@ -387,7 +387,7 @@ export function checkExtraArgsToTargetWithoutArgs(
     const crossSites = agg.crossLocationDispatches.get(locKey);
     if (crossSites) {
       for (const dispatch of crossSites) {
-        if (dispatch.argCount === 0) continue;
+        if (dispatch.argCount === 0 || dispatch.truncated) continue;
         let mostInformative: ArgsVerdict | undefined;
         let allHaveVerdict = true;
         for (const cand of dispatch.candidates) {

@@ -88,6 +88,8 @@ export class ProjectModeService {
 
   /** Times the phases below; the server replaces it with its own. */
   perf = new PerfLog(() => {});
+  /** True when the server is short of memory (see memoryGuard.ts). */
+  shouldStop: (() => boolean) | undefined;
   /** Told which file's per-location analysis is running, for the crash recorder. */
   tracking: {
     /** The per-location analysis running now, or undefined when it ends. */
@@ -376,7 +378,7 @@ export class ProjectModeService {
           allLocs.push({ locName: locSyms.locationName, locSyms, uri });
         }
       }
-      buildPropagatedLocals(allLocs, agg);
+      buildPropagatedLocals(allLocs, agg, this.shouldStop);
     }
 
     // Build the flat map once (used by computeDiagnostics)
@@ -401,8 +403,9 @@ export class ProjectModeService {
     collectCallTypes: () => Map<string, { name: string; types: Set<string> }>,
     collectPeerDocs: (ownUri: string) => DocumentSymbols[],
     getDoc: (uri: string) => TextDocument | undefined,
-  ): void {
-    if (!this.projectAggregates) return;
+  ): number {
+    if (!this.projectAggregates) return 0;
+    let published = 0;
 
     const callTypes = this.projectAggregates.callTypesPerTarget ?? collectCallTypes();
 
@@ -425,8 +428,10 @@ export class ProjectModeService {
         undefined,
         collectPeerDocs(uri),
       );
+      published += diagnostics.length;
       safeSendDiagnostics(this.connection, { uri, diagnostics });
     }
+    return published;
   }
 
   /** Convenience: rebuild aggregates then re-diagnose everything. */
@@ -439,7 +444,7 @@ export class ProjectModeService {
     this.perf.phase('project diagnostics', () => this.reanalyzeAll(
       diagnosticsSettings, collectCallTypes, collectPeerDocs,
       uri => this.documents.get(uri),
-    ), () => `${this.projectFileUris.size} files`);
+    ), (n) => `${this.projectFileUris.size} files, ${n} diagnostics`);
   }
 
   // ── File watcher handling ───────────────────────────────────────────

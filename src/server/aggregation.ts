@@ -244,9 +244,21 @@ export interface CrossLocationDispatch {
   varName: string;
   /** Lowercased base name (no prefix). */
   varBaseName: string;
-  /** All resolvable global candidate targets (always non-empty). */
+  /** Resolvable global candidate targets (always non-empty), the first MAX_DISPATCH_CANDIDATES. */
   candidates: CrossLocationDispatchTarget[];
+  /**
+   * There were more candidates than listed. Checks that must hold for
+   * every candidate then say nothing.
+   */
+  truncated?: boolean;
 }
+
+/**
+ * A dispatch lists at most this many candidate blocks. Blocks kept under
+ * the same variable name in many locations (a `$menu` in every room) made
+ * every unresolved `dynamic $menu` list all of them: call sites × blocks.
+ */
+export const MAX_DISPATCH_CANDIDATES = 16;
 
 /** Args consumption profile for a single location/block frame. */
 export interface ArgsUsage {
@@ -471,6 +483,12 @@ export function collectCallTypesPerTarget(
 export function buildPropagatedLocals(
   allLocations: Iterable<{ locName: string; locSyms: LocationSymbols; uri: string }>,
   out: SymbolAggregates,
+  /**
+   * Asked every few hundred call edges; true stops the propagation and
+   * drops what it found (the server is short of memory, see
+   * memoryGuard.ts). The other results are still built.
+   */
+  shouldStop?: () => boolean,
 ): void {
   // Step 1: Index all locations and collect call edges
   const locIndex = new Map<string, { locSyms: LocationSymbols; uri: string }>();
@@ -674,6 +692,8 @@ export function buildPropagatedLocals(
   }
 
   // Process all direct call edges
+  let edgesSinceCheck = 255;   // so the first edge asks
+  propagation:
   for (const [callerLoc, edges] of initialLocals) {
     const callerInfo = locIndex.get(callerLoc);
     if (!callerInfo) continue;
@@ -682,6 +702,15 @@ export function buildPropagatedLocals(
       // Here rather than in propagate(): it runs millions of times, and
       // the heartbeat reads the clock.
       heartbeat();
+      if (shouldStop && ++edgesSinceCheck >= 256) {
+        edgesSinceCheck = 0;
+        if (shouldStop()) {
+          result.clear();
+          out.propagatedSyms.clear();
+          out.shadowedPropagations.clear();
+          break propagation;
+        }
+      }
       for (const [varName, scopeId] of edge.locals) {
         if (NO_PROPAGATE.has(varName)) continue;
         // Find the provider QspSymbol — the local in the caller at the exact scope
@@ -981,37 +1010,43 @@ export function buildPropagatedLocals(
    * (used by the regular cross-loc pass to skip bindings the
    * intra-location pass already searched).
    */
-  const collectCandidates = (
-    varBaseName: string,
-    excludeSelfLoc: string | null,
-  ): CrossLocationDispatchTarget[] => {
+  // Every block kept under a name, worked out once per name rather than
+  // once per call site that dispatches it.
+  const blocksByName = new Map<string, CrossLocationDispatchTarget[]>();
+  const blocksNamed = (varBaseName: string): CrossLocationDispatchTarget[] => {
+    let all = blocksByName.get(varBaseName);
+    if (all) return all;
+    all = [];
     if (!globalCodeBlockIndex) globalCodeBlockIndex = buildGlobalIndex();
-    const providers = globalCodeBlockIndex.get(varBaseName);
-    if (!providers) return [];
-    const candidates: CrossLocationDispatchTarget[] = [];
-    for (const p of providers) {
-      if (excludeSelfLoc !== null && p.providerLoc === excludeSelfLoc) continue;
+    for (const p of globalCodeBlockIndex.get(varBaseName) ?? []) {
       const providerInfo = locIndex.get(p.providerLoc);
       if (!providerInfo) continue;
       if (p.binding.value.kind !== 'code-block') continue;
       const { writesResult, argsUsage } = computeBlockFacts(
         providerInfo.locSyms, p.binding.value.blockRange,
       );
-      candidates.push({
-        providerLoc: p.providerLoc,
-        providerUri: p.providerUri,
-        binding: p.binding,
-        writesResult,
-        argsUsage,
-      });
+      all.push({ providerLoc: p.providerLoc, providerUri: p.providerUri, binding: p.binding, writesResult, argsUsage });
     }
-    return candidates;
+    blocksByName.set(varBaseName, all);
+    return all;
+  };
+  const collectCandidates = (
+    varBaseName: string,
+    excludeSelfLoc: string | null,
+  ): { candidates: CrossLocationDispatchTarget[]; truncated: boolean } => {
+    const candidates: CrossLocationDispatchTarget[] = [];
+    for (const c of blocksNamed(varBaseName)) {
+      if (excludeSelfLoc !== null && c.providerLoc === excludeSelfLoc) continue;
+      if (candidates.length === MAX_DISPATCH_CANDIDATES) return { candidates, truncated: true };
+      candidates.push(c);
+    }
+    return { candidates, truncated: false };
   };
 
   const recordDispatch = (
     calleeLoc: string,
     call: { loc: SymbolLocation; kind: 'dynamic' | 'dyneval'; argCount: number; varName: string; varBaseName: string },
-    candidates: CrossLocationDispatchTarget[],
+    found: { candidates: CrossLocationDispatchTarget[]; truncated: boolean },
   ) => {
     let list = crossLoc.get(calleeLoc);
     if (!list) { list = []; crossLoc.set(calleeLoc, list); }
@@ -1021,7 +1056,8 @@ export function buildPropagatedLocals(
       argCount: call.argCount,
       varName: call.varName,
       varBaseName: call.varBaseName,
-      candidates,
+      candidates: found.candidates,
+      ...(found.truncated ? { truncated: true } : {}),
     });
   };
 
@@ -1045,9 +1081,9 @@ export function buildPropagatedLocals(
       // Exclude self-loc: those bindings were already searched by
       // the intra-location pass; if they were visible, the call
       // wouldn't be unresolved.
-      const candidates = collectCandidates(call.varBaseName, calleeLoc);
-      if (candidates.length === 0) continue;
-      recordDispatch(calleeLoc, call, candidates);
+      const found = collectCandidates(call.varBaseName, calleeLoc);
+      if (found.candidates.length === 0) continue;
+      recordDispatch(calleeLoc, call, found);
     }
   }
 
@@ -1075,9 +1111,9 @@ export function buildPropagatedLocals(
     if (deferredCalls.length === 0) continue;
 
     for (const call of deferredCalls) {
-      const candidates = collectCandidates(call.varBaseName, /*excludeSelfLoc*/ null);
-      if (candidates.length === 0) continue;
-      recordDispatch(calleeLoc, call, candidates);
+      const found = collectCandidates(call.varBaseName, /*excludeSelfLoc*/ null);
+      if (found.candidates.length === 0) continue;
+      recordDispatch(calleeLoc, call, found);
     }
   }
 
@@ -1230,6 +1266,8 @@ function locContains(
 export function buildFileAggregates(
   docSyms: DocumentSymbols,
   uri: string,
+  /** See {@link buildPropagatedLocals}. */
+  shouldStop?: () => boolean,
 ): SymbolAggregates {
   const a = emptyAggregates();
   collectAggregates(docSyms.locations.values(), a);
@@ -1237,6 +1275,6 @@ export function buildFileAggregates(
   for (const [, ls] of docSyms.locations) {
     allLocs.push({ locName: ls.locationName, locSyms: ls, uri });
   }
-  buildPropagatedLocals(allLocs, a);
+  buildPropagatedLocals(allLocs, a, shouldStop);
   return a;
 }

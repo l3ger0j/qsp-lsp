@@ -675,6 +675,12 @@
           "minimum": 1,
           "description": "Maximum number of syntax errors reported per location. Locations exceeding this limit show a single summary warning instead."
         },
+        "qsp.diagnostics.maxPerFile": {
+          "type": "integer",
+          "default": 5000,
+          "minimum": 0,
+          "description": "Maximum number of problems reported per file, the most severe first; the rest are summed up in one note. A very large game can produce hundreds of thousands, which the editor can't show usefully and which take long to send. 0 reports them all."
+        },
         "qsp.diagnostics.maxLocationLines": {
           "type": "integer",
           "default": 500,

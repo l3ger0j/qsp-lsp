@@ -40,6 +40,7 @@ import { ANALYSIS_STATUS_MIN_BYTES } from '../common/analysisStatus';
 import { PerfLog, formatChars, type ServerHost } from './perfLog';
 import { buildPerformanceReport } from './performanceReport';
 import { Pseudonyms } from './pseudonyms';
+import { MemoryGuard } from './memoryGuard';
 import { anonymizeCode } from '../parser/anonymize';
 
 // Re-export FsProvider for backward compatibility.
@@ -94,9 +95,9 @@ function collectCallTypesPerTarget(
  * The cache lives on `state.aggCache` and is invalidated by a fresh
  * DocumentState (analyzeDocument creates a new object each parse).
  */
-function buildOrReuseFileAgg(state: DocumentState, uri: string): SymbolAggregates {
+function buildOrReuseFileAgg(state: DocumentState, uri: string, shouldStop?: () => boolean): SymbolAggregates {
   if (state.aggCache) return state.aggCache;
-  state.aggCache = buildFileAggregates(state.symbols, uri);
+  state.aggCache = buildFileAggregates(state.symbols, uri, shouldStop);
   return state.aggCache;
 }
 
@@ -173,6 +174,12 @@ export function createQspServer(
   const log = safeConsole(connection);
   const status = new AnalysisStatusReporter(connection);
   const perf = new PerfLog((line) => log.log(line), host.memory);
+  const memoryGuard = new MemoryGuard(host.memory, (heapUsed, heapLimit) => {
+    const heapMB = Math.round(heapUsed / 1048576), limitMB = Math.round(heapLimit / 1048576);
+    log.warn(`[QSP] Heap at ${heapMB} of ${limitMB} MB: switching to reduced analysis until the server restarts`);
+    status.setReduced({ heapMB, limitMB });
+  });
+  const tightOnMemory = () => memoryGuard.tight();
   const diagnose = (...args: Parameters<typeof computeDiagnostics>) => perf.step('diagnostics', () => computeDiagnostics(...args));
   const startedAt = Date.now();
   // The file analysis running right now, for reports written mid-analysis
@@ -261,6 +268,7 @@ export function createQspServer(
       shadowsPropagatedLocal: true,
       maxErrorsPerLocation: 20,
       maxLocationLines: 500,
+      maxPerFile: 5000,
     },
     semanticHighlighting: { enabled: true },
     hover: { possibleValues: true, maxItemsPerCategory: 20 },
@@ -294,6 +302,7 @@ export function createQspServer(
     }
     diagnostics.maxErrorsPerLocation = pickInt(d?.maxErrorsPerLocation, dd.maxErrorsPerLocation, 1);
     diagnostics.maxLocationLines = pickInt(d?.maxLocationLines, dd.maxLocationLines, 0);
+    diagnostics.maxPerFile = pickInt(d?.maxPerFile, dd.maxPerFile, 0);
     return {
       project: { enabled: pick(proj?.enabled, defaultSettings.project.enabled) },
       embeddedExec: { enabled: pick(emb?.enabled, defaultSettings.embeddedExec.enabled) },
@@ -512,6 +521,7 @@ export function createQspServer(
   // ==================== PROJECT MODE ====================
   const project = new ProjectModeService(connection, documents, documentStates, tsParser);
   project.perf = perf;
+  project.shouldStop = tightOnMemory;
   project.tracking = {
     progress: (state) => {
       analysisInProgress = state;
@@ -978,7 +988,7 @@ export function createQspServer(
     } else {
       // Send diagnostics for this file only
       const state = documentStates.get(doc.uri)!;
-      const fileAgg = perf.step('file aggregates', () => buildOrReuseFileAgg(state, doc.uri));
+      const fileAgg = perf.step('file aggregates', () => buildOrReuseFileAgg(state, doc.uri, tightOnMemory));
       const diagnostics = diagnose(
         doc, doc.uri, locationIndex, settings.diagnostics, tsParser,
         collectCallTypesPerTarget(documentStates), symbols,
@@ -1056,7 +1066,10 @@ export function createQspServer(
       const parsed = tree;
       const result = perf.step('symbols', () => extractSymbols(parsed, docUri, undefined, undefined, embedParseFn));
       const errors = perf.step('errors', () => extractErrors(parsed));
-      const tokens = perf.step('semantic tokens', () => Uint32Array.from(collectSemanticTokenTuples(parsed, undefined, embedParseFn)));
+      // Short of memory, large files go without semantic highlighting
+      // (TextMate still colours them).
+      const tokens = tightOnMemory() ? new Uint32Array(0)
+        : perf.step('semantic tokens', () => Uint32Array.from(collectSemanticTokenTuples(parsed, undefined, embedParseFn)));
 
       // extractSymbols wraps the location in a DocumentSymbols with one entry.
       // Get the LocationSymbols for the single location_block.
@@ -1203,7 +1216,7 @@ export function createQspServer(
       deferredDiagnostics.add(doc.uri);
     } else {
       const state = documentStates.get(doc.uri)!;
-      const fileAgg = perf.step('file aggregates', () => buildOrReuseFileAgg(state, doc.uri));
+      const fileAgg = perf.step('file aggregates', () => buildOrReuseFileAgg(state, doc.uri, tightOnMemory));
       const diagnostics = diagnose(
         doc, doc.uri, currentIndex, settings.diagnostics, tsParser,
         collectCallTypesPerTarget(documentStates), symbols,
@@ -1342,7 +1355,7 @@ export function createQspServer(
       deferredDiagnostics.add(doc.uri);
     } else {
       const state = documentStates.get(doc.uri)!;
-      const fileAgg = perf.step('file aggregates', () => buildOrReuseFileAgg(state, doc.uri));
+      const fileAgg = perf.step('file aggregates', () => buildOrReuseFileAgg(state, doc.uri, tightOnMemory));
       const diagnostics = diagnose(
         doc, doc.uri, locationIndex, settings.diagnostics, tsParser,
         collectCallTypesPerTarget(documentStates), symbols,

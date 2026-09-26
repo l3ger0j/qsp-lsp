@@ -20,6 +20,7 @@ export class AnalysisStatusReporter {
   private configured = false;
   private project: AnalysisStatus['project'];
   private readonly perLocation = new Map<string, PerLocationReason>();
+  private reduced: AnalysisStatus['reduced'];
   private live = false;
   private lastSent = '';
 
@@ -82,6 +83,12 @@ export class AnalysisStatusReporter {
     this.send();
   }
 
+  /** The server switched to reduced analysis (see memoryGuard.ts). */
+  setReduced(reduced: NonNullable<AnalysisStatus['reduced']>): void {
+    this.reduced = reduced;
+    this.send();
+  }
+
   /** Drop what is known about a closed document. */
   forget(uri: string): void {
     this.busy.delete(uri);
@@ -96,6 +103,7 @@ export class AnalysisStatusReporter {
       configured: this.configured,
       ...(this.project ? { project: { ...this.project } } : {}),
       perLocation: Object.fromEntries(this.perLocation),
+      ...(this.reduced ? { reduced: { ...this.reduced } } : {}),
     };
   }
 

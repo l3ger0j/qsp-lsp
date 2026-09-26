@@ -33,6 +33,11 @@ export interface AnalysisStatus {
   project?: { state: 'loading' | 'ready'; files: number };
   /** Open documents parsed per location, with the reason. */
   perLocation: Record<string, PerLocationReason>;
+  /**
+   * The server ran short of memory and dropped the analysis it can do
+   * without, until it restarts: the heap then, and its limit, in MB.
+   */
+  reduced?: { heapMB: number; limitMB: number };
 }
 
 /**
@@ -77,6 +82,16 @@ export function describeAnalysisStatus(status: AnalysisStatus, activeUri: string
     return {
       text: 'Limited mode',
       detail: 'The tree-sitter parser failed to load: analysis is regex-only and syntax errors are not reported. See the log.',
+      busy: false,
+      warning: true,
+    };
+  }
+  if (status.reduced) {
+    return {
+      text: 'Reduced analysis',
+      detail: `The language server ran short of memory (${status.reduced.heapMB} of ${status.reduced.limitMB} MB), so it stopped `
+        + 'tracking locals passed between locations (and the checks on them) and semantic highlighting of large files, '
+        + `until it restarts · ${scope}`,
       busy: false,
       warning: true,
     };

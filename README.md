@@ -92,7 +92,7 @@ A **QSP Locations** section in the Explorer side bar lists every location of the
 
 ### Analysis Status
 - The `{}` item next to **QSP** in the status bar shows what the language server is doing: a spinner while it starts, loads the project (with a file count) or analyzes a large file, then **Ready** with the project size.
-- It also warns about degraded modes: **Limited mode** when the tree-sitter parser failed to load (regex-only analysis), and **Per-location parsing** when a file's whole-file parse took too long. Click it (or run **QSP: Show Language Server Log**) for the server log.
+- It also warns about degraded modes: **Limited mode** when the tree-sitter parser failed to load (regex-only analysis), **Per-location parsing** when a file's whole-file parse took too long, and **Reduced analysis** when the server ran short of memory (past 70% of its ~4 GB heap) and, rather than crash, stopped tracking locals passed between locations (and the checks built on them) and semantic highlighting of large files until it restarts. Click it (or run **QSP: Show Language Server Log**) for the server log.
 
 ### Performance Diagnostics
 For large games (hundreds of locations, tens of megabytes), every analysis phase longer than a second (parsing, symbols, project aggregates, diagnostics) writes a `[perf]` line to **QSP: Show Language Server Log** with its time, a breakdown by step, and the heap before and after. Turn on `qsp.debug.performanceLog` to log every phase. The lines hold only numbers, never file, location or variable names. The server runs on VS Code's own runtime, whose heap is capped near 4 GB.

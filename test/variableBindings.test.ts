@@ -173,7 +173,7 @@ $x = 'from_callee'
 `;
     const { symbols } = parseAndExtract(parser, src, 'test://m');
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(symbols, 'test://m'), agg, [symbols]);
+    buildPropagatedLocals(iterLocs(symbols, 'test://m'), agg);
 
     const sym = findLocalSym(symbols, 'caller', 'x');
     const loc = getLoc(symbols, 'caller');
@@ -497,7 +497,7 @@ x = 777
 `;
     const { symbols } = parseAndExtract(parser, src, 'test://deep');
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(symbols, 'test://deep'), agg, [symbols]);
+    buildPropagatedLocals(iterLocs(symbols, 'test://deep'), agg);
 
     const locA = getLoc(symbols, 'a');
     let aSym: QspSymbol | undefined;
@@ -531,7 +531,7 @@ end
 `;
     const { symbols } = parseAndExtract(parser, src, 'test://deep2');
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(symbols, 'test://deep2'), agg, [symbols]);
+    buildPropagatedLocals(iterLocs(symbols, 'test://deep2'), agg);
 
     const locA = getLoc(symbols, 'a');
     let aSym: QspSymbol | undefined;
@@ -557,7 +557,7 @@ describe('variableBindings: recursive calls', () => {
 
   function aggFor(syms: DocumentSymbols, uri: string) {
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(syms, uri), agg, [syms]);
+    buildPropagatedLocals(iterLocs(syms, uri), agg);
     return agg;
   }
   function localSymOf(syms: DocumentSymbols, locName: string, varBase: string): QspSymbol {
@@ -696,7 +696,7 @@ describe('variableBindings: dynamic inside dynamic', () => {
 
   function aggFor(syms: DocumentSymbols, uri: string) {
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(syms, uri), agg, [syms]);
+    buildPropagatedLocals(iterLocs(syms, uri), agg);
     return agg;
   }
   function localSymOf(syms: DocumentSymbols, locName: string, varBase: string): QspSymbol {
@@ -872,7 +872,7 @@ describe('variableBindings: var-mediated dynamic/dyneval by holder kind', () => 
 
   function aggFor(syms: DocumentSymbols, uri: string) {
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(syms, uri), agg, [syms]);
+    buildPropagatedLocals(iterLocs(syms, uri), agg);
     return agg;
   }
   function localSymOf(syms: DocumentSymbols, locName: string, varBase: string): QspSymbol {
@@ -1168,7 +1168,7 @@ describe('variableBindings: getPossibleValuesAtCursor', () => {
   }
   function aggFor(syms: DocumentSymbols, uri: string) {
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(syms, uri), agg, [syms]);
+    buildPropagatedLocals(iterLocs(syms, uri), agg);
     return agg;
   }
 
@@ -1652,7 +1652,7 @@ pl $shared
       ...iterLocs(a.symbols, 'test://pv-proj-a'),
       ...iterLocs(b.symbols, 'test://pv-proj-b'),
     ];
-    buildPropagatedLocals(allLocs, agg, [a.symbols, b.symbols]);
+    buildPropagatedLocals(allLocs, agg);
 
     const { line, column } = locate(srcB, 'pl $shared', 3);
     const vals = getPossibleValuesAtCursor(
@@ -1830,7 +1830,7 @@ describe('variableBindings: goto-style calls do NOT propagate locals', () => {
   }
   function aggFor(syms: DocumentSymbols, uri: string) {
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(syms, uri), agg, [syms]);
+    buildPropagatedLocals(iterLocs(syms, uri), agg);
     return agg;
   }
   function locate(src: string, needle: string, offset = 0) {
@@ -1992,7 +1992,7 @@ x = 77
 `;
     const { symbols } = parseAndExtract(parser, src, 'test://gt-ext');
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(symbols, 'test://gt-ext'), agg, [symbols]);
+    buildPropagatedLocals(iterLocs(symbols, 'test://gt-ext'), agg);
 
     const locA = getLoc(symbols, 'a');
     let aSym: QspSymbol | undefined;
@@ -2030,7 +2030,7 @@ describe('variableBindings: code-block-in-local + dynamic/dyneval with extras', 
   }
   function aggFor(syms: DocumentSymbols, uri: string) {
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(syms, uri), agg, [syms]);
+    buildPropagatedLocals(iterLocs(syms, uri), agg);
     return agg;
   }
   function locate(src: string, needle: string, offset = 0): { line: number; column: number } {
@@ -2727,7 +2727,7 @@ describe('variableBindings: self-shadow rebinding', () => {
 
   function aggFor(syms: DocumentSymbols, uri: string) {
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(syms, uri), agg, [syms]);
+    buildPropagatedLocals(iterLocs(syms, uri), agg);
     return agg;
   }
   function locate(src: string, needle: string, offset = 0) {
