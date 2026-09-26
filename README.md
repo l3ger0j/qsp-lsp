@@ -76,6 +76,30 @@ Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Vi
 - The `{}` item next to **QSP** in the status bar shows what the language server is doing: a spinner while it starts, loads the project (with a file count) or analyzes a large file, then **Ready** with the project size.
 - It also warns about degraded modes: **Limited mode** when the tree-sitter parser failed to load (regex-only analysis), and **Per-location parsing** when a file's whole-file parse took too long. Click it (or run **QSP: Show Language Server Log**) for the server log.
 
+### MCP Server (AI agents)
+The extension ships an [MCP](https://modelcontextprotocol.io) server that lets AI agents work with a QSP project through the same analysis the editor uses, instead of plain text search.
+
+**Tools** (names are case-insensitive, lines are 1-based):
+- **Reading the project:**
+  - `qsp_list_locations`, `qsp_get_location`: list locations or get one's source.
+  - `qsp_find_references`: where a location, variable or object is defined and used.
+  - `qsp_diagnostics`: errors and warnings of the project or one file.
+  - `qsp_check_code`: diagnostics of code that isn't saved yet.
+  - `qsp_lookup_builtin`: documentation of a builtin. The whole reference is also the `qsp://builtins` resource.
+  - `qsp_list_variables`, `qsp_list_objects`: every variable or object in the project.
+- **`qsp_build`**: builds the `.qsp` like **Export QSP Game**, following `txt2gam.json`. It is never interactive: the password comes from the `qsp.game.password` setting.
+- **`qsp_rename`, `qsp_format_location`**: rename a location, variable or object across the project, or format one location. Both only show the changes unless called with `apply: true`.
+
+**In VS Code** (1.101+), the server is offered to agents such as Copilot agent mode automatically; turn it off with `qsp.mcp.enabled`.
+
+**Other agents** (Claude Code, Cursor, Claude Desktop, …): run **QSP: Copy MCP Server Config** and paste the JSON into the agent's MCP configuration, or for Claude Code:
+```
+claude mcp add qsp -- node <extension folder>/out/mcp/server.js --workspace .
+```
+The path points into the installed extension version, so copy it again after an update. Node.js 18+ is needed on `PATH`.
+
+The server reads the files on disk: save files open in the editor before asking an agent to rename or format, and a file changed on disk after the analysis is not overwritten.
+
 ### Project Mode
 - When `qsp.project.enabled` is true, all `.qsps`/`.qsrc` files in the workspace are treated as one combined game
 - Cross-file diagnostics: duplicate locations, unresolved references, variable dataflow
@@ -149,6 +173,7 @@ Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Vi
 | `qsp.project.enabled` | `true` | Enable project mode: treat all `.qsps`/`.qsrc` files as one combined game |
 | `qsp.trace.server`    | `off`  | Traces LSP communication (`off`, `messages`, `verbose`) |
 | `qsp.semanticHighlighting.enabled` | `true` | Enable semantic token highlighting (requires tree-sitter) |
+| `qsp.mcp.enabled` | `true` | Offer the QSP MCP server to AI agents in VS Code (1.101+). |
 | `qsp.game.playerExecutable` | — | Path to the QSP player executable used by Run Game. Set once and persisted globally. `playerExecutable` in `txt2gam.json` overrides it. |
 | `qsp.game.mainFile` | — | Regular expression for the main file, searched in workspace-relative paths (e.g. `^main\.qsps$`). Overridden by `mainFile` in `txt2gam.json` |
 | `qsp.game.mainFileStrategy` | `ask` | How the setup wizard picks the main file when none is configured: `ask` shows a list (dismiss → root files first), `root` puts root files first without asking |

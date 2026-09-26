@@ -8,14 +8,17 @@ src/client/   VS Code extension (the only layer allowed to import `vscode`)
 src/server/   LSP server (vscode-languageserver). Transport-agnostic core in common.ts;
               nodeMain.ts = stdio + fs, browserMain.ts = Web Worker, regex "lite" mode (no tree-sitter)
 src/parser/   Tree-sitter wrapper + symbol/scope/binding analysis. Pure: no server/client imports
-src/common/   Shared pure helpers (location splitting, QSP string scanner)
+src/common/   Shared pure helpers (location splitting, QSP string scanner, build plan, txt2gam calls)
+src/mcp/      MCP server (stdio, out/mcp/server.js). Embeds the LSP server in-process and asks it over LSP;
+              no `vscode` import. src/client/mcp.ts only registers it with VS Code
 tree-sitter-qsp/grammar.js   Grammar source of truth (+ src/scanner.c external scanner)
 qsp_grammar.peg              Ohm.js reference grammar that grammar.js was translated from. Not used by the build
 syntaxes/qsp.tmLanguage.json TextMate grammar (instant coloring, separate from tree-sitter)
 test/                        Vitest suites; tree-sitter-qsp/test/corpus/ = grammar corpus tests
 ```
 
-Dependency direction: `client → (LSP protocol) → server → parser → common`. Never the reverse.
+Dependency direction: `client → (LSP protocol) → server → parser → common`, and `mcp → server → parser → common`.
+Never the reverse.
 Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-sitter-qsp/src/*` are gitignored.
 
 ## Critical Invariants
@@ -35,6 +38,10 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
 **Client/server import boundary**
 ❌ Don't: `import * as vscode from 'vscode'` anywhere in `src/server`, `src/parser`, `src/common`.
 ✅ Do: keep `vscode` imports in `src/client/` only. The server talks through `vscode-languageserver` APIs.
+
+❌ Don't: import `vscode` in `src/mcp/`, or add analysis logic there.
+✅ Do: add what an MCP tool needs to the LSP server (a request, a diagnostic) and call it from `src/mcp/`,
+   so agents and the editor always get the same answers.
 
 ❌ Don't: import `fs`/`path`/`node:*` in `src/server/common.ts` or `src/parser/`. The browser bundle will break.
 ✅ Do: put Node-specific code in `src/server/nodeMain.ts` and inject it (see the `FsProvider` pattern in `serverUtils.ts`).
@@ -82,6 +89,7 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
 | Unit tests (Vitest) | `npm test` (single file: `npx vitest run test/variables.test.ts`) |
 | UI tests (real VS Code, @vscode/test-cli) | `npm run test:ui` (headless Linux: `xvfb-run -a npm run test:ui`) |
 | Lint | `npm run lint` |
+| MCP server bundle | `npm run build:mcp` (run: `node out/mcp/server.js --workspace <dir> [--verbose]`) |
 | Everything CI runs (no packaging) | `npm run check` (= `scripts/build.sh --check`) |
 | Package VSIX | `npm run release` (optional version: `bash scripts/build.sh 1.2.3`) |
 

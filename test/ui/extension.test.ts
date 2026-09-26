@@ -107,4 +107,14 @@ suite('QSP extension', () => {
     assert.ok(text.includes("$name = 'Алиса'"), 'Cyrillic text must survive combining');
     assert.ok(!text.includes('# broken'), 'errors.qsps is not listed in txt2gam.json');
   });
+
+  test('Copy MCP Server Config puts a runnable server path on the clipboard', async () => {
+    await vscode.env.clipboard.writeText('');
+    await vscode.commands.executeCommand('qsp.copyMcpConfig');
+    const config = JSON.parse(await vscode.env.clipboard.readText()) as { mcpServers: { qsp: { command: string; args: string[] } } };
+    const [server, flag, folder] = config.mcpServers.qsp.args;
+    assert.ok(await exists(vscode.Uri.file(server)), `${server} is not in the extension`);
+    assert.strictEqual(flag, '--workspace');
+    assert.strictEqual(folder, vscode.workspace.workspaceFolders![0].uri.fsPath);
+  });
 });

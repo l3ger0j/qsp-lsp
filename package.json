@@ -177,6 +177,11 @@
         "command": "qsp.showServerLog",
         "title": "Show Language Server Log",
         "category": "QSP"
+      },
+      {
+        "command": "qsp.copyMcpConfig",
+        "title": "Copy MCP Server Config",
+        "category": "QSP"
       }
     ],
     "debuggers": [
@@ -621,6 +626,11 @@
           "default": "ask",
           "markdownDescription": "How the setup wizard chooses the main file when it creates `txt2gam.json` and no main file is set in `qsp.game.mainFile`. Either way, the chosen file is saved as `mainFile` in `txt2gam.json`."
         },
+        "qsp.mcp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Offer the QSP MCP server to AI agents in VS Code (e.g. Copilot agent mode; VS Code 1.101+). It answers questions about the project's locations, references and diagnostics, builds the game and applies renames. Agents outside VS Code can use it through **QSP: Copy MCP Server Config**."
+        },
         "qsp.game.playerExecutable": {
           "type": "string",
           "default": "",
@@ -628,6 +638,12 @@
         }
       }
     },
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "qsp",
+        "label": "QSP"
+      }
+    ],
     "semanticTokenScopes": [
       {
         "language": "qsp",
