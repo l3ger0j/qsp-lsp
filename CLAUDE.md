@@ -68,6 +68,17 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
 ❌ Don't: assume tree-sitter is ready (browser mode, initial load).
 ✅ Do: guard with `tsParser.isReady` and fall back to `regexFallback.ts`.
 
+**Browser tooling (Playwright)**
+❌ Don't: ship Playwright or its browser binaries in the `.vsix`, or add them to `dependencies`.
+✅ Do: keep it dev-only (`devDependencies` at most, or installed in a scratch directory), with browsers in
+   Playwright's default cache (`~/.cache/ms-playwright`), outside the repo. Use it only for local/CI verification
+   (see **Visual verification**).
+
+❌ Don't: return a Cytoscape object from a `page.evaluate` callback (`() => node.emit('tap')` returns the element).
+   Playwright tries to serialize it with the whole graph and renderer, and the page dies with "V8 javascript OOM",
+   which looks like a bug in the extension.
+✅ Do: use a block body that returns nothing or plain data: `() => { node.emit('tap'); }`.
+
 **Comments** (explain WHY, not WHAT; if unsure whether a comment is obvious, keep it and list it for review)
 ❌ Don't: restate the next line or the TS signature.
    `// increment counter` above `counter++`; `// takes a string, returns a number` above `parse(input: string): number`.
@@ -128,3 +139,22 @@ Content rules are in **Critical Invariants → Comments**. Style:
 - `/** */` JSDoc on exported functions, classes and public interface members. Internal helpers get `//` or nothing,
   unless the logic is non-obvious. Applies to new code only — existing JSDoc on internal helpers stays.
 - `//` for single-line notes, not `/* */`. No comment directly above `return` unless it explains the returned expression.
+
+## Visual verification
+
+Playwright + Chromium (dev-only, see **Critical Invariants → Browser tooling**) is the approved way to check
+changes to the Jump Graph webview (`src/webview/`): render the real bundle, screenshot it, and look at the
+image instead of guessing from the code. Unit tests cover the view model and layout (`src/common/jumpGraph*.ts`)
+but not what Cytoscape draws.
+
+How:
+- Bundle the webview straight into the scratch directory
+  (`npx esbuild src/webview/graph.ts --bundle --outfile=<scratch>/graph.js --platform=browser --format=iife`);
+  copying from `out/` is blocked by the deny rules.
+- Build the page from the HTML template in `src/client/jumpGraph.ts`: drop the CSP meta, stub
+  `acquireVsCodeApi()` (record `postMessage` calls, `getState()` → `undefined`), and set a few `--vscode-*` colours on `<body>`.
+- Drive it with `window.postMessage({ type: 'graph', ... })` / `{ type: 'focus', ... }` (`HostToWebview`).
+  Wait until `#status` no longer starts with `Laying out`. Layout timings arrive as `{ type: 'log' }` messages.
+- For large-project behaviour use a synthetic graph of the size of a real game (~1000 locations, ~4000 jumps, a few hubs).
+- The Cytoscape instance is `document.getElementById('graph')._cyreg.cy`, so a test can emit `tap`/`mouseover` on elements.
+- Don't return Cytoscape objects from `page.evaluate` (see **Critical Invariants → Browser tooling**).
