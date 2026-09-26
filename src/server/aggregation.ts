@@ -509,17 +509,73 @@ export function buildPropagatedLocals(
   // is a belt-and-braces stack-overflow guard for pathological inputs
   // (QSP games rarely exceed call depth 20).
   const result = out.propagatedLocals;
-  const forwarded = new Map<string, Set<string>>();
   const MAX_PROPAGATION_DEPTH = 1000;
+
+  // Every local reaches every location its callers call, transitively, so
+  // in a game where most locations reach most others each (target, var)
+  // would collect a provider from nearly every location: locations² per
+  // name, which ran large games out of memory. A (target, var) pair takes
+  // at most MAX_PROVIDERS, plus any provider that brings a type prefix or
+  // a value-bearing definition it hasn't seen: the diagnostics read only
+  // those (the union of prefixes, "is any provider assigned"), and they
+  // stay exact because every pair passes on everything it took. Hover and
+  // navigation list a sample, as they list at most a few dozen anyway.
+  const MAX_PROVIDERS = 8;
+  // A provider is its local's symbol: one per (location, name, scope).
+  // What the target is to the variable is worked out once per pair: the
+  // walk reaches a pair once for every provider arriving, millions of
+  // times in a large game.
+  // Arrays and a string rather than sets: a pair holds a dozen providers
+  // at most, and a large game has hundreds of thousands of pairs.
+  interface PairState {
+    syms: QspSymbol[];
+    /** Type prefixes seen, as one string (`$#`). */
+    prefixes: string;
+    valueBearing: boolean;
+    /** Has a non-local reference to it: reads *and* writes. */
+    uses: boolean;
+    /** Declares it `local` somewhere (see `shadowedPropagations` below). */
+    shadows: boolean;
+    /** Its top-level view is its own local: the value goes no further. */
+    stops: boolean;
+    callees: Set<string> | undefined;
+  }
+  // var → target → state; nested maps spare a string key per call.
+  const forwarded = new Map<string, Map<string, PairState>>();
+
+  // A provider turned away because a pair is full still reaches every
+  // location that uses the variable downstream, and must still count as
+  // used (propagatedSyms, for unusedVariables). reachesUse(var) holds the
+  // locations from which a provider passed along would reach such a use.
+  const reachesUseMemo = new Map<string, Set<string>>();
+  const reachesUse = (varName: string): Set<string> => {
+    let set = reachesUseMemo.get(varName);
+    if (set) return set;
+    set = new Set();
+    const queue: string[] = [];
+    for (const [key, info] of locIndex) {
+      const sym = info.locSyms.findVariable(varName);
+      if (sym && !sym.isLocal && sym.references.length > 0) { set.add(key); queue.push(key); }
+    }
+    while (queue.length > 0) {
+      for (const caller of propagationCallersOf(queue.pop()!)) {
+        if (set.has(caller)) continue;
+        // A caller whose own top-level view of the name is local stops it.
+        if (locIndex.get(caller)?.locSyms.findVariable(varName)?.isLocal) continue;
+        set.add(caller);
+        queue.push(caller);
+      }
+    }
+    reachesUseMemo.set(varName, set);
+    return set;
+  };
+  const propagationCallersOf = (loc: string): Iterable<string> => out.propagationCallers.get(loc) ?? [];
 
   // `args` and `result` are QSP built-in variables with their own
   // dedicated call semantics (ARGS holds the callee's argument array;
   // RESULT is the callee's return value).  They must never be treated
   // as caller-propagated locals.
   const NO_PROPAGATE = CALL_FRAME_BUILTINS;
-
-  const providerKey = (p: PropagatedLocal) =>
-    `${p.providerLoc}\0${p.sym.nameLower}\0${p.sym.scopeId ?? 0}`;
 
   function propagate(
     targetLoc: string,
@@ -528,26 +584,41 @@ export function buildPropagatedLocals(
     depth: number,
   ): void {
     if (depth > MAX_PROPAGATION_DEPTH) return;
-    heartbeat();
 
-    // Filter to providers we haven't already routed through this node.
-    const pairKey = `${targetLoc}\0${varName}`;
-    let seen = forwarded.get(pairKey);
-    if (!seen) { seen = new Set(); forwarded.set(pairKey, seen); }
+    // Take the providers this pair hasn't routed yet, within its limit.
+    let byTarget = forwarded.get(varName);
+    if (!byTarget) { byTarget = new Map(); forwarded.set(varName, byTarget); }
+    let state = byTarget.get(targetLoc);
+    if (!state) {
+      const targetInfo = locIndex.get(targetLoc);
+      if (!targetInfo) return;
+      const targetSym = targetInfo.locSyms.findVariable(varName);
+      state = {
+        syms: [], prefixes: '', valueBearing: false,
+        uses: !!targetSym && !targetSym.isLocal && targetSym.references.length > 0,
+        shadows: targetInfo.locSyms.localNames.has(varName),
+        stops: targetSym?.isLocal === true,
+        callees: propagationEdges.get(targetLoc),
+      };
+      byTarget.set(targetLoc, state);
+    }
+    const targetUsesIt = state.uses;
     const fresh: PropagatedLocal[] = [];
     for (const p of providers) {
-      const k = providerKey(p);
-      if (!seen.has(k)) { seen.add(k); fresh.push(p); }
+      if (state.syms.includes(p.sym)) continue;
+      let bringsPrefix = false;
+      if (p.sym.prefixes) for (const x of p.sym.prefixes) if (!state.prefixes.includes(x)) { bringsPrefix = true; break; }
+      const bringsValue = !state.valueBearing && p.sym.hasValueDefinition === true;
+      if (state.syms.length >= MAX_PROVIDERS && !bringsPrefix && !bringsValue) {
+        if (targetUsesIt || reachesUse(varName).has(targetLoc)) out.propagatedSyms.add(p.sym);
+        continue;
+      }
+      state.syms.push(p.sym);
+      if (p.sym.prefixes) for (const x of p.sym.prefixes) if (!state.prefixes.includes(x)) state.prefixes += x;
+      if (p.sym.hasValueDefinition) state.valueBearing = true;
+      fresh.push(p);
     }
     if (fresh.length === 0) return;
-
-    const targetInfo = locIndex.get(targetLoc);
-    if (!targetInfo) return;
-
-    const targetSym = targetInfo.locSyms.findVariable(varName);
-    // The target "uses" the propagated variable when it has any non-local
-    // reference to it — reads *and* writes.
-    const targetUsesIt = targetSym && !targetSym.isLocal && targetSym.references.length > 0;
 
     // Record providers when the target actually uses the variable.
     if (targetUsesIt) {
@@ -573,7 +644,7 @@ export function buildPropagatedLocals(
     //
     // `localNames` is the authoritative set of base names with at
     // least one `local` declaration somewhere in the location.
-    if (targetInfo.locSyms.localNames.has(varName)) {
+    if (state.shadows) {
       let shadowMap = out.shadowedPropagations.get(targetLoc);
       if (!shadowMap) { shadowMap = new Map(); out.shadowedPropagations.set(targetLoc, shadowMap); }
       const existing = shadowMap.get(varName);
@@ -584,13 +655,10 @@ export function buildPropagatedLocals(
     // If the top-level (non-local) view of the target IS the local
     // declaration (i.e. there's no non-local use), propagation is
     // fully consumed and does not flow further.
-    if (targetSym?.isLocal) return;
+    if (state.stops || !state.callees) return;
 
     // Otherwise propagate the fresh providers to callees.
-    const targetEdges = propagationEdges.get(targetLoc);
-    if (!targetEdges) return;
-
-    for (const nextTarget of targetEdges) {
+    for (const nextTarget of state.callees) {
       propagate(nextTarget, varName, fresh, depth + 1);
     }
   }
@@ -611,6 +679,9 @@ export function buildPropagatedLocals(
     if (!callerInfo) continue;
 
     for (const edge of edges) {
+      // Here rather than in propagate(): it runs millions of times, and
+      // the heartbeat reads the clock.
+      heartbeat();
       for (const [varName, scopeId] of edge.locals) {
         if (NO_PROPAGATE.has(varName)) continue;
         // Find the provider QspSymbol — the local in the caller at the exact scope
