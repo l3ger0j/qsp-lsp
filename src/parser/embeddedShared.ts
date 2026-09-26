@@ -283,6 +283,7 @@ export function mergeIntoHost(
   // variation (isDef tagging, label namespace) stays explicit in the
   // call-site lambda.
   forwardRefs(sub.locationRefs.values(), (sym, r) => host.addLocationRef(sym.name, translate(r)));
+  for (const d of sub.dynamicLocationRefs) host.dynamicLocationRefs.push({ ...d, loc: translate(d.loc) });
 
   // ── Object refs (addobj/delobj/modobj/resetobj/obj) ──
   //

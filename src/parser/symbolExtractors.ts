@@ -29,6 +29,7 @@ import {
   nodeLoc,
   findStringInFirstArg,
   findDirectString,
+  getFirstArgNode,
   getNthArgNode,
   extractQuotedRefInfo,
   extractExactQuotedRefInfo,
@@ -184,6 +185,24 @@ export function extractAction(
 
 // ── Location reference extraction ─────────────────────────────────────
 
+// A jump or call whose target isn't a plain string literal (a variable,
+// an expression, an interpolated string). It has no name to be a location
+// ref under, but the jump graph still shows it as a jump to an unknown target.
+function recordDynamicLocationRef(
+  node: Parser.SyntaxNode,
+  callName: string,
+  locSymbols: LocationSymbols,
+  docUri: string,
+): void {
+  const target = getFirstArgNode(node);
+  if (!target) return;
+  const loc = nodeLoc(target, docUri);
+  loc.callType = CALL_TYPE_MAP.get(callName);
+  loc.callText = collapseNewlines(node.text);
+  loc.argCount = Math.max(0, countCallArgs(node) - 1);
+  locSymbols.dynamicLocationRefs.push({ loc, exprText: collapseNewlines(target.text) });
+}
+
 export function extractLocationRef(
   node: Parser.SyntaxNode,
   locSymbols: LocationSymbols,
@@ -207,7 +226,10 @@ export function extractLocationRef(
 
   if (LOCATION_REF_NAMES.has(stmtName)) {
     const firstString = findStringInFirstArg(node);
-    if (!firstString) return;
+    if (!firstString) {
+      recordDynamicLocationRef(node, stmtName, locSymbols, docUri);
+      return;
+    }
     const { name: refName, loc } = extractQuotedRefInfo(firstString, docUri);
     if (LOCALS_PROPAGATING_NAMES.has(stmtName)) {
       loc.localsInScope = locSymbols.getLocalsInScope(scopeId);
@@ -281,7 +303,10 @@ export function extractFuncCallLocationRef(
 
   if (LOCATION_REF_NAMES.has(funcName)) {
     const firstString = findStringInFirstArg(node);
-    if (!firstString) return;
+    if (!firstString) {
+      recordDynamicLocationRef(node, funcName, locSymbols, docUri);
+      return;
+    }
     const { name: refName, loc } = extractQuotedRefInfo(firstString, docUri);
     if (LOCALS_PROPAGATING_NAMES.has(funcName)) {
       loc.localsInScope = locSymbols.getLocalsInScope(scopeId);

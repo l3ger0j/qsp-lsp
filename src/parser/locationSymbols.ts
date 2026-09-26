@@ -16,6 +16,14 @@ import {
 } from './symbolTypes';
 import type { SyntaxError } from './extractErrors';
 
+/** A jump or call with a non-literal target; see `LocationSymbols.dynamicLocationRefs`. */
+export interface DynamicLocationRef {
+  /** The target expression; `callType`, `callText` and `argCount` are set as on location refs. */
+  loc: SymbolLocation;
+  /** Source text of the target expression, e.g. `'room_' + $n`. */
+  exprText: string;
+}
+
 export class LocationSymbols {
   public readonly locationName: string;
   public readonly variables = new Map<string, QspSymbol>();
@@ -245,6 +253,14 @@ export class LocationSymbols {
     /** Number of extra positional args after the var argument. */
     argCount: number;
   }> = [];
+
+  /**
+   * Jumps and calls whose target is not a string literal: `gt $next`,
+   * `gosub 'room_' + $n`, `func($f)`. They don't reach `locationRefs`
+   * (there is no name to key them by), so the jump graph lists them from
+   * here as targets it can't name.
+   */
+  public readonly dynamicLocationRefs: DynamicLocationRef[] = [];
 
   /**
    * Var-mediated `dynamic`/`dyneval` call sites whose enclosing code
@@ -714,6 +730,7 @@ export class LocationSymbols {
       for (const d of source.dynamicVarCalls) copy.dynamicVarCalls.push(d);
       for (const d of source.untrackedDynamicVarCalls) copy.untrackedDynamicVarCalls.push(d);
       for (const d of source.unresolvedDynamicVarCalls) copy.unresolvedDynamicVarCalls.push(d);
+      for (const d of source.dynamicLocationRefs) copy.dynamicLocationRefs.push(d);
       for (const d of source.deferredDynamicVarCalls) copy.deferredDynamicVarCalls.push(d);
       for (const d of source.resolvedDynamicBlocks) copy.resolvedDynamicBlocks.push(d);
       for (const [k, v] of source.variableBindings) copy.variableBindings.set(k, v);
@@ -798,6 +815,9 @@ export class LocationSymbols {
     }
     for (const d of source.unresolvedDynamicVarCalls) {
       copy.unresolvedDynamicVarCalls.push({ ...d, loc: shift(d.loc) });
+    }
+    for (const d of source.dynamicLocationRefs) {
+      copy.dynamicLocationRefs.push({ ...d, loc: shift(d.loc) });
     }
     for (const d of source.deferredDynamicVarCalls) {
       copy.deferredDynamicVarCalls.push({ ...d, loc: shift(d.loc) });

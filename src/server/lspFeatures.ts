@@ -79,6 +79,7 @@ import type {
   PerLocationParseResult,
 } from './featureTypes';
 import type { ProjectVariableItem } from './featureTypes';
+import { buildJumpGraph, type JumpGraphSource } from './jumpGraph';
 
 // Re-export types that consumers need
 export type {
@@ -1026,5 +1027,16 @@ export function registerLspFeatures(ctx: ServerContext): void {
       if (st) states.push(st.symbols);
     }
     return collectProjectVariables(states);
+  });
+
+  // Who jumps to or calls whom; see jumpGraph.ts. Same scope as the lists above.
+  connection.onRequest('qsp/jumpGraph', (params: { uri: string }) => {
+    const uris = ctx.settings.project.enabled ? ctx.projectFileUris : [params.uri];
+    const sources: JumpGraphSource[] = [];
+    for (const uri of uris) {
+      const st = documentStates.get(uri);
+      if (st) sources.push({ uri, symbols: st.symbols, locationIndex: st.locationIndex });
+    }
+    return buildJumpGraph(sources);
   });
 }
