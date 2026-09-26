@@ -68,12 +68,12 @@ static bool match_keyword(TSLexer *lexer, const char *word) {
 static bool scan_ml_newline(TSLexer *lexer, const bool *valid_symbols) {
   bool saw_newline = false;
   for (;;) {
-    while (is_hspace(lexer->lookahead)) lexer->advance(lexer, false);
     if (lexer->lookahead == '\r') lexer->advance(lexer, false);
     if (lexer->lookahead != '\n') break;
     lexer->advance(lexer, false);
     lexer->mark_end(lexer);
     saw_newline = true;
+    while (is_hspace(lexer->lookahead)) lexer->advance(lexer, false);
   }
   if (!saw_newline) return false;
 
@@ -330,12 +330,12 @@ bool tree_sitter_qsp_external_scanner_scan(void *payload, TSLexer *lexer, const 
       (valid_symbols[ML_NL_OR] || valid_symbols[ML_NL_AND] || valid_symbols[ML_NL_CMP] ||
        valid_symbols[ML_NL_AMP] || valid_symbols[ML_NL_ADD] || valid_symbols[ML_NL_MOD] ||
        valid_symbols[ML_NL_MUL]) &&
-      (is_hspace(lexer->lookahead) || lexer->lookahead == '\r' || lexer->lookahead == '\n')) {
-    if (scan_ml_newline(lexer, valid_symbols)) return true;
-    // Fall through is not possible: the lexer has advanced. Returning false
-    // lets tree-sitter reset it and try the internal lexer (plain newline,
-    // blanks as extras); a line continuation is handled by that retry too.
-    return false;
+      (lexer->lookahead == '\r' || lexer->lookahead == '\n')) {
+    // Only on the newline itself: blanks before it arrive earlier as their
+    // own extra token, and a ` _` line continuation starts with a blank, so
+    // it must reach the LINE_CONTINUATION scan below instead. On false the
+    // lexer rewinds and lexes a plain `_newline`.
+    return scan_ml_newline(lexer, valid_symbols);
   }
 
   if (valid_symbols[NEWLINE_OR_RBRACE]) {

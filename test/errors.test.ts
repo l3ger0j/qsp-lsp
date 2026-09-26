@@ -882,6 +882,13 @@ describe('extractErrors — multi-line `or` before a closer on the next line', (
 	end`)).toEqual([]);
   });
 
+  it('accepts line continuations before operators inside parentheses', () => {
+    expect(errorsIn(`set args[{ORM}] = ( $people['<<$tempArg>>_<<$num[3]>>'] = 'Д'  _
+		and $people['<<$tempArg>>_<<$num[4]>>'] ! 'С' _
+	) or ( $people['<<$rab>>_<<$num[3]>>'] ! 'Д'  _
+		and $people['<<$tempArg>>_<<$num[4]>>'] ! 'А' )`)).toEqual([]);
+  });
+
   it.each([
     ['paren', `x = (a or b\n)`],
     ['function args', `x = max(a or b\n)`],

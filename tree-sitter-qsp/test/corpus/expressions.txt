@@ -992,3 +992,61 @@ x = '<<a
                 (ml_variable_ref
                   (identifier_text))))))))
     (location_end)))
+
+================
+Multiline grouping: line continuations inside parentheses
+================
+# test
+x = ( a = 'D'  _
+		and b ! 'C' _
+	) or ( c ! 'D'  _
+		and d ! 'A' )
+--
+---
+
+(source_file
+  (location_block
+    (location_header
+      (location_name))
+    (single_line_block
+      (assignment_statement
+        (variable_list
+          (variable_ref
+            (identifier_text)))
+        (assignment_operator)
+        (na_binary
+          (paren_expr
+            (ml_binary
+              (ml_binary
+                (ml_variable_ref
+                  (identifier_text))
+                (op_cmp)
+                (string
+                  (single_quoted_string)))
+              (line_continuation_ext)
+              (op_and)
+              (ml_binary
+                (ml_variable_ref
+                  (identifier_text))
+                (op_cmp)
+                (string
+                  (single_quoted_string))))
+            (line_continuation_ext))
+          (op_or)
+          (paren_expr
+            (ml_binary
+              (ml_binary
+                (ml_variable_ref
+                  (identifier_text))
+                (op_cmp)
+                (string
+                  (single_quoted_string)))
+              (line_continuation_ext)
+              (op_and)
+              (ml_binary
+                (ml_variable_ref
+                  (identifier_text))
+                (op_cmp)
+                (string
+                  (single_quoted_string))))))))
+    (location_end)))
