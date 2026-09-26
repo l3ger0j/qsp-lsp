@@ -16,6 +16,21 @@ import {
 // Most analyses finish within this; a spinner for them would only flicker.
 const BUSY_DELAY_MS = 300;
 
+const settledEmitter = new vscode.EventEmitter<void>();
+
+/**
+ * Fires whenever the server reports that nothing is being analyzed: the
+ * settings are read, no project scan and no document analysis is running.
+ * Views built from the server's data (Locations, Jump Graph) refresh on it.
+ * Small documents are analyzed without a busy report, so their updates
+ * show up as diagnostics changes instead.
+ */
+export const onAnalysisSettled = settledEmitter.event;
+
+function isSettled(status: AnalysisStatus): boolean {
+  return status.configured && status.project?.state !== 'loading' && status.busyUris.length === 0;
+}
+
 /** Create the language status item and keep it in sync with the server. */
 export function registerAnalysisStatus(context: vscode.ExtensionContext, client: BaseLanguageClient): void {
   const item = vscode.languages.createLanguageStatusItem('qsp.analysis', { language: 'qsp' });
@@ -50,6 +65,7 @@ export function registerAnalysisStatus(context: vscode.ExtensionContext, client:
     client.onNotification(ANALYSIS_STATUS_NOTIFICATION, (next: AnalysisStatus) => {
       status = next;
       render();
+      if (isSettled(next)) settledEmitter.fire();
     }),
     vscode.window.onDidChangeActiveTextEditor(render),
     { dispose: () => { if (busyTimer) clearTimeout(busyTimer); } },

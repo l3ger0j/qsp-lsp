@@ -25,12 +25,12 @@ import {
   ensureGameConfig,
   readGameConfig,
   collectOrderedUris,
+  orderedProjectUris,
   resolveOutputUri,
   effectiveBuildMode,
-  effectiveMainFilePattern,
   type GameConfig,
 } from './gameConfig';
-import { findMainFile, findOutputCollisions, moveToFront, perFileOutputPath } from '../common/buildPlan';
+import { findOutputCollisions, perFileOutputPath } from '../common/buildPlan';
 import { joinSources, normalizeText } from '../common/projectFiles';
 import * as logger from './logger';
 
@@ -106,21 +106,10 @@ export async function buildProjectGame(
   glob: string,
   password: string | undefined,
 ): Promise<vscode.Uri[]> {
-  let uris = await collectOrderedUris(gameCfg, glob);
+  const uris = await orderedProjectUris(gameCfg, glob);
   if (uris.length === 0) return [];
   const mode = effectiveBuildMode(gameCfg);
-  logger.log(`[Build] ${uris.length} source file(s), build mode: ${mode}`);
-
-  const mainPattern = effectiveMainFilePattern(gameCfg);
-  if (mainPattern !== undefined) {
-    const relPaths = uris.map(u => vscode.workspace.asRelativePath(u, false).replace(/\\/g, '/'));
-    const { index, matchCount } = findMainFile(relPaths, mainPattern);
-    if (matchCount > 1) {
-      logger.log(`[Build] mainFile "${mainPattern}" matches ${matchCount} files; using the first: ${relPaths[index]}`);
-    }
-    logger.log(`[Build] Main file: ${relPaths[index]}`);
-    uris = moveToFront(uris, index);
-  }
+  logger.log(`[Build] ${uris.length} source file(s), build mode: ${mode}, main file: ${vscode.workspace.asRelativePath(uris[0])}`);
 
   const outputs: { uri: vscode.Uri; bytes: Uint8Array }[] = [];
   if (mode === 'single') {

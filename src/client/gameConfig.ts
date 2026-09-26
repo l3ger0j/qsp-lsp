@@ -360,6 +360,28 @@ export async function collectOrderedUris(
   return result;
 }
 
+/**
+ * The project's source files in build order with the main file first:
+ * `collectOrderedUris`, then the `mainFile` pattern (txt2gam.json or the
+ * setting) moved to the front. The first file's first location is where
+ * the game starts. Throws when a configured pattern is invalid or matches
+ * nothing, as the build does.
+ */
+export async function orderedProjectUris(
+  cfg: GameConfig | undefined,
+  qspGlobPattern: string,
+): Promise<vscode.Uri[]> {
+  const uris = await collectOrderedUris(cfg, qspGlobPattern);
+  const mainPattern = effectiveMainFilePattern(cfg);
+  if (mainPattern === undefined || uris.length === 0) return uris;
+  const relPaths = uris.map(u => vscode.workspace.asRelativePath(u, false).replace(/\\/g, '/'));
+  const { index, matchCount } = findMainFile(relPaths, mainPattern);
+  if (matchCount > 1) {
+    logger.log(`[Config] mainFile "${mainPattern}" matches ${matchCount} files; using the first: ${relPaths[index]}`);
+  }
+  return moveToFront(uris, index);
+}
+
 /** Resolve the output .qsp URI for a `single` build from the game config. */
 export function resolveOutputUri(cfg: GameConfig): vscode.Uri {
   const root = workspaceRoot();
