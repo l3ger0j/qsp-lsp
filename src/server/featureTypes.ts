@@ -57,6 +57,12 @@ export interface DocumentState {
    * during the fast tier.
    */
   positionsApproximate?: boolean;
+  /**
+   * Syntax errors of a project file that is not open in the editor, found
+   * while the project scan parsed it. Open documents keep a tree instead;
+   * a closed file's tree is freed right after the scan.
+   */
+  syntaxErrors?: SyntaxError[];
 }
 
 // ──────────────────────────────────────────────────────────────────────

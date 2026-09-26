@@ -21,6 +21,7 @@ import {
   buildLocationIndex,
   DocumentSymbols,
   LocationSymbols,
+  extractErrors,
   extractSymbols,
   fullParseTimeoutMicros,
   QspSymbolKind,
@@ -28,6 +29,7 @@ import {
   type SymbolLocation,
   type LocationEntry,
   type QspTreeSitterParser,
+  type SyntaxError,
 } from '../parser';
 import {
   buildRegexSymbols,
@@ -42,7 +44,7 @@ import {
 import type { DiagnosticSettings } from './diagnostics';
 import type { DocumentState } from './lspFeatures';
 import { computeDiagnostics } from './diagnostics';
-import { stripBom, makeLocSymLoc, QSP_FILE_EXTENSIONS, safeSendDiagnostics, safeConsole, type FsProvider } from './serverUtils';
+import { stripBom, makeLocSymLoc, shiftErrors, QSP_FILE_EXTENSIONS, safeSendDiagnostics, safeConsole, type FsProvider } from './serverUtils';
 
 /**
  * Files at or above this size are parsed per-location instead of as one
@@ -187,11 +189,15 @@ export class ProjectModeService {
   analyzeFile(uri: string, text: string): void {
     const locationIndex = buildLocationIndex(text);
     let symbols: DocumentSymbols;
+    // Kept on the state because the tree is freed here: without them a
+    // syntax error in a closed file would show only once it is opened.
+    let syntaxErrors: SyntaxError[] | undefined;
 
     if (!this.tsParser.isReady) {
       symbols = buildRegexSymbols(uri, locationIndex, text);
     } else if (text.length >= PROJECT_PER_LOCATION_BYTE_THRESHOLD) {
-      symbols = this.analyzePerLocation(uri, text, locationIndex);
+      syntaxErrors = [];
+      symbols = this.analyzePerLocation(uri, text, locationIndex, syntaxErrors);
     } else {
       const tree = this.tsParser.parseOnce(text, fullParseTimeoutMicros(text.length));
       if (tree) {
@@ -200,11 +206,13 @@ export class ProjectModeService {
             tree, uri, undefined, undefined,
             this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
           ).symbols;
+          syntaxErrors = extractErrors(tree);
         } finally {
           tree.delete();
         }
       } else {
-        symbols = this.analyzePerLocation(uri, text, locationIndex);
+        syntaxErrors = [];
+        symbols = this.analyzePerLocation(uri, text, locationIndex, syntaxErrors);
       }
     }
 
@@ -212,12 +220,18 @@ export class ProjectModeService {
       locationIndex,
       symbols,
       cachedSemanticTokens: undefined,
+      syntaxErrors,
     });
   }
 
   // Large project files, and files whose whole-file parse timed out, are
   // parsed one location at a time. See PROJECT_PER_LOCATION_BYTE_THRESHOLD.
-  private analyzePerLocation(uri: string, text: string, locationIndex: LocationEntry[]): DocumentSymbols {
+  private analyzePerLocation(
+    uri: string,
+    text: string,
+    locationIndex: LocationEntry[],
+    syntaxErrors: SyntaxError[],
+  ): DocumentSymbols {
     const symbols = new DocumentSymbols(uri);
     for (const loc of locationIndex) {
       const locText = text.slice(loc.startOffset, loc.endOffset);
@@ -230,6 +244,7 @@ export class ProjectModeService {
             tree, uri, undefined, undefined,
             this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
           );
+          shiftErrors(extractErrors(tree), loc.startLine, syntaxErrors);
         } finally {
           tree.delete();
         }
@@ -385,7 +400,8 @@ export class ProjectModeService {
         this.tsParser,
         callTypes,
         state.symbols,
-        undefined,
+        // An open document's errors come from its tree; a closed one has none.
+        doc ? undefined : state.syntaxErrors,
         this.projectAggregates,
         undefined,
         collectPeerDocs(uri),
