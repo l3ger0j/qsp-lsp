@@ -700,10 +700,11 @@
     "build:client:node": "esbuild src/client/nodeMain.ts --bundle --outfile=out/client/nodeMain.js --platform=node --format=cjs --external:vscode --target=node18 --alias:txt2gamJs=./vendor/txt2gam/txt2gam.js",
     "build:client:browser": "esbuild src/client/browserMain.ts --bundle --outfile=out/client/browserMain.js --platform=browser --format=esm --external:vscode --external:node:fs --target=es2020 --alias:txt2gamJs=./vendor/txt2gam/txt2gam.js",
     "build:copy-wasm": "cp node_modules/web-tree-sitter/tree-sitter.wasm out/server/tree-sitter.wasm && cp vendor/txt2gam/txt2gam.wasm out/client/txt2gam.wasm",
-    "build:bundles": "npm run build:server:node && npm run build:server:browser && npm run build:client:node && npm run build:client:browser && npm run build:copy-wasm",
+    "build:mcp": "esbuild src/mcp/server.ts --bundle --outfile=out/mcp/server.js --platform=node --format=cjs --target=node18 --minify-whitespace --minify-syntax --main-fields=module,main --alias:txt2gamJs=./vendor/txt2gam/txt2gam.js",
+    "build:bundles": "npm run build:server:node && npm run build:server:browser && npm run build:client:node && npm run build:client:browser && npm run build:mcp && npm run build:copy-wasm",
     "build:ui-tests": "npm run build:bundles && esbuild test/ui/*.test.ts --outdir=out/test/ui --platform=node --format=cjs --target=node20",
     "fetch:txt2gam": "node scripts/fetchTxt2gam.mjs",
-    "build": "npm run fetch:txt2gam && npm run build:grammar && npm run build:server:node && npm run build:server:browser && npm run build:client:node && npm run build:client:browser && npm run build:copy-wasm",
+    "build": "npm run fetch:txt2gam && npm run build:grammar && npm run build:server:node && npm run build:server:browser && npm run build:client:node && npm run build:client:browser && npm run build:mcp && npm run build:copy-wasm",
     "watch:server:node": "esbuild src/server/nodeMain.ts --bundle --outfile=out/server/nodeMain.js --platform=node --format=cjs --external:vscode --target=node18 --watch",
     "watch:server:browser": "esbuild src/server/browserMain.ts --bundle --outfile=out/server/browserMain.js --platform=browser --format=esm --target=es2020 --external:web-tree-sitter --watch",
     "watch:client:node": "esbuild src/client/nodeMain.ts --bundle --outfile=out/client/nodeMain.js --platform=node --format=cjs --external:vscode --target=node18 --alias:txt2gamJs=./vendor/txt2gam/txt2gam.js --watch",
@@ -723,15 +724,20 @@
     }
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.1",
+    "jsonc-parser": "^3.3.1",
+    "picomatch": "^4.0.7",
     "vscode-languageclient": "^9.0.1",
     "vscode-languageserver": "^9.0.1",
     "vscode-languageserver-textdocument": "^1.0.11",
     "vscode-uri": "^3.1.0",
-    "web-tree-sitter": "^0.24.7"
+    "web-tree-sitter": "^0.24.7",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "^25.5.0",
+    "@types/picomatch": "^4.0.3",
     "@types/vscode": "^1.85.0",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.1.0",
