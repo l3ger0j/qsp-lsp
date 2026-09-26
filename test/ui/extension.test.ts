@@ -140,4 +140,36 @@ suite('QSP extension', () => {
       child.kill();
     }
   });
+
+  test('QSP Locations shows in the Explorer and opens a location at its header', async () => {
+    // The view exists only once qsp.hasSources is set, so focusing it proves both.
+    await vscode.commands.executeCommand('qsp.locations.focus');
+    await vscode.commands.executeCommand('qsp.locations.refresh');
+
+    const uri = fixtureUri('data/data.qsps');
+    await vscode.commands.executeCommand('qsp.locations.open', { uri: uri.toString(), name: 'data', line: 0 });
+    const editor = vscode.window.activeTextEditor;
+    assert.ok(editor, 'no editor after opening the location');
+    assert.strictEqual(editor.document.uri.toString(), uri.toString());
+    assert.strictEqual(editor.selection.active.line, 0);
+  });
+
+  test('a location command from the view acts on that location and puts the cursor there', async () => {
+    // Start in another file, so the target file has to be opened by the command.
+    await vscode.window.showTextDocument(fixtureUri('main.qsps'));
+    const uri = fixtureUri('data/data.qsps');
+
+    const done = vscode.commands.executeCommand('qsp.duplicateLocation', { uri: uri.toString(), name: 'data', line: 0 });
+    // Accept the prefilled name ("data_copy") once the input box is up.
+    await waitFor('the duplicate', async () => {
+      await vscode.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
+      const editor = vscode.window.activeTextEditor;
+      return editor?.document.uri.toString() === uri.toString() && editor.document.getText().includes('# data_copy') ? true : undefined;
+    });
+    await done;
+
+    const editor = vscode.window.activeTextEditor!;
+    assert.strictEqual(editor.document.lineAt(editor.selection.active.line).text, '# data_copy');
+    await vscode.commands.executeCommand('workbench.action.files.revert');
+  });
 });

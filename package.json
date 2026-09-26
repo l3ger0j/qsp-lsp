@@ -182,6 +182,34 @@
         "command": "qsp.copyMcpConfig",
         "title": "Copy MCP Server Config",
         "category": "QSP"
+      },
+      {
+        "command": "qsp.locations.refresh",
+        "title": "Refresh",
+        "category": "QSP Locations",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "qsp.locations.groupByFile",
+        "title": "Group by File",
+        "category": "QSP Locations",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "qsp.locations.groupFlat",
+        "title": "Show as List",
+        "category": "QSP Locations",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "qsp.locations.open",
+        "title": "Open Location",
+        "category": "QSP Locations"
+      },
+      {
+        "command": "qsp.locations.findReferences",
+        "title": "Find References",
+        "category": "QSP Locations"
       }
     ],
     "debuggers": [
@@ -368,6 +396,66 @@
         },
         {
           "command": "qsp.importGame"
+        },
+        {
+          "command": "qsp.locations.open",
+          "when": "false"
+        },
+        {
+          "command": "qsp.locations.findReferences",
+          "when": "false"
+        },
+        {
+          "command": "qsp.locations.groupByFile",
+          "when": "false"
+        },
+        {
+          "command": "qsp.locations.groupFlat",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "qsp.locations.groupFlat",
+          "when": "view == qsp.locations && qsp.locations.grouping != flat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "qsp.locations.groupByFile",
+          "when": "view == qsp.locations && qsp.locations.grouping == flat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "qsp.locations.refresh",
+          "when": "view == qsp.locations",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "qsp.locations.open",
+          "when": "view == qsp.locations && viewItem == qspLocation",
+          "group": "1_open@1"
+        },
+        {
+          "command": "qsp.locations.findReferences",
+          "when": "view == qsp.locations && viewItem == qspLocation",
+          "group": "1_open@2"
+        },
+        {
+          "command": "qsp.renameLocation",
+          "when": "view == qsp.locations && viewItem == qspLocation",
+          "group": "2_modify@1"
+        },
+        {
+          "command": "qsp.duplicateLocation",
+          "when": "view == qsp.locations && viewItem == qspLocation",
+          "group": "2_modify@2"
+        },
+        {
+          "command": "qsp.deleteLocation",
+          "when": "view == qsp.locations && viewItem == qspLocation",
+          "group": "2_modify@3"
         }
       ]
     },
@@ -635,6 +723,11 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Path to the QSP player executable or script used by the **Run QSP Game** command. The .qsp file path is passed as its argument. Example: `/usr/local/bin/qsp-player` or `C:\\QSP\\player.exe`. `playerExecutable` in `txt2gam.json` overrides this setting for the project."
+        },
+        "qsp.locations.followCursor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Select the location under the cursor in the QSP Locations view."
         }
       }
     },
@@ -707,6 +800,16 @@
           }
         }
       }
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "qsp.locations",
+          "name": "QSP Locations",
+          "icon": "$(symbol-namespace)",
+          "when": "qsp.hasSources"
+        }
+      ]
     }
   },
   "scripts": {

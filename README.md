@@ -65,6 +65,13 @@ Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Vi
   ```
 - **Separate module builds** — set `"buildMode": "perFile"` in `txt2gam.json` (or the `qsp.game.buildMode` setting) to build each source file into its own `.qsp` next to it instead of one combined game: `main.qsps` → `main.qsp`, `data.qsps` → `data.qsp`. `outputFile` is not used in this mode. **Run QSP Game** starts the main file's `.qsp` (see above), and the game loads the other modules itself with `INCLIB 'data.qsp'`. When it creates `txt2gam.json` in this mode, the setup wizard writes `buildMode` instead of `outputFile`. A `.qsp` whose content hasn't changed is not rewritten. The `txt2gam.json` value overrides the setting. Two sources that would produce the same `.qsp` (e.g. `a.qsps` and `a.qsrc` in one folder) are reported as an error, and nothing is written if any file fails to build.
 
+### QSP Locations view
+A **QSP Locations** section in the Explorer side bar lists every location of the project (in project mode) or of the active file:
+- **Group by file** (folders and files as in the project, locations in source order) or **Show as list** (all locations alphabetically, with their file), switched with the button in the section header.
+- The start location — the first location of the main file — has a ▶ icon; locations with errors or warnings show the counts.
+- Click a location to open it. The location under the cursor is selected as you move through the code (`qsp.locations.followCursor`).
+- Right-click for **Find References**, **Rename**, **Duplicate** and **Delete**.
+
 ### Multi-File Operations
 - **List All Locations** — browse all locations across the file or project
 - **List All Objects** — browse all objects (addobj) with their definition location
@@ -175,6 +182,7 @@ The server reads the files on disk: save files open in the editor before asking 
 | `qsp.project.enabled` | `true` | Enable project mode: treat all `.qsps`/`.qsrc` files as one combined game |
 | `qsp.trace.server`    | `off`  | Traces LSP communication (`off`, `messages`, `verbose`) |
 | `qsp.semanticHighlighting.enabled` | `true` | Enable semantic token highlighting (requires tree-sitter) |
+| `qsp.locations.followCursor` | `true` | Select the location under the cursor in the QSP Locations view. |
 | `qsp.mcp.enabled` | `true` | Offer the QSP MCP server to AI agents in VS Code (1.101+). |
 | `qsp.game.playerExecutable` | — | Path to the QSP player executable used by Run Game. Set once and persisted globally. `playerExecutable` in `txt2gam.json` overrides it. |
 | `qsp.game.mainFile` | — | Regular expression for the main file, searched in workspace-relative paths (e.g. `^main\.qsps$`). Overridden by `mainFile` in `txt2gam.json` |
