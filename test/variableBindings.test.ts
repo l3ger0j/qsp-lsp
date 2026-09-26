@@ -3643,3 +3643,59 @@ describe('variableBindings: tuple unpacking', () => {
   });
 });
 
+
+// ──────────────────────────────────────────────────────────────────────
+// Code blocks that dispatch each other
+// ──────────────────────────────────────────────────────────────────────
+//
+// A write inside a `dynamic $var` block is attributed to the places the
+// block runs from. Blocks that dispatch each other (menus opening
+// menus) once had every write copied again at each hop, up to 16 hops:
+// two blocks calling each other twice made ~200 000 bindings from ten
+// lines, and a real game ran out of memory on one location.
+describe('variableBindings: code blocks that dispatch each other', () => {
+  const parser = new QspTreeSitterParser();
+  beforeAll(() => initParser(parser));
+
+  const bindingCount = (ls: LocationSymbols, name: string) => ls.variableBindings.get(name)?.length ?? 0;
+
+  it('attributes each write once per outside call site, however the blocks cycle', () => {
+    const code = [
+      '# menu',
+      '$a = {',
+      '\tx = 1',
+      '\tdynamic $b',
+      '\tdynamic $b',
+      '\tdynamic $b',
+      '}',
+      '$b = {',
+      '\ty = 2',
+      '\tdynamic $a',
+      '\tdynamic $a',
+      '\tdynamic $a',
+      '}',
+      'dynamic $a',
+      'dynamic $b',
+      '--- menu ---',
+      '',
+    ].join('\n');
+    const started = Date.now();
+    const { symbols } = parseAndExtract(parser, code);
+    expect(Date.now() - started).toBeLessThan(2000);
+    const ls = symbols.getLocation('menu')!;
+    // x and y each run from the two top-level `dynamic` statements.
+    expect(bindingCount(ls, 'x')).toBe(2);
+    expect(bindingCount(ls, 'y')).toBe(2);
+    let total = 0;
+    for (const list of ls.variableBindings.values()) total += list.length;
+    expect(total).toBeLessThan(10);
+  });
+
+  it('keeps writes of blocks only ever run from inside each other', () => {
+    const code = "# loop\n$a = {\n\tx = 1\n\tdynamic $b\n}\n$b = {\n\ty = 2\n\tdynamic $a\n}\n--- loop ---\n";
+    const { symbols } = parseAndExtract(parser, code);
+    const ls = symbols.getLocation('loop')!;
+    expect(bindingCount(ls, 'x')).toBeGreaterThanOrEqual(1);
+    expect(bindingCount(ls, 'y')).toBeGreaterThanOrEqual(1);
+  });
+});
