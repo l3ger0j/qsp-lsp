@@ -9,7 +9,8 @@ src/server/   LSP server (vscode-languageserver). Transport-agnostic core in com
               nodeMain.ts = stdio + fs, browserMain.ts = Web Worker, regex "lite" mode (no tree-sitter)
 src/parser/   Tree-sitter wrapper + symbol/scope/binding analysis. Pure: no server/client imports
 src/common/   Shared pure helpers (location splitting, QSP string scanner, build plan, txt2gam calls)
-src/mcp/      MCP server (stdio, out/mcp/server.js). Embeds the LSP server in-process and asks it over LSP;
+src/mcp/      MCP server (stdio). out/mcp/server.js = ES5 Node-version check (src/mcp/server.js, keep it ES5),
+              out/mcp/main.js = the server. Embeds the LSP server in-process and asks it over LSP;
               no `vscode` import. src/client/mcp.ts only registers it with VS Code
 tree-sitter-qsp/grammar.js   Grammar source of truth (+ src/scanner.c external scanner)
 qsp_grammar.peg              Ohm.js reference grammar that grammar.js was translated from. Not used by the build

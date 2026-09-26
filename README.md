@@ -92,11 +92,11 @@ The extension ships an [MCP](https://modelcontextprotocol.io) server that lets A
 
 **In VS Code** (1.101+), the server is offered to agents such as Copilot agent mode automatically; turn it off with `qsp.mcp.enabled`.
 
-**Other agents** (Claude Code, Cursor, Claude Desktop, …): run **QSP: Copy MCP Server Config** and paste the JSON into the agent's MCP configuration, or for Claude Code:
+**Other agents** (Cline, Claude Code, Cursor, Claude Desktop, …): run **QSP: Copy MCP Server Config** and paste the JSON into the agent's MCP configuration. The config starts the server with VS Code's own runtime, so no separate Node.js is needed; it points at the installed VS Code and extension versions, so copy it again after updating either. To start the server with your own Node.js instead, use Node.js 18 or newer, e.g. for Claude Code:
 ```
 claude mcp add qsp -- node <extension folder>/out/mcp/server.js --workspace .
 ```
-The path points into the installed extension version, so copy it again after an update. Node.js 18+ is needed on `PATH`.
+If the agent reports "Connection closed", its log shows the server's stderr: an older Node.js is reported there by name and version.
 
 The server reads the files on disk: save files open in the editor before asking an agent to rename or format, and a file changed on disk after the analysis is not overwritten.
 

@@ -58,11 +58,21 @@ export function registerMcpServer(context: vscode.ExtensionContext): void {
 
 async function copyMcpConfig(context: vscode.ExtensionContext): Promise<void> {
   const folder = workspaceFolderPath();
-  const args = [serverPath(context), ...(folder ? ['--workspace', folder] : [])];
-  const config = { mcpServers: { qsp: { command: 'node', args } } };
+  // The editor's own runtime rather than `node` from PATH: an agent spawns
+  // the server without the user's shell profile, so PATH may hold no Node
+  // or an old system one (the server needs 18+). Same launch as the VS
+  // Code registration above.
+  const config = {
+    mcpServers: {
+      qsp: {
+        command: process.execPath,
+        args: [serverPath(context), ...(folder ? ['--workspace', folder] : [])],
+        env: { ELECTRON_RUN_AS_NODE: '1' },
+      },
+    },
+  };
   await vscode.env.clipboard.writeText(JSON.stringify(config, null, 2));
   vscode.window.showInformationMessage(
-    'QSP MCP server config copied. The path points into this extension version\'s folder, so copy it again after an update. '
-    + 'The agent needs Node.js 18+ on PATH.',
+    'QSP MCP server config copied. It points at this VS Code and this extension version, so copy it again after updating either.',
   );
 }

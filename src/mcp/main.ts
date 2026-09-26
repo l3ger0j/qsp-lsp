@@ -1,7 +1,6 @@
 /**
- * QSP MCP server — stdio entry point (out/mcp/server.js).
- *
- *   node out/mcp/server.js [--workspace <dir>]
+ * QSP MCP server (out/mcp/main.js), loaded by the Node version check in
+ * out/mcp/server.js — the path MCP configs point at.
  *
  * The workspace defaults to the current directory. stdout carries the MCP
  * protocol, so everything else goes to stderr.
@@ -14,7 +13,7 @@ import { wasmFromOutDir } from '../server/nodeHost';
 import type { CreateT2gModule } from '../common/txt2gamCore';
 import { createQspMcpServer } from './mcpServer';
 
-// This bundle is out/mcp/server.js inside the extension, next to its package.json.
+// This bundle is out/mcp/main.js inside the extension, two levels below its package.json.
 function extensionVersion(): string {
   try {
     return (JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8')) as { version: string }).version;

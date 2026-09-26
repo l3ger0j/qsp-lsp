@@ -3,6 +3,7 @@
 // the client, the language client wiring and the bundled server together.
 
 import * as assert from 'node:assert';
+import * as cp from 'node:child_process';
 import * as vscode from 'vscode';
 
 const EXTENSION_ID = 'qsp.qsp-lsp';
@@ -108,13 +109,35 @@ suite('QSP extension', () => {
     assert.ok(!text.includes('# broken'), 'errors.qsps is not listed in txt2gam.json');
   });
 
-  test('Copy MCP Server Config puts a runnable server path on the clipboard', async () => {
+  test('Copy MCP Server Config gives a command that starts the MCP server', async () => {
     await vscode.env.clipboard.writeText('');
     await vscode.commands.executeCommand('qsp.copyMcpConfig');
-    const config = JSON.parse(await vscode.env.clipboard.readText()) as { mcpServers: { qsp: { command: string; args: string[] } } };
-    const [server, flag, folder] = config.mcpServers.qsp.args;
-    assert.ok(await exists(vscode.Uri.file(server)), `${server} is not in the extension`);
-    assert.strictEqual(flag, '--workspace');
-    assert.strictEqual(folder, vscode.workspace.workspaceFolders![0].uri.fsPath);
+    const { command, args, env } = (JSON.parse(await vscode.env.clipboard.readText()) as {
+      mcpServers: { qsp: { command: string; args: string[]; env: Record<string, string> } };
+    }).mcpServers.qsp;
+    assert.strictEqual(command, process.execPath);
+    assert.deepStrictEqual(args.slice(1), ['--workspace', vscode.workspace.workspaceFolders![0].uri.fsPath]);
+
+    // Start it exactly as an agent would and complete the MCP handshake.
+    const child = cp.spawn(command, args, { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    try {
+      const reply = await new Promise<string>((resolve, reject) => {
+        let out = '';
+        let err = '';
+        child.stdout.on('data', (d: Buffer) => {
+          out += d.toString();
+          if (out.includes('\n')) resolve(out.split('\n')[0]);
+        });
+        child.stderr.on('data', (d: Buffer) => { err += d.toString(); });
+        child.on('exit', code => reject(new Error(`server exited with ${code}: ${err}`)));
+        child.stdin.write(JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'initialize',
+          params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'ui-test', version: '0' } },
+        }) + '\n');
+      });
+      assert.strictEqual((JSON.parse(reply) as { result: { serverInfo: { name: string } } }).result.serverInfo.name, 'qsp');
+    } finally {
+      child.kill();
+    }
   });
 });
