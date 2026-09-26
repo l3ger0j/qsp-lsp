@@ -73,7 +73,8 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
    `qsp/performanceReport` (`performanceReport.ts`) or the profiler's files (`nodeProfiler.ts`). Users send these
    for games whose content they can't share.
 ✅ Do: counts, sizes, durations, memory, grammar node types and the extension's own function names only; keep
-   `test/performanceReport.test.ts` checking that no name leaks.
+   `test/performanceReport.test.ts` checking that no name leaks. To reproduce a user's game, generate one of the
+   same shape: `npm run stress:gen -- --shape report.json`.
 
 **Browser tooling (Playwright)**
 ❌ Don't: ship Playwright or its browser binaries in the `.vsix`, or add them to `dependencies`.
@@ -109,6 +110,8 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
 | UI tests (real VS Code, @vscode/test-cli) | `npm run test:ui` (headless Linux: `xvfb-run -a npm run test:ui`) |
 | Lint | `npm run lint` |
 | MCP server bundle | `npm run build:mcp` (run: `node out/mcp/server.js --workspace <dir> [--verbose]`) |
+| Stress game (synthetic QSP project) | `npm run stress:gen -- --out <dir> [--locations 1000] [--chars 26000] [--files 1] [--shape report.json]` |
+| Load test the server on a project | `npm run build:server:node && npm run bench:stress -- <dir> [--graph] [--edits 5] [--json out.json]` |
 | Everything CI runs (no packaging) | `npm run check` (= `scripts/build.sh --check`) |
 | Package VSIX | `npm run release` (optional version: `bash scripts/build.sh 1.2.3`) |
 

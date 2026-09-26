@@ -884,6 +884,8 @@
     "release": "bash scripts/build.sh",
     "package": "npx @vscode/vsce package",
     "publish": "npx @vscode/vsce publish",
+    "stress:gen": "node scripts/stress/genGame.mjs",
+    "bench:stress": "node scripts/stress/bench.mjs",
     "build:webview": "esbuild src/webview/graph.ts --bundle --outfile=out/webview/graph.js --platform=browser --format=iife --target=es2020 --minify"
   },
   "overrides": {
