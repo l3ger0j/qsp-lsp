@@ -137,8 +137,14 @@ function makeWriter(r, opts, locationCount) {
           : `${pad}${nv()} += ${r.int(10)}\n`;
       case 'user_call_statement':
         return `${pad}@@${target(i)}(${r.int(9)}, '${text().slice(0, 12)}')\n`;
-      case 'code_block':
-        return `${pad}dynamic {\n${pad}\t*pl '${text()}'\n${pad}\tgs '${target(i)}'\n${pad}}\n`;
+      case 'code_block': {
+        if (r.next() < 0.5) return `${pad}dynamic {\n${pad}\t*pl '${text()}'\n${pad}\tgs '${target(i)}'\n${pad}}\n`;
+        // A block kept in a variable and run later; the small pool per
+        // location makes blocks run each other, like menus opening menus.
+        const own = r.int(4), other = r.int(4);
+        return `${pad}$blk_${own} = {\n${pad}\t${nv()} += 1\n${pad}\t*pl '${text()}'\n${pad}\tif ${nv()} < 0: dynamic $blk_${other}\n${pad}}\n`
+          + `${pad}dynamic $blk_${own}\n`;
+      }
       case 'string_interpolation':
         return `${pad}*pl "${text()} <<${sv()}>> ${text()}"\n`;
       case 'comment_statement':
