@@ -31,6 +31,7 @@ import {
   type GameConfig,
 } from './gameConfig';
 import { findMainFile, findOutputCollisions, moveToFront, perFileOutputPath } from '../common/buildPlan';
+import { joinSources, normalizeText } from '../common/projectFiles';
 import * as logger from './logger';
 
 // UTF-8 BOM — matches what txt2gam CLI emits and what the server's
@@ -77,25 +78,16 @@ export async function collectProjectUris(glob: string): Promise<vscode.Uri[]> {
 }
 
 /**
- * Combine multiple .qsps files into a single text source.
- *
- * Files are separated by a blank line so that the last `---` of one
- * file and the first `#` of the next are never on the same line.
- * Each file's content has a trailing newline guaranteed.
+ * Combine multiple .qsps files into a single text source (see
+ * `joinSources` for the separators).
  */
 export async function combineFiles(
   uris: vscode.Uri[],
   context: vscode.ExtensionContext,
 ): Promise<string> {
-  const parts: string[] = [];
-  for (const uri of uris) {
-    let text = normalizeText(await readFileAsText(uri, context));
-    // Ensure the file ends with a newline
-    if (!text.endsWith('\n')) text += '\n';
-    parts.push(text);
-  }
-  // Join with a blank line between files
-  return parts.join('\n');
+  const texts: string[] = [];
+  for (const uri of uris) texts.push(await readFileAsText(uri, context));
+  return joinSources(texts);
 }
 
 /**
@@ -193,11 +185,7 @@ async function compareWithDisk(uri: vscode.Uri, bytes: Uint8Array): Promise<'sam
   return 'same';
 }
 
-/** Strip BOM and normalise line endings to LF. */
-export function normalizeText(text: string): string {
-  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-}
+export { normalizeText };
 
 /** Return the workspace name or a fallback. */
 function workspaceName(): string {
