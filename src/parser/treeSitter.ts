@@ -43,6 +43,30 @@ export function fullParseTimeoutMicros(textLength: number): number {
 // Incremental edit computation
 // ──────────────────────────────────────────────────────────────────────
 
+// ── Parse input ──────────────────────────────────────────────────────
+//
+// Given a string, web-tree-sitter 0.24 reads it through
+// `index => text.slice(index)` and copies up to 5000 characters of what
+// that returns into WASM memory on every call. The lexer calls back
+// thousands of times per location, whenever it re-reads from a new
+// position, so most of a parse went into copying: 54 of 76 s on a
+// 978-location game. Short slices keep each call cheap.
+//
+// The tree keeps the same function to serve `node.text`, which reads
+// whole ranges; once the parse is over it hands out the full tail
+// again, so `node.text` stays one slice instead of many small pieces.
+const PARSE_CHUNK = 128;
+
+function parseText(parser: Parser, text: string, oldTree?: Parser.Tree): Parser.Tree {
+  let parsing = true;
+  const input = (index: number) => (parsing ? text.slice(index, index + PARSE_CHUNK) : text.slice(index));
+  try {
+    return parser.parse(input, oldTree);
+  } finally {
+    parsing = false;
+  }
+}
+
 /**
  * Compute the minimal tree-sitter Edit descriptor between two texts.
  *
@@ -265,7 +289,7 @@ export class QspTreeSitterParser {
         this.parser.setTimeoutMicros(5_000_000); // 5 seconds
         let tree: Parser.Tree;
         try {
-          tree = this.parser.parse(text, oldTree);
+          tree = parseText(this.parser, text, oldTree);
         } catch (err) {
           // Timeout (or another parse failure) — oldTree is corrupted by
           // edit(), discard it. Critically, also reset() the *parser*:
@@ -300,7 +324,7 @@ export class QspTreeSitterParser {
     this.parser.setTimeoutMicros(fullParseTimeoutMicros(text.length));
     let tree: Parser.Tree;
     try {
-      tree = this.parser.parse(text);
+      tree = parseText(this.parser, text);
     } catch (err) {
       // Initial parse timed out (or failed another way) — reset() so the
       // *next* parse() call (possibly for a different document) doesn't
@@ -337,7 +361,7 @@ export class QspTreeSitterParser {
     if (!this.parser) return null;
     this.parser.setTimeoutMicros(timeoutMicros);
     try {
-      return this.parser.parse(text, oldTree);
+      return parseText(this.parser, text, oldTree);
     } catch (err) {
       // Timeout (or another parse failure). reset() so the next parse()
       // (for a different location/document — the parser is shared across
