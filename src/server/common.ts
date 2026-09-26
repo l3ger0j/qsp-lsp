@@ -373,6 +373,7 @@ export function createQspServer(
       fileEncoding = filesConfig?.encoding ?? 'utf8';
       settings = parseSettingsFromConfig(qspConfig as Record<string, unknown> | undefined);
       project.embeddedExecEnabled = settings.embeddedExec.enabled;
+      status.configure(settings.project.enabled ? { state: 'loading', files: 0 } : undefined);
       log.log(`[QSP] Server ready (encoding: ${fileEncoding}, project: ${settings.project.enabled}, embeddedExec: ${settings.embeddedExec.enabled})`);
       if (settings.project.enabled) {
         // Async: scans the workspace and reads/parses files off the main
@@ -382,6 +383,10 @@ export function createQspServer(
       }
     }).catch((err: unknown) => {
       console.error('[QSP] Failed to read initial configuration:', err);
+      // Reading the settings failed, so the defaults stay in effect; don't
+      // leave the indicator spinning. A failure later, in the project scan,
+      // keeps the project state it already reported.
+      if (!status.isConfigured) status.configure(undefined);
     });
   });
 

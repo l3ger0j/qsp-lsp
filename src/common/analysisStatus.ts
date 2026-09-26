@@ -23,7 +23,13 @@ export interface AnalysisStatus {
   parser: 'starting' | 'full' | 'lite' | 'failed';
   /** Open documents whose analysis is running now. */
   busyUris: string[];
-  /** Absent when project mode is off. */
+  /**
+   * False until the server has read the settings: until then it doesn't
+   * know whether project mode is on, and `project` being absent means
+   * nothing yet.
+   */
+  configured: boolean;
+  /** Absent when project mode is off (once `configured`). */
   project?: { state: 'loading' | 'ready'; files: number };
   /** Open documents parsed per location, with the reason. */
   perLocation: Record<string, PerLocationReason>;
@@ -46,9 +52,9 @@ export interface AnalysisStatusView {
 
 /** The view of `status` for the document open in the active editor. */
 export function describeAnalysisStatus(status: AnalysisStatus, activeUri: string | undefined): AnalysisStatusView {
-  const scope = status.project
-    ? `Project: ${status.project.files} file${status.project.files === 1 ? '' : 's'}`
-    : 'Single file';
+  const scope = !status.configured ? 'Reading settings…'
+    : status.project ? `Project: ${status.project.files} file${status.project.files === 1 ? '' : 's'}`
+      : 'Single file';
 
   if (status.parser === 'starting') {
     return { text: 'Starting…', detail: 'Loading the QSP parser', busy: true, warning: false };
@@ -63,6 +69,9 @@ export function describeAnalysisStatus(status: AnalysisStatus, activeUri: string
   }
   if (activeUri !== undefined && status.busyUris.includes(activeUri)) {
     return { text: 'Analyzing…', detail: scope, busy: true, warning: false };
+  }
+  if (!status.configured) {
+    return { text: 'Starting…', detail: scope, busy: true, warning: false };
   }
   if (status.parser === 'failed') {
     return {

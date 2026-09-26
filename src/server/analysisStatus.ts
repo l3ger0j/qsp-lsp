@@ -17,6 +17,7 @@ export class AnalysisStatusReporter {
   // A document can be queued for analysis twice (open, then an edit), so
   // it stays busy until every run has ended.
   private readonly busy = new Map<string, number>();
+  private configured = false;
   private project: AnalysisStatus['project'];
   private readonly perLocation = new Map<string, PerLocationReason>();
   private live = false;
@@ -55,6 +56,21 @@ export class AnalysisStatusReporter {
     this.send();
   }
 
+  /**
+   * The settings are read; `project` is the project state that follows from
+   * them, set in the same snapshot so the client never sees "configured, no
+   * project" on the way to "loading".
+   */
+  configure(project: AnalysisStatus['project']): void {
+    this.configured = true;
+    this.project = project;
+    this.send();
+  }
+
+  get isConfigured(): boolean {
+    return this.configured;
+  }
+
   setProject(project: AnalysisStatus['project']): void {
     this.project = project;
     this.send();
@@ -77,6 +93,7 @@ export class AnalysisStatusReporter {
     return {
       parser: this.parser,
       busyUris: [...this.busy.keys()],
+      configured: this.configured,
       ...(this.project ? { project: { ...this.project } } : {}),
       perLocation: Object.fromEntries(this.perLocation),
     };

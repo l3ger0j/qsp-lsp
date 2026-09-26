@@ -12,6 +12,9 @@
  * - Deferring the open's analysis must not let the change event that
  *   TextDocuments fires with every open re-parse the file: it is analyzed
  *   once per open.
+ * - Until the server has read the settings it doesn't know whether project
+ *   mode is on, so the item must not claim "Single file" in the meantime
+ *   (a file opened first, which starts the server, used to show it).
  * - The client shows degraded modes (tree-sitter failed, a whole-file
  *   parse timed out) as warnings, but regex-only mode on vscode.dev is
  *   by design and is not a warning.
@@ -42,7 +45,7 @@ import { createQspServer } from '../src/server/common';
 import { QspTreeSitterParser } from '../src/parser/treeSitter';
 import { loadWasm } from './testHelpers';
 
-const base: AnalysisStatus = { parser: 'full', busyUris: [], perLocation: {} };
+const base: AnalysisStatus = { parser: 'full', busyUris: [], configured: true, perLocation: {} };
 const A = 'file:///a.qsps';
 
 describe('describeAnalysisStatus', () => {
@@ -57,6 +60,14 @@ describe('describeAnalysisStatus', () => {
     expect(describeAnalysisStatus({ ...base, project: { state: 'loading', files: 20 } }, A))
       .toMatchObject({ text: 'Loading project…', detail: '20 files found so far', busy: true });
     expect(describeAnalysisStatus({ ...base, busyUris: [A] }, A)).toMatchObject({ text: 'Analyzing…', busy: true });
+  });
+
+  it('does not call it a single file before the settings are read', () => {
+    const unconfigured = { ...base, configured: false };
+    expect(describeAnalysisStatus(unconfigured, A)).toMatchObject({ text: 'Starting…', busy: true });
+    expect(describeAnalysisStatus({ ...unconfigured, busyUris: [A] }, A))
+      .toMatchObject({ text: 'Analyzing…', detail: 'Reading settings…' });
+    expect(describeAnalysisStatus(unconfigured, A).detail).not.toMatch(/single file/i);
   });
 
   it('does not spin for a file other than the active one', () => {
@@ -88,10 +99,19 @@ describe('AnalysisStatusReporter', () => {
   it('sends nothing before start, then the accumulated state', () => {
     const { r, sent } = reporter();
     r.setParser('full');
-    r.setProject({ state: 'ready', files: 2 });
+    r.configure({ state: 'ready', files: 2 });
     expect(sent).toEqual([]);
     r.start();
-    expect(sent).toEqual([{ parser: 'full', busyUris: [], project: { state: 'ready', files: 2 }, perLocation: {} }]);
+    expect(sent).toEqual([{ parser: 'full', busyUris: [], configured: true, project: { state: 'ready', files: 2 }, perLocation: {} }]);
+  });
+
+  it('reports the settings and the project state they imply in one snapshot', () => {
+    const { r, sent } = reporter();
+    r.start();
+    expect(sent.at(-1)).toMatchObject({ configured: false });
+    r.configure({ state: 'loading', files: 0 });
+    expect(sent.at(-1)).toMatchObject({ configured: true, project: { state: 'loading', files: 0 } });
+    expect(sent.some(s => s.configured && !s.project)).toBe(false);
   });
 
   it('skips a snapshot identical to the last one', () => {
@@ -125,7 +145,7 @@ describe('server analysis status', () => {
   let stop: (() => void) | undefined;
   afterEach(() => { stop?.(); stop = undefined; vi.restoreAllMocks(); });
 
-  async function startServer() {
+  async function startServer(projectEnabled = false) {
     const c2s = new PassThrough();
     const s2c = new PassThrough();
     const serverConn = createConnection(new StreamMessageReader(c2s), new StreamMessageWriter(s2c));
@@ -133,7 +153,7 @@ describe('server analysis status', () => {
     const client = createMessageConnection(new StreamMessageReader(s2c), new StreamMessageWriter(c2s));
     client.onRequest(RegistrationRequest.type, () => null);
     client.onRequest(ConfigurationRequest.type, (params) =>
-      params.items.map(item => (item.section === 'qsp' ? { project: { enabled: false } } : null)));
+      params.items.map(item => (item.section === 'qsp' ? { project: { enabled: projectEnabled } } : null)));
     client.onRequest('workspace/semanticTokens/refresh', () => null);
     const events: Array<{ kind: 'status'; status: AnalysisStatus } | { kind: 'diagnostics'; uri: string }> = [];
     client.onNotification(ANALYSIS_STATUS_NOTIFICATION, (status: AnalysisStatus) => { events.push({ kind: 'status', status }); });
@@ -153,10 +173,21 @@ describe('server analysis status', () => {
       textDocument: { uri, languageId: 'qsp', version: 1, text },
     });
 
-  it('reports the parser as loaded once initialized', async () => {
+  it('reports the parser, then the settings, once initialized', async () => {
     const { events } = await startServer();
     const statuses = events.flatMap(e => (e.kind === 'status' ? [e.status] : []));
-    expect(statuses.at(-1)?.parser).toBe('full');
+    expect(statuses[0]).toMatchObject({ parser: 'full', configured: false });
+    expect(statuses.at(-1)).toMatchObject({ parser: 'full', configured: true });
+    // project.enabled is false in this harness.
+    expect(statuses.at(-1)?.project).toBeUndefined();
+  }, 15_000);
+
+  it('in project mode, goes from unconfigured straight to loading the project', async () => {
+    const { events } = await startServer(true);
+    const statuses = events.flatMap(e => (e.kind === 'status' ? [e.status] : []));
+    expect(statuses.some(st => st.configured && !st.project), 'never "configured, single file"').toBe(false);
+    expect(statuses.find(st => st.configured)?.project?.state).toBe('loading');
+    expect(statuses.at(-1)?.project?.state).toBe('ready');
   }, 15_000);
 
   it('writes the busy notification out before parsing a large document', async () => {
