@@ -80,6 +80,7 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
 | Watch bundles | `npm run watch` |
 | Type-check | `npx tsc --noEmit` |
 | Unit tests (Vitest) | `npm test` (single file: `npx vitest run test/variables.test.ts`) |
+| UI tests (real VS Code, @vscode/test-cli) | `npm run test:ui` (headless Linux: `xvfb-run -a npm run test:ui`) |
 | Lint | `npm run lint` |
 | Everything CI runs (no packaging) | `npm run check` (= `scripts/build.sh --check`) |
 | Package VSIX | `npm run release` (optional version: `bash scripts/build.sh 1.2.3`) |
@@ -88,7 +89,8 @@ Notes:
 - `npm run build` needs network the first time (`scripts/fetchTxt2gam.mjs` downloads into `vendor/`).
 - `build:grammar` copies the WASM to `out/`, so create `out/` first if it's missing (`build.sh` does `mkdir -p out`).
 - CI (`.github/workflows/ci.yml`) runs `scripts/build.sh --check` on Node 22 and 24. Dev tooling (vitest 5, vsce 4) needs Node ≥ 22.12; the bundles still target node18 for VS Code ^1.85.
-- TODO: README says "Press F5" to debug, but `.vscode/launch.json` isn't tracked in the repo. Verify locally.
+- `test/ui/` runs inside VS Code against a temp copy of `test/ui/fixture/` (see `.vscode-test.mjs`); Vitest excludes it.
+  The first run downloads VS Code into `.vscode-test/`.
 
 Before finishing any change: `npx tsc --noEmit && npm test && npm run lint`.
 For grammar changes, also run the corpus tests above.

@@ -40,3 +40,8 @@ jobs:
 
       - name: Build & test
         run: bash scripts/build.sh --check
+
+      # One Node version is enough: the tests run in VS Code's own runtime.
+      - name: UI tests
+        if: matrix.node-version == 22
+        run: xvfb-run -a npm run test:ui

@@ -1,0 +1,6 @@
+{
+  "qsp.project.enabled": true,
+  // Save dialogs become a quick input the tests can accept with a command;
+  // a native OS dialog can't be driven from the extension host.
+  "files.simpleDialog.enable": true
+}

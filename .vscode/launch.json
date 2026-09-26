@@ -1,0 +1,54 @@
+{
+  // Debug configurations for developing the extension itself.
+  // F5 inside a QSP game workspace is a different thing: there the
+  // extension's own "qsp" debug type builds and runs the game.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "${workspaceFolder}/examples"],
+      "outFiles": ["${workspaceFolder}/out/**/*.js"],
+      "preLaunchTask": "npm: build:bundles"
+    },
+    {
+      "name": "Run Extension (Web)",
+      "type": "extensionHost",
+      "debugWebWorkerHost": true,
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "--extensionDevelopmentKind=web",
+        "${workspaceFolder}/examples"
+      ],
+      "outFiles": ["${workspaceFolder}/out/**/*.js"],
+      "preLaunchTask": "npm: build:bundles"
+    },
+    {
+      // The client starts the server with --inspect=6009 when the host runs
+      // in debug mode, so start "Run Extension" first, then attach.
+      "name": "Attach to Language Server",
+      "type": "node",
+      "request": "attach",
+      "port": 6009,
+      "restart": true,
+      "outFiles": ["${workspaceFolder}/out/server/**/*.js"]
+    },
+    {
+      "name": "UI Tests",
+      "type": "extensionHost",
+      "request": "launch",
+      "testConfiguration": "${workspaceFolder}/.vscode-test.mjs",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+      "outFiles": ["${workspaceFolder}/out/**/*.js"],
+      "preLaunchTask": "npm: build:ui-tests"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Extension + Language Server",
+      "configurations": ["Run Extension", "Attach to Language Server"]
+    }
+  ]
+}

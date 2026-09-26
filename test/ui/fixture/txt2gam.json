@@ -1,0 +1,8 @@
+{
+  "outputFile": "fixture.qsp",
+  "files": [
+    "main.qsps",
+    "data/*.qsps"
+  ],
+  "mainFile": "^main\\.qsps$"
+}

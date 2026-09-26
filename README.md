@@ -226,9 +226,16 @@ npm run watch
 
 # Run tests
 npm test
+
+# UI tests: run inside a downloaded VS Code (needs a display; use xvfb-run on a headless Linux)
+npm run test:ui
 ```
 
-Press **F5** in VS Code to launch the Extension Development Host with the extension loaded.
+Debug configurations are in `.vscode/launch.json` (open this repository in VS Code, then **Run and Debug**):
+- **Run Extension** (**F5**) — builds the bundles and opens an Extension Development Host on `examples/`.
+- **Run Extension (Web)** — the same with the browser bundle, as on vscode.dev.
+- **Attach to Language Server** — attaches to the server on port 6009; **Extension + Language Server** starts both.
+- **UI Tests** — runs `test/ui` under the debugger.
 
 ## License
 

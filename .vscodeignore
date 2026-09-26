@@ -18,3 +18,6 @@ eslint.config.mjs
 .gitignore
 *.vsix
 .nvmrc
+.vscode-test/**
+.vscode-test.mjs
+out/test/**

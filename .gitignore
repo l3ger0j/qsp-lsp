@@ -20,3 +20,6 @@ tree-sitter-qsp/log.html
 
 # Claude Code local overrides
 .claude/settings.local.json
+
+# @vscode/test-cli: downloaded VS Code builds
+.vscode-test/
