@@ -421,6 +421,7 @@ export function createQspServer(
         await project.init(fsProvider, fileEncoding, () => collectCallTypesPerTarget(documentStates), (ownUri: string) => collectPeerDocs(documentStates, ownUri), settings.diagnostics);
       } else if (!settings.project.enabled && prevProjectEnabled) {
         log.log('[QSP] project.enabled: true → false');
+        cancelProjectRediagnose();
         project.teardown();
         // Re-analyze open documents without project aggregates
         for (const doc of documents.all()) {
@@ -437,13 +438,59 @@ export function createQspServer(
   // ==================== PROJECT MODE ====================
   const project = new ProjectModeService(connection, documents, documentStates, tsParser);
 
-  // Helper: rebuild aggregates + re-diagnose all project files.
-  const projectRebuildAndReanalyze = () =>
+  // Helper: rebuild aggregates + re-diagnose all project files. It covers
+  // everything a pending fast-tier re-diagnosis would do, so that one is dropped.
+  const projectRebuildAndReanalyze = () => {
+    cancelProjectRediagnose();
     project.rebuildAndReanalyzeAll(
       settings.diagnostics,
       () => collectCallTypesPerTarget(documentStates),
       (ownUri: string) => collectPeerDocs(documentStates, ownUri),
     );
+  };
+
+  // ── Fast-tier cross-file re-diagnosis ─────────────────────────────
+  // When an edit changes a file's location names, the other project files
+  // are re-diagnosed on a follow-up timer so their cross-file duplicate
+  // errors update before the tree tier. One run is pending at a time:
+  // files whose fast tiers fire together share it, and the files that
+  // triggered it are skipped (their own diagnostics were just cleared and
+  // the tree tier re-sends them).
+  let projectRediagnoseTimer: ReturnType<typeof setTimeout> | undefined;
+  const projectRediagnoseSkip = new Set<string>();
+
+  function cancelProjectRediagnose(): void {
+    if (projectRediagnoseTimer) clearTimeout(projectRediagnoseTimer);
+    projectRediagnoseTimer = undefined;
+    projectRediagnoseSkip.clear();
+  }
+
+  function scheduleProjectRediagnose(editedUri: string): void {
+    projectRediagnoseSkip.add(editedUri);
+    if (projectRediagnoseTimer) return;
+    projectRediagnoseTimer = setTimeout(() => {
+      const skip = new Set(projectRediagnoseSkip);
+      projectRediagnoseTimer = undefined;
+      projectRediagnoseSkip.clear();
+      const liveAgg = project.projectAggregates;
+      if (!liveAgg || !settings.project.enabled) return;
+      for (const uri of project.projectFileUris) {
+        if (skip.has(uri)) continue;
+        const st = documentStates.get(uri);
+        if (!st) continue;
+        const otherDoc = documents.get(uri);
+        const d = computeDiagnostics(
+          otherDoc ?? null, uri, st.locationIndex,
+          settings.diagnostics, tsParser,
+          liveAgg.callTypesPerTarget ?? collectCallTypesPerTarget(documentStates),
+          st.symbols, undefined, liveAgg,
+          undefined,
+          collectPeerDocs(documentStates, uri),
+        );
+        safeSendDiagnostics(connection, { uri, diagnostics: d });
+      }
+    }, 0);
+  }
 
   // ==================== DOCUMENT SYNC ====================
 
@@ -504,6 +551,7 @@ export function createQspServer(
     for (const t of treeTimers.values()) clearTimeout(t);
     fastTimers.clear();
     treeTimers.clear();
+    cancelProjectRediagnose();
     for (const state of documentStates.values()) releasePerLocationTrees(state);
     tsParser.dispose();
   });
@@ -599,25 +647,7 @@ export function createQspServer(
       }
       if (changed) {
         project.rebuildAggregates(() => collectCallTypesPerTarget(documentStates));
-        setTimeout(() => {
-          const liveAgg = project.projectAggregates;
-          if (!liveAgg || !settings.project.enabled) return;
-          for (const uri of project.projectFileUris) {
-            if (uri === doc.uri) continue;
-            const st = documentStates.get(uri);
-            if (!st) continue;
-            const otherDoc = documents.get(uri);
-            const d = computeDiagnostics(
-              otherDoc ?? null, uri, st.locationIndex,
-              settings.diagnostics, tsParser,
-              liveAgg.callTypesPerTarget ?? collectCallTypesPerTarget(documentStates),
-              st.symbols, undefined, liveAgg,
-              undefined,
-              collectPeerDocs(documentStates, uri),
-            );
-            safeSendDiagnostics(connection, { uri, diagnostics: d });
-          }
-        }, 0);
+        scheduleProjectRediagnose(doc.uri);
       }
     }
   }
