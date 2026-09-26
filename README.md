@@ -94,6 +94,15 @@ A **QSP Locations** section in the Explorer side bar lists every location of the
 - The `{}` item next to **QSP** in the status bar shows what the language server is doing: a spinner while it starts, loads the project (with a file count) or analyzes a large file, then **Ready** with the project size.
 - It also warns about degraded modes: **Limited mode** when the tree-sitter parser failed to load (regex-only analysis), and **Per-location parsing** when a file's whole-file parse took too long. Click it (or run **QSP: Show Language Server Log**) for the server log.
 
+### Performance Diagnostics
+For large games (hundreds of locations, tens of megabytes) the server reports what its analysis costs, without revealing anything about the game:
+- **Phase timings in the server log.** Every analysis phase longer than a second (parsing, symbols, project aggregates, diagnostics) writes a `[perf]` line to **QSP: Show Language Server Log** with its time, a breakdown, and the heap before and after. Turn on `qsp.debug.performanceLog` to log every phase. The lines hold only numbers, never file, location or variable names.
+- **QSP: Collect Performance Profile** (desktop) restarts the language server with a CPU and heap profiler. Open the project as usual, wait until the problem shows or the status says **Ready**, then click **Save Profile** (in the notification or the **QSP profiling** status bar item). If the server crashes with "JavaScript heap out of memory" meanwhile, just save: each server run keeps its own files, including a heap sample taken shortly before the crash. (The server runs on VS Code's own runtime, whose heap is capped near 4 GB, so the limit can't be raised instead.) The profile folder holds:
+  - `report.json`: the project's shape in numbers: file and location sizes, how many variables, references and bindings the analysis holds, how often each grammar construct occurs;
+  - per server run: CPU and heap profiles (written on save), a heap sample rewritten every 10 seconds (it survives a crash), a memory timeline and the phase log.
+
+  None of it contains game text or names; the profiles name only the extension's own functions. Review the folder and attach it to a bug report.
+
 ### MCP Server (AI agents)
 The extension ships an [MCP](https://modelcontextprotocol.io) server that lets AI agents work with a QSP project through the same analysis the editor uses, instead of plain text search.
 

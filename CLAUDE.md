@@ -68,6 +68,13 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
 ❌ Don't: assume tree-sitter is ready (browser mode, initial load).
 ✅ Do: guard with `tsParser.isReady` and fall back to `regexFallback.ts`.
 
+**Performance data users send us**
+❌ Don't: put file, location, variable, object or action names, or any game text, into `[perf]` log lines,
+   `qsp/performanceReport` (`performanceReport.ts`) or the profiler's files (`nodeProfiler.ts`). Users send these
+   for games whose content they can't share.
+✅ Do: counts, sizes, durations, memory, grammar node types and the extension's own function names only; keep
+   `test/performanceReport.test.ts` checking that no name leaks.
+
 **Browser tooling (Playwright)**
 ❌ Don't: ship Playwright or its browser binaries in the `.vsix`, or add them to `dependencies`.
 ✅ Do: keep it dev-only (`devDependencies` at most, or installed in a scratch directory), with browsers in

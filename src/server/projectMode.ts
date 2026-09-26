@@ -30,6 +30,9 @@ import {
   type LocationEntry,
   type QspTreeSitterParser,
   type SyntaxError,
+  countNodeTypes,
+  newTreeStats,
+  type TreeStats,
 } from '../parser';
 import {
   buildRegexSymbols,
@@ -44,6 +47,7 @@ import {
 import type { DiagnosticSettings } from './diagnostics';
 import type { DocumentState } from './lspFeatures';
 import { computeDiagnostics } from './diagnostics';
+import { PerfLog, formatChars } from './perfLog';
 import { stripBom, makeLocSymLoc, shiftErrors, QSP_FILE_EXTENSIONS, safeSendDiagnostics, safeConsole, type FsProvider } from './serverUtils';
 
 /**
@@ -84,6 +88,16 @@ export class ProjectModeService {
    * server updates this on configuration change.
    */
   embeddedExecEnabled = true;
+
+  /** Times the phases below; the server replaces it with its own. */
+  perf = new PerfLog(() => {});
+  /** Grammar-construct counting for the performance report, while profiling. */
+  treeStats: {
+    collect: () => boolean;
+    store: (uri: string, stats: TreeStats) => void;
+    /** The per-location analysis running now, or undefined when it ends. */
+    progress: (state: { locationIndex: readonly LocationEntry[]; parsedLocations: number; stats?: TreeStats } | undefined) => void;
+  } | undefined;
 
   constructor(
     private connection: Connection,
@@ -187,7 +201,12 @@ export class ProjectModeService {
    * Creates a DocumentState from the raw text.
    */
   analyzeFile(uri: string, text: string): void {
+    this.perf.phase('project file analysis', () => this.analyzeFileNow(uri, text), () => formatChars(text.length));
+  }
+
+  private analyzeFileNow(uri: string, text: string): void {
     const locationIndex = buildLocationIndex(text);
+    const stats = this.treeStats?.collect() ? newTreeStats() : undefined;
     let symbols: DocumentSymbols;
     // Kept on the state because the tree is freed here: without them a
     // syntax error in a closed file would show only once it is opened.
@@ -197,24 +216,26 @@ export class ProjectModeService {
       symbols = buildRegexSymbols(uri, locationIndex, text);
     } else if (text.length >= PROJECT_PER_LOCATION_BYTE_THRESHOLD) {
       syntaxErrors = [];
-      symbols = this.analyzePerLocation(uri, text, locationIndex, syntaxErrors);
+      symbols = this.analyzePerLocation(uri, text, locationIndex, syntaxErrors, stats);
     } else {
-      const tree = this.tsParser.parseOnce(text, fullParseTimeoutMicros(text.length));
+      const tree = this.perf.step('parse', () => this.tsParser.parseOnce(text, fullParseTimeoutMicros(text.length)));
       if (tree) {
         try {
-          symbols = extractSymbols(
+          symbols = this.perf.step('symbols', () => extractSymbols(
             tree, uri, undefined, undefined,
             this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
-          ).symbols;
-          syntaxErrors = extractErrors(tree);
+          ).symbols);
+          syntaxErrors = this.perf.step('errors', () => extractErrors(tree));
+          if (stats) this.perf.step('tree stats', () => countNodeTypes(tree, stats));
         } finally {
           tree.delete();
         }
       } else {
         syntaxErrors = [];
-        symbols = this.analyzePerLocation(uri, text, locationIndex, syntaxErrors);
+        symbols = this.analyzePerLocation(uri, text, locationIndex, syntaxErrors, stats);
       }
     }
+    if (stats) this.treeStats?.store(uri, stats);
 
     this.documentStates.set(uri, {
       locationIndex,
@@ -231,20 +252,25 @@ export class ProjectModeService {
     text: string,
     locationIndex: LocationEntry[],
     syntaxErrors: SyntaxError[],
+    stats: TreeStats | undefined,
   ): DocumentSymbols {
     const symbols = new DocumentSymbols(uri);
+    const progress = { locationIndex, parsedLocations: 0, stats };
+    this.treeStats?.progress(progress);
     for (const loc of locationIndex) {
+      progress.parsedLocations++;
       const locText = text.slice(loc.startOffset, loc.endOffset);
       const locLoc = makeLocSymLoc(uri, text, loc);
-      const tree = this.tsParser.parseOnce(locText);
+      const tree = this.perf.step('parse', () => this.tsParser.parseOnce(locText));
       if (tree) {
         let result: ReturnType<typeof extractSymbols>;
         try {
-          result = extractSymbols(
+          result = this.perf.step('symbols', () => extractSymbols(
             tree, uri, undefined, undefined,
             this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
-          );
-          shiftErrors(extractErrors(tree), loc.startLine, syntaxErrors);
+          ));
+          this.perf.step('errors', () => shiftErrors(extractErrors(tree), loc.startLine, syntaxErrors));
+          if (stats) this.perf.step('tree stats', () => countNodeTypes(tree, stats));
         } finally {
           tree.delete();
         }
@@ -254,7 +280,8 @@ export class ProjectModeService {
         let locSymbols: LocationSymbols | undefined;
         for (const [, ls] of result.symbols.locations) { locSymbols = ls; break; }
         if (locSymbols) {
-          symbols.addLocationFrom(loc.name, locLoc, locSymbols, loc.startLine);
+          const found = locSymbols;
+          this.perf.step('copy into file', () => symbols.addLocationFrom(loc.name, locLoc, found, loc.startLine));
         } else {
           const empty = symbols.addLocation(loc.name, locLoc);
           empty.hasErrors = true;
@@ -266,6 +293,7 @@ export class ProjectModeService {
         extractLocationSymbolsFromText(text, loc, locSymbols, uri);
       }
     }
+    this.treeStats?.progress(undefined);
     symbols.rebuildGlobalBindings();
     return symbols;
   }
@@ -416,11 +444,11 @@ export class ProjectModeService {
     collectCallTypes: () => Map<string, { name: string; types: Set<string> }>,
     collectPeerDocs: (ownUri: string) => DocumentSymbols[],
   ): void {
-    this.rebuildAggregates(collectCallTypes);
-    this.reanalyzeAll(
+    this.perf.phase('project aggregates', () => this.rebuildAggregates(collectCallTypes), () => `${this.projectFileUris.size} files`);
+    this.perf.phase('project diagnostics', () => this.reanalyzeAll(
       diagnosticsSettings, collectCallTypes, collectPeerDocs,
       uri => this.documents.get(uri),
-    );
+    ), () => `${this.projectFileUris.size} files`);
   }
 
   // ── File watcher handling ───────────────────────────────────────────

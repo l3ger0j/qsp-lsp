@@ -30,6 +30,7 @@ import type { LocationSymbols, QspSymbol } from '../parser';
 import { ARGS_VAR_NAME, RESULT_VAR_NAME, CALL_FRAME_BUILTINS } from '../parser';
 import type { DocumentSymbols, VariableBinding } from '../parser/symbolTable';
 import type { SymbolLocation } from '../parser/symbolTypes';
+import { heartbeat } from './perfLog';
 
 /**
  * Project-wide aggregated data from all files.
@@ -527,6 +528,7 @@ export function buildPropagatedLocals(
     depth: number,
   ): void {
     if (depth > MAX_PROPAGATION_DEPTH) return;
+    heartbeat();
 
     // Filter to providers we haven't already routed through this node.
     const pairKey = `${targetLoc}\0${varName}`;

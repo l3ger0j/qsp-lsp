@@ -181,6 +181,17 @@
         "category": "QSP"
       },
       {
+        "command": "qsp.collectPerformanceProfile",
+        "title": "Collect Performance Profile",
+        "category": "QSP"
+      },
+      {
+        "command": "qsp.savePerformanceProfile",
+        "title": "Save Performance Profile",
+        "category": "QSP",
+        "enablement": "qsp.profiling"
+      },
+      {
         "command": "qsp.copyMcpConfig",
         "title": "Copy MCP Server Config",
         "category": "QSP"
@@ -327,6 +338,14 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "qsp.collectPerformanceProfile",
+          "when": "!isWeb && !qsp.profiling"
+        },
+        {
+          "command": "qsp.savePerformanceProfile",
+          "when": "qsp.profiling"
+        },
         {
           "command": "qsp.goToLocation",
           "when": "editorLangId == qsp"
@@ -696,6 +715,11 @@
           "default": 20,
           "minimum": 1,
           "description": "Maximum number of items rendered per category in hover tooltips (e.g. 'Possible values', 'Called from', 'Navigated from', 'Uses globals', 'Also defined in', 'Propagated from/to'). Lists exceeding this limit are truncated with a '…and N more' tail."
+        },
+        "qsp.debug.performanceLog": {
+          "type": "boolean",
+          "default": false,
+          "description": "Write the time and memory of every analysis phase (parsing, symbols, project aggregates, diagnostics) to the QSP Language Server log. Phases longer than a second are logged anyway. The lines hold only numbers, never file, location or variable names."
         },
         "qsp.game.password": {
           "type": "string",

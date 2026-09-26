@@ -12,6 +12,7 @@ import {
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { createQspServer } from './common';
 import { fsProvider, wasmFromOutDir } from './nodeHost';
+import { NodeProfiler, nodeMemory } from './nodeProfiler';
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -19,4 +20,4 @@ const documents = new TextDocuments(TextDocument);
 // This bundle is out/server/nodeMain.js.
 const { wasmLoader, wasmDir } = wasmFromOutDir(path.join(__dirname, '..'));
 
-createQspServer(connection, documents, wasmLoader, wasmDir, fsProvider);
+createQspServer(connection, documents, wasmLoader, wasmDir, fsProvider, { memory: nodeMemory, profiler: new NodeProfiler(), processId: process.pid });

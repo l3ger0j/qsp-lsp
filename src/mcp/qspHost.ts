@@ -43,6 +43,7 @@ import {
 import { ANALYSIS_STATUS_NOTIFICATION, type AnalysisStatus } from '../common/analysisStatus';
 import { createQspServer } from '../server/common';
 import { decodeBuffer, fsProvider } from '../server/nodeHost';
+import { nodeMemory } from '../server/nodeProfiler';
 import type { WasmDirProvider, WasmLoader } from '../parser';
 import { QSP_FILE_EXTENSIONS } from '../server/serverUtils';
 
@@ -88,7 +89,7 @@ export class QspHost {
     const c2s = new PassThrough();
     const s2c = new PassThrough();
     const serverConn = createConnection(new StreamMessageReader(c2s), new StreamMessageWriter(s2c));
-    createQspServer(serverConn, new TextDocuments(TextDocument), this.wasm.wasmLoader, this.wasm.wasmDir, fsProvider);
+    createQspServer(serverConn, new TextDocuments(TextDocument), this.wasm.wasmLoader, this.wasm.wasmDir, fsProvider, { memory: nodeMemory });
 
     const client = createMessageConnection(new StreamMessageReader(s2c), new StreamMessageWriter(c2s));
     this.client = client;

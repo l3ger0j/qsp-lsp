@@ -22,3 +22,6 @@ eslint.config.mjs
 .vscode-test/**
 .vscode-test.mjs
 out/test/**
+
+# Profiles saved by "QSP: Collect Performance Profile"
+profile-*/**
