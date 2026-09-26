@@ -72,6 +72,10 @@ Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Vi
 - **Move Locations to File** — select locations and move them to another QSP file
 - **Split Locations into Files** — select locations and create one `.qsps` file per location
 
+### Analysis Status
+- The `{}` item next to **QSP** in the status bar shows what the language server is doing: a spinner while it starts, loads the project (with a file count) or analyzes a large file, then **Ready** with the project size.
+- It also warns about degraded modes: **Limited mode** when the tree-sitter parser failed to load (regex-only analysis), and **Per-location parsing** when a file's whole-file parse took too long. Click it (or run **QSP: Show Language Server Log**) for the server log.
+
 ### Project Mode
 - When `qsp.project.enabled` is true, all `.qsps`/`.qsrc` files in the workspace are treated as one combined game
 - Cross-file diagnostics: duplicate locations, unresolved references, variable dataflow

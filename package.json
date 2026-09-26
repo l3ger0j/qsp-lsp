@@ -172,6 +172,11 @@
         "title": "Import QSP Game…",
         "category": "QSP",
         "icon": "$(go-to-file)"
+      },
+      {
+        "command": "qsp.showServerLog",
+        "title": "Show Language Server Log",
+        "category": "QSP"
       }
     ],
     "debuggers": [

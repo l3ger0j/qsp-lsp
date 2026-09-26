@@ -27,6 +27,7 @@ import {
   formatLocationCommand,
 } from './locationCommands';
 
+import { registerAnalysisStatus } from './analysisStatus';
 import {
   combineProjectCommand,
   exportGameCommand,
@@ -46,6 +47,7 @@ export function registerExtensionFeatures(
   runGame?: (context: vscode.ExtensionContext) => Promise<void>,
 ): void {
   lspClient = client;
+  registerAnalysisStatus(context, client);
 
   // ── Status bar: current location ────────────────────────────────────
   statusBarItem = vscode.window.createStatusBarItem(

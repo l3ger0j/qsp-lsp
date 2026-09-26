@@ -34,6 +34,8 @@ import { computeDiagnostics, type DiagnosticSettings } from './diagnostics';
 import { registerLspFeatures, type DocumentState, type PerLocationParseResult } from './lspFeatures';
 import { stripBom, shiftErrors, makeLocSymLoc, perLocationCacheKeys, safeSendDiagnostics, safeConnectionCall, safeConsole, QSP_FILE_EXTENSIONS, type FsProvider } from './serverUtils';
 import { ProjectModeService } from './projectMode';
+import { AnalysisStatusReporter } from './analysisStatus';
+import { ANALYSIS_STATUS_MIN_BYTES } from '../common/analysisStatus';
 
 // Re-export FsProvider for backward compatibility.
 export type { FsProvider } from './serverUtils';
@@ -163,6 +165,7 @@ export function createQspServer(
   // teardown, client disconnect) — connection.console.* throws synchronously
   // in that case, so every log call in this module goes through this wrapper.
   const log = safeConsole(connection);
+  const status = new AnalysisStatusReporter(connection);
   const documentStates = new Map<string, DocumentState>();
   const tsParser = new QspTreeSitterParser();
   // Surface non-timeout parse failures (e.g. a WASM runtime error) in the
@@ -294,6 +297,7 @@ export function createQspServer(
       try {
         await tsParser.init(wasmLoader, wasmDir);
         log.log('[QSP] Tree-sitter parser initialized');
+        status.setParser('full');
 
         // Re-analyze all open documents now that tree-sitter is ready
         for (const doc of documents.all()) {
@@ -301,6 +305,7 @@ export function createQspServer(
         }
       } catch (e) {
         log.error(`[QSP] Tree-sitter init failed: ${e}`);
+        status.setParser('failed');
         // Without tree-sitter every feature silently degrades to regex
         // analysis, so the user must hear about it. window/showMessageRequest
         // is one of the few messages allowed before the initialize response.
@@ -311,6 +316,7 @@ export function createQspServer(
       }
     } else {
       log.log('[QSP] Running in lite mode (no tree-sitter parser — regex-only analysis)');
+      status.setParser('lite');
     }
 
     return {
@@ -347,6 +353,7 @@ export function createQspServer(
   });
 
   connection.onInitialized(() => {
+    status.start();
     safeConnectionCall(() => connection.client.register(DidChangeConfigurationNotification.type, undefined));
 
     // Register file watcher for project mode
@@ -371,7 +378,7 @@ export function createQspServer(
         // Async: scans the workspace and reads/parses files off the main
         // synchronous path so other LSP requests keep being served while
         // a large project loads. See ProjectModeService.init().
-        await project.init(fsProvider, fileEncoding, () => collectCallTypesPerTarget(documentStates), (ownUri: string) => collectPeerDocs(documentStates, ownUri), settings.diagnostics);
+        await initProject();
       }
     }).catch((err: unknown) => {
       console.error('[QSP] Failed to read initial configuration:', err);
@@ -391,9 +398,10 @@ export function createQspServer(
       settings.diagnostics,
       () => collectCallTypesPerTarget(documentStates),
       (ownUri: string) => collectPeerDocs(documentStates, ownUri),
-    ).catch((err: unknown) => {
-      console.error('[QSP] Failed to handle watched file changes:', err);
-    });
+    ).then(
+      reportProjectSize,
+      (err: unknown) => { console.error('[QSP] Failed to handle watched file changes:', err); },
+    );
   });
 
   connection.onDidChangeConfiguration((_change) => {
@@ -418,11 +426,12 @@ export function createQspServer(
       // Handle project mode toggling
       if (settings.project.enabled && !prevProjectEnabled) {
         log.log('[QSP] project.enabled: false → true');
-        await project.init(fsProvider, fileEncoding, () => collectCallTypesPerTarget(documentStates), (ownUri: string) => collectPeerDocs(documentStates, ownUri), settings.diagnostics);
+        await initProject();
       } else if (!settings.project.enabled && prevProjectEnabled) {
         log.log('[QSP] project.enabled: true → false');
         cancelProjectRediagnose();
         project.teardown();
+        status.setProject(undefined);
         // Re-analyze open documents without project aggregates
         for (const doc of documents.all()) {
           analyzeDocument(doc);
@@ -437,6 +446,37 @@ export function createQspServer(
 
   // ==================== PROJECT MODE ====================
   const project = new ProjectModeService(connection, documents, documentStates, tsParser);
+
+  // Scan the workspace, showing the scan in the language status item and,
+  // since a big workspace takes a while, as a progress notification too.
+  async function initProject(): Promise<void> {
+    status.setProject({ state: 'loading', files: 0 });
+    const progress = await connection.window.createWorkDoneProgress().catch(() => undefined);
+    safeConnectionCall(() => progress?.begin('QSP: loading project', undefined, 'Scanning files…'));
+    let lastReported = 0;
+    try {
+      await project.init(
+        fsProvider, fileEncoding,
+        () => collectCallTypesPerTarget(documentStates),
+        (ownUri: string) => collectPeerDocs(documentStates, ownUri),
+        settings.diagnostics,
+        (files) => {
+          // Every file would flood the client during a large scan.
+          if (files - lastReported < 10) return;
+          lastReported = files;
+          status.setProject({ state: 'loading', files });
+          safeConnectionCall(() => progress?.report(`${files} files`));
+        },
+      );
+    } finally {
+      safeConnectionCall(() => progress?.done());
+      if (settings.project.enabled) reportProjectSize();
+    }
+  }
+
+  function reportProjectSize(): void {
+    if (settings.project.enabled) status.setProject({ state: 'ready', files: project.projectFileUris.size });
+  }
 
   // Helper: rebuild aggregates + re-diagnose all project files. It covers
   // everything a pending fast-tier re-diagnosis would do, so that one is dropped.
@@ -494,13 +534,55 @@ export function createQspServer(
 
   // ==================== DOCUMENT SYNC ====================
 
+  // TextDocuments fires onDidChangeContent right after onDidOpen for the
+  // same document. The open already runs the full analysis, so that change
+  // event must not queue both debounce tiers again: the tree tier would
+  // re-parse the whole file (seconds for a large one) for no change.
+  const openedJustNow = new Set<string>();
+
   documents.onDidOpen((event: { document: TextDocument }) => {
     // In project mode, add to project file set
     if (settings.project.enabled) {
       project.projectFileUris.add(event.document.uri);
+      if (project.projectAggregates) reportProjectSize();
     }
-    analyzeDocument(event.document);
+    openedJustNow.add(event.document.uri);
+    analyzeWithStatus(event.document.uri);
   });
+
+  let shuttingDown = false;
+
+  // vscode-jsonrpc writes queued messages from its own setImmediate (a
+  // setTimeout(0) in the browser, which has no setImmediate). Scheduling
+  // with the same primitive runs `fn` after those writes, FIFO, so a
+  // message sent just before is in the pipe before a long synchronous parse.
+  const afterPendingWrites: (fn: () => void) => void = typeof setImmediate === 'function'
+    ? (fn) => { setImmediate(fn); }
+    : (fn) => { setTimeout(fn, 0); };
+
+  /**
+   * Analyze an open document, reporting it as busy when it is big enough
+   * for the user to wait on. The parse is synchronous, so the busy
+   * notification would otherwise leave only after it; the analysis waits
+   * one event-loop turn to let the notification out first.
+   */
+  function analyzeWithStatus(uri: string): void {
+    const doc = documents.get(uri);
+    if (!doc) return;
+    if (!tsParser.isReady || doc.getText().length < ANALYSIS_STATUS_MIN_BYTES) {
+      analyzeDocument(doc);
+      return;
+    }
+    status.begin(uri);
+    afterPendingWrites(() => {
+      try {
+        const latest = documents.get(uri);
+        if (latest && !shuttingDown) analyzeDocument(latest);
+      } finally {
+        status.end(uri);
+      }
+    });
+  }
 
   /**
    * Two-tier debounce for change events:
@@ -517,6 +599,7 @@ export function createQspServer(
 
   documents.onDidChangeContent((event: { document: TextDocument }) => {
     const uri = event.document.uri;
+    if (openedJustNow.delete(uri)) return;
 
     // Immediately invalidate stale cached semantic tokens so that any
     // semantic-token request arriving before the tree tier fires won't
@@ -538,8 +621,7 @@ export function createQspServer(
     if (existingTree) clearTimeout(existingTree);
     treeTimers.set(uri, setTimeout(() => {
       treeTimers.delete(uri);
-      const latest = documents.get(uri);
-      if (latest) analyzeDocument(latest);
+      analyzeWithStatus(uri);
     }, DEBOUNCE_TREE_MS));
   });
 
@@ -547,6 +629,8 @@ export function createQspServer(
   // fire into a disposed parser. Freeing WASM memory matters for hosts that
   // keep the process alive (tests, embedders).
   connection.onShutdown(() => {
+    shuttingDown = true;
+    status.stop();
     for (const t of fastTimers.values()) clearTimeout(t);
     for (const t of treeTimers.values()) clearTimeout(t);
     fastTimers.clear();
@@ -562,6 +646,7 @@ export function createQspServer(
     if (ft) { clearTimeout(ft); fastTimers.delete(uri); }
     const tt = treeTimers.get(uri);
     if (tt) { clearTimeout(tt); treeTimers.delete(uri); }
+    status.forget(uri);
     // Clean up retained per-location trees before discarding state.
     releasePerLocationTrees(documentStates.get(uri));
     documentStates.delete(uri);
@@ -679,10 +764,17 @@ export function createQspServer(
 
     if (tsParser.isReady && (text.length >= PER_LOCATION_BYTE_THRESHOLD || fullParseFailedUris.has(doc.uri))) {
       analyzeDocumentPerLocation(doc, text);
-      return;
+    } else {
+      analyzeDocumentFullTree(doc, text);
     }
-
-    analyzeDocumentFullTree(doc, text);
+    // After the analysis: a whole-file parse that times out switches the
+    // document to per-location parsing on the way.
+    status.setPerLocation(
+      doc.uri,
+      fullParseFailedUris.has(doc.uri) ? 'timeout'
+        : tsParser.isReady && text.length >= PER_LOCATION_BYTE_THRESHOLD ? 'large'
+          : undefined,
+    );
   }
 
   function analyzeDocumentFullTree(doc: TextDocument, text: string): void {

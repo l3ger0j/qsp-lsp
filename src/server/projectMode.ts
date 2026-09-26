@@ -116,6 +116,7 @@ export class ProjectModeService {
     collectCallTypes: () => Map<string, { name: string; types: Set<string> }>,
     collectPeerDocs: (ownUri: string) => DocumentSymbols[],
     diagnosticsSettings: DiagnosticSettings,
+    onFileFound?: (filesSoFar: number) => void,
   ): Promise<void> {
     this.log.log('[QSP] Initializing project mode...');
     this.projectFileUris.clear();
@@ -130,6 +131,7 @@ export class ProjectModeService {
         for await (const filePath of fsProvider.findFiles(folder, QSP_FILE_EXTENSIONS)) {
           const uri = fsProvider.pathToUri(filePath);
           this.projectFileUris.add(uri);
+          onFileFound?.(this.projectFileUris.size);
 
           // If not already open in editor, read from disk and analyze
           if (!this.documents.get(uri)) {
