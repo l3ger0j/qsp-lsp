@@ -181,6 +181,13 @@ export function createQspServer(
   const pseudonyms = new Pseudonyms();
   let savedPseudonyms = -1;
   let workspaceFolderUris: string[] = [];
+  // While the project loads, an open file's own aggregates and diagnostics
+  // would be thrown away seconds later, when the project load diagnoses
+  // every file with project-wide ones: for a large game that is the
+  // longest step of its analysis done twice, and its memory held twice.
+  // The files skipped meanwhile are here, for when no project comes.
+  let projectLoadPending = false;
+  const deferredDiagnostics = new Set<string>();
   const documentStates = new Map<string, DocumentState>();
   const tsParser = new QspTreeSitterParser();
   // Surface non-timeout parse failures (e.g. a WASM runtime error) in the
@@ -334,6 +341,8 @@ export function createQspServer(
     // — project mode is a no-op otherwise.
     if (fsProvider && params.workspaceFolders) {
       project.workspaceFolders = params.workspaceFolders.map(f => fsProvider.uriToPath(f.uri));
+      // Project mode is on by default; the settings come later.
+      projectLoadPending = params.workspaceFolders.length > 0;
       log.log(`[QSP] Workspace folders: ${project.workspaceFolders.join(', ')}`);
     }
 
@@ -426,9 +435,12 @@ export function createQspServer(
         // synchronous path so other LSP requests keep being served while
         // a large project loads. See ProjectModeService.init().
         await initProject();
+      } else {
+        endProjectLoad();
       }
     }).catch((err: unknown) => {
       console.error('[QSP] Failed to read initial configuration:', err);
+      endProjectLoad();
       // Reading the settings failed, so the defaults stay in effect; don't
       // leave the indicator spinning. A failure later, in the project scan,
       // keeps the project state it already reported.
@@ -509,6 +521,7 @@ export function createQspServer(
   // Scan the workspace, showing the scan in the language status item and,
   // since a big workspace takes a while, as a progress notification too.
   async function initProject(): Promise<void> {
+    projectLoadPending = true;
     status.setProject({ state: 'loading', files: 0 });
     const progress = await connection.window.createWorkDoneProgress().catch(() => undefined);
     safeConnectionCall(() => progress?.begin('QSP: loading project', undefined, 'Scanning files…'));
@@ -530,6 +543,20 @@ export function createQspServer(
     } finally {
       safeConnectionCall(() => progress?.done());
       if (settings.project.enabled) reportProjectSize();
+      endProjectLoad();
+    }
+  }
+
+  // The project load diagnosed every file, deferred ones included; if it
+  // failed or project mode is off, those still need their own.
+  function endProjectLoad(): void {
+    projectLoadPending = false;
+    const deferred = [...deferredDiagnostics];
+    deferredDiagnostics.clear();
+    if (settings.project.enabled && project.projectAggregates) return;
+    for (const uri of deferred) {
+      const doc = documents.get(uri);
+      if (doc) analyzeDocument(doc);
     }
   }
 
@@ -927,6 +954,8 @@ export function createQspServer(
     // In project mode, rebuild aggregates and re-diagnose all files
     if (settings.project.enabled && project.projectAggregates) {
       projectRebuildAndReanalyze();
+    } else if (projectLoadPending) {
+      deferredDiagnostics.add(doc.uri);
     } else {
       // Send diagnostics for this file only
       const state = documentStates.get(doc.uri)!;
@@ -1169,6 +1198,8 @@ export function createQspServer(
     // ── 7. Send diagnostics ───────────────────────────────────────
     if (settings.project.enabled && project.projectAggregates) {
       projectRebuildAndReanalyze();
+    } else if (projectLoadPending) {
+      deferredDiagnostics.add(doc.uri);
     } else {
       const state = documentStates.get(doc.uri)!;
       const fileAgg = perf.step('file aggregates', () => buildOrReuseFileAgg(state, doc.uri));
@@ -1314,6 +1345,8 @@ export function createQspServer(
     // Send diagnostics (pass pre-extracted errors to skip full-tree extraction)
     if (settings.project.enabled && project.projectAggregates) {
       projectRebuildAndReanalyze();
+    } else if (projectLoadPending) {
+      deferredDiagnostics.add(doc.uri);
     } else {
       const state = documentStates.get(doc.uri)!;
       const fileAgg = perf.step('file aggregates', () => buildOrReuseFileAgg(state, doc.uri));
