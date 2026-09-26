@@ -79,6 +79,8 @@ Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Vi
 ### MCP Server (AI agents)
 The extension ships an [MCP](https://modelcontextprotocol.io) server that lets AI agents work with a QSP project through the same analysis the editor uses, instead of plain text search.
 
+See [MCP.md](MCP.md) for what each tool does and how to connect agents.
+
 **Tools** (names are case-insensitive, lines are 1-based):
 - **Reading the project:**
   - `qsp_list_locations`, `qsp_get_location`: list locations or get one's source.
