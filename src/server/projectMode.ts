@@ -30,9 +30,6 @@ import {
   type LocationEntry,
   type QspTreeSitterParser,
   type SyntaxError,
-  countNodeTypes,
-  newTreeStats,
-  type TreeStats,
 } from '../parser';
 import {
   buildRegexSymbols,
@@ -91,12 +88,10 @@ export class ProjectModeService {
 
   /** Times the phases below; the server replaces it with its own. */
   perf = new PerfLog(() => {});
-  /** Grammar-construct counting for the performance report, while profiling. */
-  treeStats: {
-    collect: () => boolean;
-    store: (uri: string, stats: TreeStats) => void;
+  /** Told which file's per-location analysis is running, for the crash recorder. */
+  tracking: {
     /** The per-location analysis running now, or undefined when it ends. */
-    progress: (state: { locationIndex: readonly LocationEntry[]; parsedLocations: number; stats?: TreeStats } | undefined) => void;
+    progress: (state: { uri: string; locationIndex: readonly LocationEntry[]; parsedLocations: number } | undefined) => void;
   } | undefined;
 
   constructor(
@@ -206,7 +201,6 @@ export class ProjectModeService {
 
   private analyzeFileNow(uri: string, text: string): void {
     const locationIndex = buildLocationIndex(text);
-    const stats = this.treeStats?.collect() ? newTreeStats() : undefined;
     let symbols: DocumentSymbols;
     // Kept on the state because the tree is freed here: without them a
     // syntax error in a closed file would show only once it is opened.
@@ -216,7 +210,7 @@ export class ProjectModeService {
       symbols = buildRegexSymbols(uri, locationIndex, text);
     } else if (text.length >= PROJECT_PER_LOCATION_BYTE_THRESHOLD) {
       syntaxErrors = [];
-      symbols = this.analyzePerLocation(uri, text, locationIndex, syntaxErrors, stats);
+      symbols = this.analyzePerLocation(uri, text, locationIndex, syntaxErrors);
     } else {
       const tree = this.perf.step('parse', () => this.tsParser.parseOnce(text, fullParseTimeoutMicros(text.length)));
       if (tree) {
@@ -226,16 +220,14 @@ export class ProjectModeService {
             this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
           ).symbols);
           syntaxErrors = this.perf.step('errors', () => extractErrors(tree));
-          if (stats) this.perf.step('tree stats', () => countNodeTypes(tree, stats));
         } finally {
           tree.delete();
         }
       } else {
         syntaxErrors = [];
-        symbols = this.analyzePerLocation(uri, text, locationIndex, syntaxErrors, stats);
+        symbols = this.analyzePerLocation(uri, text, locationIndex, syntaxErrors);
       }
     }
-    if (stats) this.treeStats?.store(uri, stats);
 
     this.documentStates.set(uri, {
       locationIndex,
@@ -252,13 +244,13 @@ export class ProjectModeService {
     text: string,
     locationIndex: LocationEntry[],
     syntaxErrors: SyntaxError[],
-    stats: TreeStats | undefined,
   ): DocumentSymbols {
     const symbols = new DocumentSymbols(uri);
-    const progress = { locationIndex, parsedLocations: 0, stats };
-    this.treeStats?.progress(progress);
-    for (const loc of locationIndex) {
+    const progress = { uri, locationIndex, parsedLocations: 0 };
+    this.tracking?.progress(progress);
+    for (const [i, loc] of locationIndex.entries()) {
       progress.parsedLocations++;
+      this.perf.atLocation(i);
       const locText = text.slice(loc.startOffset, loc.endOffset);
       const locLoc = makeLocSymLoc(uri, text, loc);
       const tree = this.perf.step('parse', () => this.tsParser.parseOnce(locText));
@@ -270,7 +262,6 @@ export class ProjectModeService {
             this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
           ));
           this.perf.step('errors', () => shiftErrors(extractErrors(tree), loc.startLine, syntaxErrors));
-          if (stats) this.perf.step('tree stats', () => countNodeTypes(tree, stats));
         } finally {
           tree.delete();
         }
@@ -293,7 +284,7 @@ export class ProjectModeService {
         extractLocationSymbolsFromText(text, loc, locSymbols, uri);
       }
     }
-    this.treeStats?.progress(undefined);
+    this.tracking?.progress(undefined);
     symbols.rebuildGlobalBindings();
     return symbols;
   }

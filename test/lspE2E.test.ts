@@ -434,3 +434,29 @@ pl x
     expect(md).toMatch(/3 usages/);
   }, 30_000);
 });
+
+// ──────────────────────────────────────────────────────────────────────
+// qsp/anonymizedLocation: the code a crash report may carry
+// ──────────────────────────────────────────────────────────────────────
+//
+// The client asks the restarted server for the code of the location a
+// crashed run was stuck on, with that run's pseudonyms, so the code and
+// the breadcrumbs name the same locations.
+describe('LSP e2e: anonymized location code for crash reports', () => {
+  let h: Harness;
+  beforeAll(async () => { h = await startServer(); });
+  afterAll(() => h.shutdown());
+
+  it('returns the location without its text, under the given pseudonyms', async () => {
+    const uri = 'file:///game/secret.qsps';
+    const text = "# Кухня\n$рецепт = 'тайный соус'\ngt 'Погреб'\n--- Кухня ---\n# Погреб\ngt 'Кухня'\n--- Погреб ---\n";
+    h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text } });
+    await h.diagnosticsFor(uri);
+    const result = await h.client.sendRequest('qsp/anonymizedLocation', {
+      uri, name: 'кухня', locations: { 'кухня': 'f01_l0001', 'погреб': 'f01_l0002' },
+    }) as { text: string; names: Record<string, string> };
+    expect(result.text).toBe("# f01_l0001\n$var_0001 = 'xxxxxxxxxxx'\ngt 'f01_l0002'\n--- xxxxx ---");
+    expect(result.names).toEqual({ var_0001: 'рецепт' });
+    expect(await h.client.sendRequest('qsp/anonymizedLocation', { uri, name: 'нет такой' })).toBeNull();
+  });
+});

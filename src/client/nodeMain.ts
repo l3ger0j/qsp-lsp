@@ -15,7 +15,7 @@ import { runGameCommand } from './runGame';
 import { registerMcpServer } from './mcp';
 import { registerQspDebugAdapter } from './qspDebugAdapter';
 import * as logger from './logger';
-import { registerPerformanceProfile, type ServerLaunch } from './performanceProfile';
+import { registerCrashReports, type ServerLaunch } from './crashReports';
 
 let client: LanguageClient;
 
@@ -24,8 +24,7 @@ export function activate(context: ExtensionContext): void {
     path.join('out', 'server', 'nodeMain.js')
   );
 
-  // Read again on every (re)start: "Collect Performance Profile" edits it
-  // and restarts the client.
+  // Read again on every (re)start: the crash-report setting edits it.
   const launch: ServerLaunch = {};
   const serverOptions: ServerOptions = {
     run: {
@@ -47,7 +46,7 @@ export function activate(context: ExtensionContext): void {
       { scheme: 'untitled', language: 'qsp' },
     ],
     traceOutputChannel: window.createOutputChannel('QSP Language Server'),
-    initializationOptions: () => (launch.profileDir ? { profileDir: launch.profileDir } : undefined),
+    initializationOptions: () => (launch.crashDir ? { crashDir: launch.crashDir } : undefined),
   };
 
   client = new LanguageClient(
@@ -61,7 +60,7 @@ export function activate(context: ExtensionContext): void {
   registerExtensionFeatures(context, client, runGameCommand);
   registerQspDebugAdapter(context);
   registerMcpServer(context);
-  registerPerformanceProfile(context, client, launch);
+  registerCrashReports(context, client, launch);
   context.subscriptions.push({ dispose: logger.dispose });
 
   client.start();

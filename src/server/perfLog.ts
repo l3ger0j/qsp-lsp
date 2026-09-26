@@ -18,26 +18,42 @@ export interface MemorySample {
 
 export type MemoryReader = () => MemorySample;
 
-/** Records CPU and heap profiles of the server (Node only; see nodeProfiler.ts). */
-export interface Profiler {
-  /** Start profiling into `dir`. */
+/** One location of a file being analysed, under its pseudonym. */
+export interface TrackedLocation { id: string; chars: number; lines: number }
+
+/**
+ * Where the analysis is, for the recorder's breadcrumbs. Cheap enough to
+ * call for every location and step; names are pseudonyms or the
+ * extension's own phase and step names.
+ */
+export interface Tracker {
+  phase(name: string | undefined): void;
+  step(name: string | undefined): void;
+  /** A file's analysis starts (or `undefined` when none is running). */
+  file(id: string | undefined, locations?: readonly TrackedLocation[]): void;
+  /** The analysis moved to the location at `index` in the current file. */
+  location(index: number): void;
+}
+
+/**
+ * The crash recorder: records the server's memory, heap and breadcrumbs
+ * all the time, so a crash leaves a report (Node only; see
+ * nodeRecorder.ts).
+ */
+export interface Recorder extends Tracker {
   start(dir: string): void;
-  /** Write the final profiles and stop; returns the names of this process's files. */
+  /** Write the final files, mark the run as ended cleanly, and stop; returns the names of this process's files. */
   stop(): Promise<string[]>;
-  /** Append a phase line to the profile's log. */
-  log(line: string): void;
-  /** Whether profiling is on in this process. */
+  /** Whether recording is on in this process. */
   readonly active: boolean;
-  /** Write `data` as `<base>-<pid>.json` into the profile directory. */
+  /** Write `data` as `<base>-<pid>.json` into the recorder's directory. */
   writeJson(base: string, data: unknown): void;
 }
 
 /** What only some hosts (the Node server) can offer the transport-agnostic server. */
 export interface ServerHost {
   memory?: MemoryReader;
-  profiler?: Profiler;
-  /** The server's process id, which names its profile files. */
-  processId?: number;
+  recorder?: Recorder;
 }
 
 /** A phase at least this long is logged even without `qsp.debug.performanceLog`. */
@@ -45,14 +61,15 @@ export const SLOW_PHASE_MS = 1000;
 
 const HEARTBEAT_MS = 1000;
 
-// One per process: the profiler's sampler, set by PerfLog.onHeartbeat.
+// One per process: set by PerfLog.onHeartbeat.
 let heartbeatHook: (() => void) | undefined;
 let lastBeat = 0;
 
 /**
- * Let the profiler sample if a second has passed since it last did.
- * Cheap enough for hot loops: call it from loops that can run for long
- * inside one step (the project aggregates), which no timer interrupts.
+ * Run the heartbeat hook if a second has passed since it last ran (the
+ * crash recorder writes its report from it). Cheap enough for hot loops:
+ * call it from loops that can run for long inside one step (the project
+ * aggregates), which no timer interrupts.
  */
 export function heartbeat(): void {
   if (!heartbeatHook) return;
@@ -82,8 +99,11 @@ function formatMb(bytes: number): string {
 export class PerfLog {
   /** Log every phase, not just the slow ones (`qsp.debug.performanceLog`). */
   verbose = false;
+  /** Told where the analysis is; see {@link Tracker}. */
+  tracker: Tracker | undefined;
   private steps: Map<string, StepTotal> | undefined;
-  private readonly sinks = new Set<(line: string) => void>();
+  private currentPhase: string | undefined;
+  private currentStep: string | undefined;
 
   constructor(
     private readonly write: (line: string) => void,
@@ -91,16 +111,10 @@ export class PerfLog {
     private readonly now: () => number = () => performance.now(),
   ) {}
 
-  /** Also send every line to `sink` (the profiler's phase log), slow or not. */
-  addSink(sink: (line: string) => void): () => void {
-    this.sinks.add(sink);
-    return () => this.sinks.delete(sink);
-  }
-
   /**
-   * Call `fn` at most every `intervalMs` while steps run. Long analyses
-   * are synchronous loops that no timer interrupts; this is how the
-   * profiler still samples the heap during them.
+   * Call `fn` about once a second while steps run. Long analyses are
+   * synchronous loops that no timer interrupts; this is how the crash
+   * recorder still gets a fresh report during them.
    */
   onHeartbeat(fn: (() => void) | undefined): void {
     heartbeatHook = fn;
@@ -125,6 +139,7 @@ export class PerfLog {
   phase<T>(name: string, fn: () => T, details?: (result: T) => string): T {
     const outer = this.steps;
     this.steps = new Map();
+    const outerPhase = this.enterPhase(name);
     const before = this.sampleMemory();
     const started = this.now();
     let result: T | undefined;
@@ -139,6 +154,7 @@ export class PerfLog {
       const ms = this.now() - started;
       const steps = this.steps;
       this.steps = outer;
+      this.enterPhase(outerPhase);
       if (outer) addStep(outer, name, ms);
       this.report(name, ms, steps, before, failed ? 'failed' : details ? safeDetails(details, result as T) : '');
     }
@@ -149,6 +165,7 @@ export class PerfLog {
     const outer = this.steps;
     const steps = new Map<string, StepTotal>();
     this.steps = steps;
+    const outerPhase = this.enterPhase(name);
     const before = this.sampleMemory();
     const started = this.now();
     let result: T | undefined;
@@ -162,6 +179,7 @@ export class PerfLog {
     } finally {
       const ms = this.now() - started;
       this.steps = outer;
+      this.enterPhase(outerPhase);
       if (outer) addStep(outer, name, ms);
       this.report(name, ms, steps, before, failed ? 'failed' : details ? safeDetails(details, result as T) : '');
     }
@@ -171,18 +189,41 @@ export class PerfLog {
   step<T>(name: string, fn: () => T): T {
     const steps = this.steps;
     if (!steps) return fn();
+    const outerStep = this.currentStep;
+    this.currentStep = name;
+    this.tracker?.step(name);
     const started = this.now();
     try {
       return fn();
     } finally {
       addStep(steps, name, this.now() - started);
+      this.currentStep = outerStep;
+      this.tracker?.step(outerStep);
       heartbeat();
     }
   }
 
+  /** Tell the tracker a file's analysis starts; see {@link Tracker.file}. */
+  enterFile(id: string | undefined, locations?: readonly TrackedLocation[]): void {
+    this.tracker?.file(id, locations);
+  }
+
+  /** Tell the tracker the analysis moved to the location at `index`. */
+  atLocation(index: number): void {
+    this.tracker?.location(index);
+  }
+
+  // Returns the phase it replaces, to restore on the way out.
+  private enterPhase(name: string | undefined): string | undefined {
+    const outer = this.currentPhase;
+    this.currentPhase = name;
+    this.tracker?.phase(name);
+    return outer;
+  }
+
   /** Log a one-off line (e.g. a reply size), always. */
   note(text: string): void {
-    this.emit(`[perf] ${text}`, true);
+    this.write(`[perf] ${text}`);
   }
 
   private report(name: string, ms: number, steps: Map<string, StepTotal>, before: MemorySample | undefined, details: string): void {
@@ -202,13 +243,9 @@ export class PerfLog {
       parts.push(mem);
     }
     if (details) parts.push(details);
-    this.emit(parts.join(' · '), this.verbose || ms >= SLOW_PHASE_MS);
+    if (this.verbose || ms >= SLOW_PHASE_MS) this.write(parts.join(' · '));
   }
 
-  private emit(line: string, toLog: boolean): void {
-    if (toLog) this.write(line);
-    for (const sink of this.sinks) sink(line);
-  }
 }
 
 function addStep(steps: Map<string, StepTotal>, name: string, ms: number): void {

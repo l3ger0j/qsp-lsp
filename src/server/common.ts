@@ -19,11 +19,7 @@ import {
   LocationEntry,
   QspTreeSitterParser,
   computeTreeEdit,
-  countNodeTypes,
-  mergeTreeStats,
-  newTreeStats,
   type SyntaxError,
-  type TreeStats,
   type WasmLoader,
 } from '../parser';
 import { collectSemanticTokenTuples, SEMANTIC_TOKENS_LEGEND, GOTO_MODIFIER_BIT, NAMESPACE_TOKEN_TYPE } from './semanticTokens';
@@ -42,6 +38,8 @@ import { AnalysisStatusReporter } from './analysisStatus';
 import { ANALYSIS_STATUS_MIN_BYTES } from '../common/analysisStatus';
 import { PerfLog, formatChars, type ServerHost } from './perfLog';
 import { buildPerformanceReport } from './performanceReport';
+import { Pseudonyms } from './pseudonyms';
+import { anonymizeCode } from '../parser/anonymize';
 
 // Re-export FsProvider for backward compatibility.
 export type { FsProvider } from './serverUtils';
@@ -176,16 +174,13 @@ export function createQspServer(
   const perf = new PerfLog((line) => log.log(line), host.memory);
   const diagnose = (...args: Parameters<typeof computeDiagnostics>) => perf.step('diagnostics', () => computeDiagnostics(...args));
   const startedAt = Date.now();
-  // Grammar-construct counts for the performance report, per document.
-  // Collected only while profiling: it's an extra walk over every tree.
-  const treeStatsByUri = new Map<string, TreeStats>();
-  let collectTreeStats = false;
-  // The document being counted by a full analysis; parseLocationBlock adds to it.
-  let treeStatsInProgress: TreeStats | undefined;
   // The file analysis running right now, for reports written mid-analysis
   // (a run that crashes never finishes it).
-  let analysisInProgress: { locationIndex: readonly LocationEntry[]; parsedLocations: number; stats?: TreeStats } | undefined;
-  let profileDir: string | undefined;
+  let analysisInProgress: { uri: string; locationIndex: readonly LocationEntry[]; parsedLocations: number } | undefined;
+  // Neutral names for files and locations in reports and breadcrumbs.
+  const pseudonyms = new Pseudonyms();
+  let savedPseudonyms = -1;
+  let workspaceFolderUris: string[] = [];
   const documentStates = new Map<string, DocumentState>();
   const tsParser = new QspTreeSitterParser();
   // Surface non-timeout parse failures (e.g. a WASM runtime error) in the
@@ -308,30 +303,29 @@ export function createQspServer(
   let fileEncoding = 'utf8';
 
   connection.onInitialize(async (params: InitializeParams): Promise<InitializeResult> => {
-    // "QSP: Collect Performance Profile" restarts the server with a
-    // directory to profile into. Start before anything is parsed: the
-    // initial load is what's being measured.
-    const requestedDir = (params.initializationOptions as { profileDir?: unknown } | undefined)?.profileDir;
-    if (typeof requestedDir === 'string' && host.profiler) {
-      const profiler = host.profiler;
+    // The client passes a directory for the crash recorder
+    // (src/client/crashReports.ts). Start before anything is parsed: the
+    // initial load is where large games crash.
+    workspaceFolderUris = params.workspaceFolders?.map(f => f.uri) ?? [];
+    const crashDir = (params.initializationOptions as { crashDir?: unknown } | undefined)?.crashDir;
+    if (typeof crashDir === 'string' && host.recorder) {
+      const recorder = host.recorder;
       try {
-        profiler.start(requestedDir);
-        profileDir = requestedDir;
-        collectTreeStats = true;
-        perf.verbose = true;
-        perf.addSink((line) => profiler.log(line));
+        recorder.start(crashDir);
+        perf.tracker = recorder;
         // The report needs the analysis state, so the main thread writes
-        // it, whenever the analysis passes a heartbeat; the sampler's own
-        // thread writes the memory and profile files.
+        // it whenever the analysis passes a heartbeat; the recorder's own
+        // thread writes the memory, heap and breadcrumb files.
         let lastReport = 0;
         perf.onHeartbeat(() => {
-          if (Date.now() - lastReport < 10_000) return;
+          if (Date.now() - lastReport < 30_000) return;
           lastReport = Date.now();
-          profiler.writeJson('report', buildReport());
+          recorder.writeJson('report', buildReport());
+          savePseudonyms();
         });
-        log.log(`[QSP] Profiling the language server into ${requestedDir}`);
+        savePseudonyms();
       } catch (e) {
-        log.error(`[QSP] Could not start profiling: ${e}`);
+        log.error(`[QSP] Could not start the crash recorder: ${e}`);
       }
     }
 
@@ -424,7 +418,7 @@ export function createQspServer(
       fileEncoding = filesConfig?.encoding ?? 'utf8';
       settings = parseSettingsFromConfig(qspConfig as Record<string, unknown> | undefined);
       project.embeddedExecEnabled = settings.embeddedExec.enabled;
-      perf.verbose = settings.debug.performanceLog || profileDir !== undefined;
+      perf.verbose = settings.debug.performanceLog;
       status.configure(settings.project.enabled ? { state: 'loading', files: 0 } : undefined);
       log.log(`[QSP] Server ready (encoding: ${fileEncoding}, project: ${settings.project.enabled}, embeddedExec: ${settings.embeddedExec.enabled})`);
       if (settings.project.enabled) {
@@ -471,7 +465,7 @@ export function createQspServer(
       const prevEmbeddedExec = settings.embeddedExec.enabled;
       settings = parseSettingsFromConfig(qspConfig as Record<string, unknown> | undefined);
       project.embeddedExecEnabled = settings.embeddedExec.enabled;
-      perf.verbose = settings.debug.performanceLog || profileDir !== undefined;
+      perf.verbose = settings.debug.performanceLog;
 
       if (settings.embeddedExec.enabled !== prevEmbeddedExec) {
         log.log(`[QSP] embeddedExec.enabled: ${prevEmbeddedExec} → ${settings.embeddedExec.enabled}`);
@@ -505,10 +499,11 @@ export function createQspServer(
   // ==================== PROJECT MODE ====================
   const project = new ProjectModeService(connection, documents, documentStates, tsParser);
   project.perf = perf;
-  project.treeStats = {
-    collect: () => collectTreeStats,
-    store: (uri, stats) => treeStatsByUri.set(uri, stats),
-    progress: (state) => { analysisInProgress = state; },
+  project.tracking = {
+    progress: (state) => {
+      analysisInProgress = state;
+      trackFile(state?.uri, state?.locationIndex);
+    },
   };
 
   // Scan the workspace, showing the scan in the language status item and,
@@ -692,8 +687,11 @@ export function createQspServer(
   // After shutdown only `exit` may arrive, so pending debounce timers must not
   // fire into a disposed parser. Freeing WASM memory matters for hosts that
   // keep the process alive (tests, embedders).
-  connection.onShutdown(() => {
+  connection.onShutdown(async () => {
     shuttingDown = true;
+    // A recorder stopped here marks the run as ended cleanly, so the
+    // client doesn't report it as a crash.
+    if (host.recorder?.active) await host.recorder.stop().catch(() => []);
     status.stop();
     for (const t of fastTimers.values()) clearTimeout(t);
     for (const t of treeTimers.values()) clearTimeout(t);
@@ -829,7 +827,12 @@ export function createQspServer(
     if (tsParser.isReady && (text.length >= PER_LOCATION_BYTE_THRESHOLD || fullParseFailedUris.has(doc.uri))) {
       analyzeDocumentPerLocation(doc, text);
     } else {
-      perf.phase('whole-file analysis', () => analyzeDocumentFullTree(doc, text), () => formatChars(text.length));
+      trackFile(doc.uri, buildLocationIndex(text));
+      try {
+        perf.phase('whole-file analysis', () => analyzeDocumentFullTree(doc, text), () => formatChars(text.length));
+      } finally {
+        trackFile(undefined);
+      }
     }
     // After the analysis: a whole-file parse that times out switches the
     // document to per-location parsing on the way.
@@ -867,11 +870,6 @@ export function createQspServer(
         tree, doc.uri, prevSymbols, tsParser.lastEdit,
         settings.embeddedExec.enabled ? (t) => tsParser.parseOnce(t) : undefined,
       ));
-      if (collectTreeStats) {
-        const stats = newTreeStats();
-        perf.step('tree stats', () => countNodeTypes(tree, stats));
-        treeStatsByUri.set(doc.uri, stats);
-      }
       symbols = result.symbols;
       reusedLocationNames = result.reusedLocations;
       treeHasErrors = tree.rootNode.hasError;
@@ -1011,10 +1009,6 @@ export function createQspServer(
       const result = perf.step('symbols', () => extractSymbols(parsed, docUri, undefined, undefined, embedParseFn));
       const errors = perf.step('errors', () => extractErrors(parsed));
       const tokens = perf.step('semantic tokens', () => collectSemanticTokenTuples(parsed, undefined, embedParseFn));
-      if (treeStatsInProgress) {
-        const stats = treeStatsInProgress;
-        perf.step('tree stats', () => countNodeTypes(parsed, stats));
-      }
 
       // extractSymbols wraps the location in a DocumentSymbols with one entry.
       // Get the LocationSymbols for the single location_block.
@@ -1226,9 +1220,9 @@ export function createQspServer(
   function analyzeAllLocations(doc: TextDocument, text: string, prevState: DocumentState | undefined): number {
     // ── Full analysis (initial load or structural change) ─────────
     const locationIndex = buildLocationIndex(text);
-    treeStatsInProgress = collectTreeStats ? newTreeStats() : undefined;
-    const progress = { locationIndex, parsedLocations: 0, stats: treeStatsInProgress };
+    const progress = { uri: doc.uri, locationIndex, parsedLocations: 0 };
     analysisInProgress = progress;
+    trackFile(doc.uri, locationIndex);
     const label = doc.uri.split('/').pop() ?? doc.uri;
     log.log(`[QSP] Per-location parse: ${label} (${locationIndex.length} locations, ${Math.round(text.length / 1024)}kb)`);
     const symbols = new DocumentSymbols(doc.uri);
@@ -1244,6 +1238,7 @@ export function createQspServer(
 
     for (const [i, loc] of locationIndex.entries()) {
       progress.parsedLocations = i;
+      perf.atLocation(i);
       const locText = text.slice(loc.startOffset, loc.endOffset);
       const locLoc = makeLocSymLoc(doc.uri, text, loc);
       const cacheKey = cacheKeys[i];
@@ -1302,8 +1297,6 @@ export function createQspServer(
     // Rebuild the document-wide global-bindings index (see
     // tryIncrementalPerLocationUpdate for rationale).
     perf.step('global bindings', () => symbols.rebuildGlobalBindings());
-    if (treeStatsInProgress) treeStatsByUri.set(doc.uri, treeStatsInProgress);
-    treeStatsInProgress = undefined;
     progress.parsedLocations = locationIndex.length;
 
     // Store state
@@ -1316,6 +1309,7 @@ export function createQspServer(
     });
     // From here the file is in documentStates, so a report counts it there.
     analysisInProgress = undefined;
+    perf.atLocation(-1);
 
     // Send diagnostics (pass pre-extracted errors to skip full-tree extraction)
     if (settings.project.enabled && project.projectAggregates) {
@@ -1334,6 +1328,7 @@ export function createQspServer(
 
     // Tell VS Code to re-request semantic tokens.
     refreshSemanticTokens();
+    trackFile(undefined);
     return locationIndex.length;
   }
 
@@ -1354,16 +1349,58 @@ export function createQspServer(
   // ── Performance diagnostics ───────────────────────────────────────
   // See performanceReport.ts: numbers and grammar node types only, so the
   // result can be shared for games whose text can't be.
-  function buildReport() {
-    let treeStats: TreeStats | undefined;
-    const partial = analysisInProgress?.stats;
-    if (treeStatsByUri.size > 0 || partial) {
-      treeStats = newTreeStats();
-      for (const stats of treeStatsByUri.values()) mergeTreeStats(treeStats, stats);
-      if (partial) mergeTreeStats(treeStats, partial);
+  // Tell the recorder which file is being analysed, under pseudonyms.
+  function trackFile(uri: string | undefined, locationIndex?: readonly LocationEntry[]): void {
+    if (!perf.tracker) return;
+    if (uri === undefined || !locationIndex) {
+      perf.enterFile(undefined);
+      return;
     }
+    perf.enterFile(pseudonyms.file(uri), locationIndex.map((loc, i) => ({
+      id: pseudonyms.location(uri, i, loc.name),
+      chars: loc.endOffset - loc.startOffset,
+      lines: loc.endLine - loc.startLine + 1,
+    })));
+    savePseudonyms();
+  }
+
+  // What each pseudonym stands for, next to the recorder's files. The
+  // client keeps it on the user's machine, outside the report it packs.
+  function savePseudonyms(): void {
+    if (!host.recorder?.active || pseudonyms.changes === savedPseudonyms) return;
+    savedPseudonyms = pseudonyms.changes;
+    // The workspace tells the client which window's project a crashed
+    // run belongs to; like the names, it never goes into a report.
+    host.recorder.writeJson('names', { workspaceFolders: workspaceFolderUris, pseudonyms: pseudonyms.table() });
+  }
+
+  // A location's code with the game taken out (parser/anonymize.ts), for
+  // a crash report the user chose to extend. `locations` carries the
+  // crashed run's pseudonyms so the code matches its breadcrumbs.
+  connection.onRequest('qsp/anonymizedLocation', async (params: { uri: string; name: string; locations?: Record<string, string> }) => {
+    if (!tsParser.isReady) return undefined;
+    let text = documents.get(params.uri)?.getText();
+    if (text === undefined && fsProvider) {
+      text = await fsProvider.readFile(fsProvider.uriToPath(params.uri), fileEncoding).catch(() => undefined);
+    }
+    if (text === undefined) return undefined;
+    text = stripBom(text);
+    const loc = buildLocationIndex(text).find(l => l.nameLower === params.name.toLowerCase());
+    if (!loc) return undefined;
+    const locText = text.slice(loc.startOffset, loc.endOffset);
+    const tree = tsParser.parseOnce(locText);
+    if (!tree) return undefined;
+    try {
+      return anonymizeCode(tree, locText, { locations: new Map(Object.entries(params.locations ?? {})) });
+    } finally {
+      tree.delete();
+    }
+  });
+
+  function buildReport() {
     return buildPerformanceReport({
       states: documentStates,
+      pseudonyms,
       openUris: new Set(documents.all().map(d => d.uri)),
       parser: tsParser.isReady ? 'full' : wasmLoader ? 'not loaded' : 'lite',
       projectMode: settings.project.enabled,
@@ -1371,24 +1408,10 @@ export function createQspServer(
       uptimeSeconds: (Date.now() - startedAt) / 1000,
       memory: perf.sampleMemory(),
       aggregates: project.projectAggregates,
-      treeStats,
       inProgress: analysisInProgress,
     });
   }
   connection.onRequest('qsp/performanceReport', () => perf.phase('performance report', buildReport));
-
-  // Lets the client check that a restart for profiling took effect.
-  connection.onRequest('qsp/profile/status', () => ({
-    active: host.profiler?.active === true, dir: profileDir, pid: host.processId,
-  }));
-
-  // Ends the profiling "QSP: Collect Performance Profile" started; the
-  // client then restarts the server without it.
-  connection.onRequest('qsp/profile/stop', async () => {
-    if (!host.profiler || profileDir === undefined) return { dir: undefined, files: [] };
-    const files = await host.profiler.stop();
-    return { dir: profileDir, files };
-  });
 
   // Start listening
   documents.listen(connection);

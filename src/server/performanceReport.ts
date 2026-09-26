@@ -2,16 +2,17 @@
 //
 // The shape of the analysed project in numbers: file and location sizes,
 // how many symbols, references and bindings the analysis holds, how big
-// the project aggregates are, and (when collected) how often each grammar
-// construct occurs. Served as `qsp/performanceReport` and saved by
-// "QSP: Collect Performance Profile". It never holds file, location,
-// variable or object names, or any source text: users send it for games
-// they can't share, and a synthetic game of the same shape
+// the project aggregates are. Served as `qsp/performanceReport` and saved in
+// profiles and crash reports. Files and locations appear only under
+// pseudonyms (`f01`, `f01_l0007`, see pseudonyms.ts); it never holds a
+// real name or any source text: users send it for games they can't
+// share, and a synthetic game of the same shape
 // (scripts/stress/genGame.mjs --shape) reproduces the problem.
 
-import type { LocationEntry, LocationSymbols, QspSymbol, SymbolLocation, TreeStats } from '../parser';
+import type { LocationEntry, LocationSymbols, QspSymbol, SymbolLocation } from '../parser';
 import type { DocumentState } from './featureTypes';
 import type { MemorySample } from './perfLog';
+import type { Pseudonyms } from './pseudonyms';
 
 /** Sizes of a set of numbers. */
 export interface Distribution {
@@ -25,6 +26,8 @@ export interface Distribution {
 }
 
 export interface FileShape {
+  /** Pseudonym, e.g. `f01`. */
+  id: string;
   chars: number;
   lines: number;
   locations: number;
@@ -65,19 +68,32 @@ export interface PerformanceReport {
   files: FileShape[];
   locations: { chars: Distribution; lines: Distribution };
   symbols: SymbolCounts;
-  /** The ten locations holding the most analysis data, as counts. */
-  heaviestLocations: Array<SymbolCounts & { chars: number }>;
+  /** The ten locations holding the most analysis data. */
+  heaviestLocations: LocationRow[];
+  /**
+   * Every location, in file order: its size and what the analysis holds
+   * for it (zeros for one not analysed yet). A synthetic game can follow
+   * it location by location.
+   */
+  locationTable: LocationRow[];
   globalBindings: { variables: number; entries: number };
   /** Size of each collection in the project aggregates (field name → entries). */
   aggregates: Record<string, number>;
   /** A file whose analysis was still running (the one a crash interrupts). */
-  inProgress?: { chars: number; locations: number; parsedLocations: number };
-  /** Grammar constructs, when the profiler collected them. */
-  nodeTypes?: { maxDepth: number; types: Record<string, { count: number; chars: number; maxChars: number }> };
+  inProgress?: { file: string; chars: number; locations: number; parsedLocations: number };
+}
+
+/** One location in the report, under its pseudonym. */
+export interface LocationRow extends SymbolCounts {
+  /** Pseudonym, e.g. `f01_l0007`. */
+  id: string;
+  chars: number;
+  lines: number;
 }
 
 export interface ReportInput {
   states: ReadonlyMap<string, DocumentState>;
+  pseudonyms: Pseudonyms;
   openUris: ReadonlySet<string>;
   parser: string;
   projectMode: boolean;
@@ -85,9 +101,8 @@ export interface ReportInput {
   uptimeSeconds: number;
   memory?: MemorySample;
   aggregates?: object | null;
-  treeStats?: TreeStats;
   /** A file analysis still running: its location index and the constructs counted so far. */
-  inProgress?: { locationIndex: readonly LocationEntry[]; parsedLocations: number };
+  inProgress?: { uri: string; locationIndex: readonly LocationEntry[]; parsedLocations: number };
 }
 
 /** Summarise `values` (need not be sorted). */
@@ -171,8 +186,14 @@ export function buildPerformanceReport(input: ReportInput): PerformanceReport {
   const locChars: number[] = [];
   const locLines: number[] = [];
   const symbols = emptyCounts();
-  const heaviest: Array<SymbolCounts & { chars: number }> = [];
+  const table: LocationRow[] = [];
   let globalVars = 0, globalEntries = 0;
+  const row = (uri: string, index: number, loc: LocationEntry, counts: SymbolCounts): LocationRow => ({
+    id: input.pseudonyms.location(uri, index, loc.name),
+    chars: loc.endOffset - loc.startOffset,
+    lines: loc.endLine - loc.startLine + 1,
+    ...counts,
+  });
 
   for (const [uri, state] of input.states) {
     let chars = 0, retainedTrees = 0, cachedTokens = 0;
@@ -191,17 +212,16 @@ export function buildPerformanceReport(input: ReportInput): PerformanceReport {
       }
     }
     files.push({
-      chars, lines, locations: state.locationIndex.length, open: input.openUris.has(uri),
+      id: input.pseudonyms.file(uri), chars, lines, locations: state.locationIndex.length, open: input.openUris.has(uri),
       perLocation: state.perLocationCache !== undefined, retainedTrees, cachedTokens,
       syntaxErrors: state.syntaxErrors?.length ?? 0,
     });
 
-    const sizes = new Map(state.locationIndex.map(l => [l.nameLower, l.endOffset - l.startOffset]));
-    for (const [key, ls] of state.symbols.locations) {
-      const c = countLocationSymbols(ls);
-      addCounts(symbols, c);
-      heaviest.push({ ...c, chars: sizes.get(key) ?? 0 });
-    }
+    for (const ls of state.symbols.locations.values()) addCounts(symbols, countLocationSymbols(ls));
+    state.locationIndex.forEach((loc, i) => {
+      const ls = state.symbols.locations.get(loc.nameLower);
+      table.push(row(uri, i, loc, ls ? countLocationSymbols(ls) : emptyCounts()));
+    });
     globalVars += state.symbols.globalBindings.size;
     for (const list of state.symbols.globalBindings.values()) globalEntries += list.length;
   }
@@ -209,14 +229,16 @@ export function buildPerformanceReport(input: ReportInput): PerformanceReport {
   // The file being analysed isn't in `states` yet; its sizes still belong
   // in the distributions a synthetic game is generated from.
   if (input.inProgress) {
-    for (const loc of input.inProgress.locationIndex) {
+    const { uri, locationIndex } = input.inProgress;
+    locationIndex.forEach((loc, i) => {
       locChars.push(loc.endOffset - loc.startOffset);
       locLines.push(loc.endLine - loc.startLine + 1);
-    }
+      table.push(row(uri, i, loc, emptyCounts()));
+    });
   }
 
   const weight = (c: SymbolCounts) => c.variableRefs + c.locationRefSites + c.bindings + c.localsInScopeEntries;
-  heaviest.sort((a, b) => weight(b) - weight(a));
+  const heaviest = [...table].sort((a, b) => weight(b) - weight(a));
   files.sort((a, b) => b.chars - a.chars);
 
   const aggregates: Record<string, number> = {};
@@ -234,21 +256,18 @@ export function buildPerformanceReport(input: ReportInput): PerformanceReport {
     locations: { chars: distribution(locChars), lines: distribution(locLines) },
     symbols,
     heaviestLocations: heaviest.slice(0, 10),
+    locationTable: table,
     globalBindings: { variables: globalVars, entries: globalEntries },
     aggregates,
   };
   if (input.inProgress) {
     const idx = input.inProgress.locationIndex;
     report.inProgress = {
+      file: input.pseudonyms.file(input.inProgress.uri),
       chars: idx.reduce((n, l) => n + l.endOffset - l.startOffset, 0),
       locations: idx.length,
       parsedLocations: input.inProgress.parsedLocations,
     };
-  }
-  if (input.treeStats) {
-    const types: Record<string, { count: number; chars: number; maxChars: number }> = {};
-    for (const [type, c] of [...input.treeStats.types].sort((a, b) => b[1].count - a[1].count)) types[type] = { ...c };
-    report.nodeTypes = { maxDepth: input.treeStats.maxDepth, types };
   }
   return report;
 }

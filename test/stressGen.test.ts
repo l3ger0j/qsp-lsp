@@ -5,9 +5,8 @@
  * ───
  * - Load tests are only meaningful on code the parser accepts: a
  *   generator that wrote syntax errors would measure error recovery.
- * - A performance report's shape (location sizes, construct counts) is
- *   how a game that can't be shared gets reproduced, so it must steer
- *   the output.
+ * - A crash report's shape (file count, location sizes) is how a game
+ *   that can't be shared gets reproduced, so it must steer the output.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { QspTreeSitterParser } from '../src/parser/treeSitter';
@@ -40,27 +39,29 @@ describe('stress game generator', () => {
     expect(generateGame({ locations: 5, chars: 2000, seed: 3 }).files[0].text).toBe(a);
   });
 
+  it('repeats location sizes one by one from a report\'s location table', () => {
+    const sizes = [800, 30_000, 1200];
+    const opts = optionsFromShape({ report: { locationTable: sizes.map((chars, i) => ({ id: `f01_l000${i + 1}`, chars, lines: 1 })) } });
+    const text = generateGame({ ...opts, seed: 2 }).files.map((f: { text: string }) => f.text).join('');
+    const got = buildLocationIndex(text).map(l => l.endOffset - l.startOffset);
+    expect(got).toHaveLength(3);
+    got.forEach((n, i) => {
+      expect(n).toBeGreaterThanOrEqual(sizes[i]);
+      expect(n).toBeLessThan(sizes[i] + 2000);
+    });
+  });
+
   it('follows the shape of a performance report', () => {
     const report = {
-      environment: {},
-      report: {
-        files: [{}, {}, {}],
-        locations: { chars: { count: 40, min: 500, median: 1000, p90: 4000, p99: 9000, max: 20000 } },
-        globalBindings: { variables: 50 },
-        nodeTypes: { maxDepth: 20, types: { if_block: { count: 900, chars: 0, maxChars: 0 }, statement: { count: 100, chars: 0, maxChars: 0 }, single_quoted_string: { count: 10, chars: 1000, maxChars: 200 } } },
-      },
+      files: [{}, {}, {}],
+      locations: { chars: { count: 40, min: 500, median: 1000, p90: 4000, p99: 9000, max: 20000 } },
+      globalBindings: { variables: 50 },
     };
     const opts = optionsFromShape(report);
-    expect(opts).toMatchObject({ locations: 40, files: 3, stringChars: 100, variables: 50 });
-    expect(opts.weights).toEqual({ if_block: 900, statement: 100 });
-    const game = generateGame({ ...opts, seed: 1 });
-    const text = game.files.map((f: { text: string }) => f.text).join('');
+    expect(opts).toMatchObject({ locations: 40, files: 3, variables: 50 });
+    const text = generateGame({ ...opts, seed: 1 }).files.map((f: { text: string }) => f.text).join('');
     const locs = buildLocationIndex(text);
     expect(locs).toHaveLength(40);
     expect(Math.max(...locs.map(l => l.endOffset - l.startOffset))).toBeLessThan(21000);
-    // The report is mostly if blocks; the same sizes with the default mix have far fewer.
-    const plain = generateGame({ ...opts, weights: undefined, seed: 1 }).files.map((f: { text: string }) => f.text).join('');
-    const ifs = (t: string) => (t.match(/^\s*if .*:$/gm) ?? []).length / t.length;
-    expect(ifs(text)).toBeGreaterThan(2 * ifs(plain));
   });
 });

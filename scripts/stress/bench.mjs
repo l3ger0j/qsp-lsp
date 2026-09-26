@@ -16,8 +16,8 @@
 // --edits N  then type N characters into the open file, reporting how
 //            long each takes to be re-diagnosed
 // --heap-mb  the server's heap limit (Node's default otherwise)
-// --profile  directory to profile the server into, as "QSP: Collect
-//            Performance Profile" does (profiles, heap samples, report)
+// --crash    directory for the always-on crash recorder, as the extension
+//            passes it (breadcrumbs, memory, trail, report)
 // --max-seconds / --max-heap-mb  exit with code 1 when exceeded (budgets)
 
 import { spawn, execFileSync } from 'node:child_process';
@@ -40,7 +40,7 @@ function parseArgs(argv) {
 const args = parseArgs(process.argv.slice(2));
 const project = args._[0] && path.resolve(args._[0]);
 if (!project || !fs.existsSync(project)) {
-  console.error('usage: bench.mjs <project dir> [--open <file>|none] [--graph] [--edits N] [--heap-mb N] [--profile <dir>] [--timeout S] [--json out.json] [--max-seconds S] [--max-heap-mb N]');
+  console.error('usage: bench.mjs <project dir> [--open <file>|none] [--graph] [--edits N] [--heap-mb N] [--crash <dir>] [--timeout S] [--json out.json] [--max-seconds S] [--max-heap-mb N]');
   process.exit(2);
 }
 const server = path.join(root, 'out', 'server', 'nodeMain.js');
@@ -164,7 +164,7 @@ await request('initialize', {
   rootUri: projectUri,
   workspaceFolders: [{ uri: projectUri, name: path.basename(project) }],
   capabilities: { workspace: { configuration: true, workspaceFolders: true } },
-  initializationOptions: args.profile ? { profileDir: path.resolve(args.profile) } : undefined,
+  initializationOptions: args.crash ? { crashDir: path.resolve(args.crash) } : undefined,
 });
 send({ method: 'initialized', params: {} });
 
@@ -220,10 +220,6 @@ try {
   }
 
   results.report = await request('qsp/performanceReport');
-  if (args.profile) {
-    fs.writeFileSync(path.join(path.resolve(args.profile), 'report.json'), JSON.stringify({ report: results.report }, null, 2));
-    results.profileFiles = (await request('qsp/profile/stop')).files;
-  }
   finish(0);
 } catch (e) {
   console.error(`\n${e.message}`);

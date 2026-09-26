@@ -181,17 +181,6 @@
         "category": "QSP"
       },
       {
-        "command": "qsp.collectPerformanceProfile",
-        "title": "Collect Performance Profile",
-        "category": "QSP"
-      },
-      {
-        "command": "qsp.savePerformanceProfile",
-        "title": "Save Performance Profile",
-        "category": "QSP",
-        "enablement": "qsp.profiling"
-      },
-      {
         "command": "qsp.copyMcpConfig",
         "title": "Copy MCP Server Config",
         "category": "QSP"
@@ -338,14 +327,6 @@
         }
       ],
       "commandPalette": [
-        {
-          "command": "qsp.collectPerformanceProfile",
-          "when": "!isWeb && !qsp.profiling"
-        },
-        {
-          "command": "qsp.savePerformanceProfile",
-          "when": "qsp.profiling"
-        },
         {
           "command": "qsp.goToLocation",
           "when": "editorLangId == qsp"
@@ -715,6 +696,26 @@
           "default": 20,
           "minimum": 1,
           "description": "Maximum number of items rendered per category in hover tooltips (e.g. 'Possible values', 'Called from', 'Navigated from', 'Uses globals', 'Also defined in', 'Propagated from/to'). Lists exceeding this limit are truncated with a '…and N more' tail."
+        },
+        "qsp.crashReports.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Record the language server's memory and where its analysis is, and when it stops unexpectedly (e.g. out of memory on a large game) save a crash report to .qsp/crash-reports in the project. Reports hold numbers, neutral names like f01_l0007 and the extension's own function names, never game text; the table of what the neutral names stand for is saved beside the report and is not part of it. Takes effect when the language server restarts."
+        },
+        "qsp.crashReports.includeAnonymizedCode": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "always",
+            "never"
+          ],
+          "enumDescriptions": [
+            "Offer to add it when a crash report is saved.",
+            "Add it to every crash report.",
+            "Never add it."
+          ],
+          "default": "ask",
+          "description": "Whether a crash report may include the anonymized code of the location the server was analysing: names replaced by neutral ones, strings by x-es, numbers by 0, comments removed. It keeps the structure that made the analysis fail, so the problem can be reproduced without the game."
         },
         "qsp.debug.performanceLog": {
           "type": "boolean",

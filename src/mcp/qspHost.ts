@@ -43,7 +43,7 @@ import {
 import { ANALYSIS_STATUS_NOTIFICATION, type AnalysisStatus } from '../common/analysisStatus';
 import { createQspServer } from '../server/common';
 import { decodeBuffer, fsProvider } from '../server/nodeHost';
-import { nodeMemory } from '../server/nodeProfiler';
+import { nodeMemory } from '../server/nodeRecorder';
 import type { WasmDirProvider, WasmLoader } from '../parser';
 import { QSP_FILE_EXTENSIONS } from '../server/serverUtils';
 

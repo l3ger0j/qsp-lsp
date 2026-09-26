@@ -7,8 +7,8 @@
  *   phase's breakdown and memory must be in the line itself.
  * - Fast phases stay out of the log unless asked for, or every keystroke
  *   would add lines; slow ones are logged always.
- * - The heartbeat is how the profiler samples the heap inside long
- *   synchronous analyses that no timer can interrupt.
+ * - The heartbeat is how the crash recorder refreshes its report inside
+ *   long synchronous analyses that no timer can interrupt.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { PerfLog, SLOW_PHASE_MS, formatChars, heartbeat } from '../src/server/perfLog';
@@ -41,13 +41,10 @@ describe('PerfLog', () => {
     ]);
   });
 
-  it('keeps fast phases out of the log unless verbose, but always sends them to sinks', () => {
+  it('keeps fast phases out of the log unless verbose', () => {
     const { perf, lines, advance } = fixture();
-    const sunk: string[] = [];
-    perf.addSink((l) => sunk.push(l));
     perf.phase('location update', () => advance(SLOW_PHASE_MS - 1));
     expect(lines).toEqual([]);
-    expect(sunk).toHaveLength(1);
     perf.verbose = true;
     perf.phase('location update', () => advance(5));
     expect(lines).toHaveLength(1);

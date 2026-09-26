@@ -68,13 +68,16 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
 ❌ Don't: assume tree-sitter is ready (browser mode, initial load).
 ✅ Do: guard with `tsParser.isReady` and fall back to `regexFallback.ts`.
 
-**Performance data users send us**
-❌ Don't: put file, location, variable, object or action names, or any game text, into `[perf]` log lines,
-   `qsp/performanceReport` (`performanceReport.ts`) or the profiler's files (`nodeProfiler.ts`). Users send these
-   for games whose content they can't share.
-✅ Do: counts, sizes, durations, memory, grammar node types and the extension's own function names only; keep
-   `test/performanceReport.test.ts` checking that no name leaks. To reproduce a user's game, generate one of the
-   same shape: `npm run stress:gen -- --shape report.json`.
+**Performance data and crash reports users send us**
+❌ Don't: put real file, location, variable, object or action names, or any game text, into `[perf]` log lines,
+   `qsp/performanceReport` (`performanceReport.ts`), the crash recorder's files (`nodeRecorder.ts`), crash report zips
+   (`src/client/crashPackage.ts`) or anonymized code (`src/parser/anonymize.ts`). Users send these for games
+   whose content they can't share.
+✅ Do: counts, sizes, durations, memory, grammar node types, the extension's own function names, and pseudonyms
+   (`f01`, `f01_l0007`, `var_0003` from `pseudonyms.ts` / `anonymize.ts`). The pseudonym → name table
+   (`names-<pid>.json`, `crash-*.names.json`) stays on the user's machine and never goes into a zip. Keep
+   `test/performanceReport.test.ts`, `test/crashPackage.test.ts` and `test/anonymize.test.ts` checking that no
+   name leaks. To reproduce a user's game, generate one of the same shape: `npm run stress:gen -- --shape report.json`.
 
 **Browser tooling (Playwright)**
 ❌ Don't: ship Playwright or its browser binaries in the `.vsix`, or add them to `dependencies`.

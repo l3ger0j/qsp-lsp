@@ -10,8 +10,6 @@ export { extractErrors, hasStructuralErrors } from './extractErrors';
 export type { SyntaxError } from './extractErrors';
 export { extractSymbols, isVariableDefinition } from './extractSymbols';
 export { findBlockKeywordRanges } from './blockKeywords';
-export { countNodeTypes, mergeTreeStats, newTreeStats } from './treeStats';
-export type { NodeTypeCount, TreeStats } from './treeStats';
 export type { KeywordRange } from './blockKeywords';
 export {
   getPossibleValuesAtCursor,

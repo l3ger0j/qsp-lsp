@@ -9,10 +9,11 @@
 //       [--chars 26000] [--files 1] [--profile mixed|text|code] [--seed 1]
 //       [--shape report.json]
 //
-// --shape takes the report.json saved by "QSP: Collect Performance
-// Profile" and follows it: the number of locations, their size spread,
-// how often each grammar construct occurs and how long strings are. That
-// is how a problem in a game that can't be shared is reproduced here.
+// --shape takes the report.json from a crash report
+// (.qsp/crash-reports/*.zip) and follows it: the number of files and
+// locations, and each location's size. With --profile for the mix of
+// constructs, and the report's anonymized code where the user added it,
+// that is how a problem in a game that can't be shared is reproduced.
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -60,23 +61,16 @@ const PROFILES = {
 export function optionsFromShape(report) {
   const r = report.report ?? report;
   const chars = r.locations?.chars;
-  const types = r.nodeTypes?.types ?? {};
-  const weights = {};
-  for (const key of Object.keys(PROFILES.mixed)) {
-    if (types[key]?.count) weights[key] = types[key].count;
-  }
-  const strings = ['double_quoted_string', 'single_quoted_string'].map(t => types[t]).filter(Boolean);
-  const stringCount = strings.reduce((n, t) => n + t.count, 0);
-  const stringChars = strings.reduce((n, t) => n + t.chars, 0);
-  const locations = chars?.count || 1000;
+  // A crash report's table gives every location's size, in order: the
+  // one the analysis died on comes out where it was, as big as it was.
+  const table = Array.isArray(r.locationTable) && r.locationTable.length > 0 ? r.locationTable : undefined;
+  const locations = table?.length ?? (chars?.count || 1000);
   return {
     locations,
     sizes: chars ? [chars.min, chars.median, chars.p90, chars.p99, chars.max] : undefined,
+    sizeList: table?.map(row => row.chars),
     files: Math.max(1, r.files?.length ?? 1),
-    weights: Object.keys(weights).length > 0 ? weights : PROFILES.mixed,
-    stringChars: stringCount > 0 ? Math.max(4, Math.round(stringChars / stringCount)) : 40,
     variables: Math.max(20, r.globalBindings?.variables ?? 200),
-    maxDepth: Math.min(12, Math.max(2, Math.round((r.nodeTypes?.maxDepth ?? 12) / 4))),
   };
 }
 
@@ -188,7 +182,7 @@ export function generateGame(input = {}) {
   const write = makeWriter(r, opts, opts.locations);
   const files = Array.from({ length: opts.files }, () => []);
   for (let i = 0; i < opts.locations; i++) {
-    const size = sampleSize(r, opts.sizes, opts.chars);
+    const size = opts.sizeList?.[i] ?? sampleSize(r, opts.sizes, opts.chars);
     const name = locName(i);
     let s = `# ${name}\n`;
     while (s.length < size) s += write(i, 0, 0, size - s.length);

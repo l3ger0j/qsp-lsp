@@ -23,6 +23,3 @@ tree-sitter-qsp/log.html
 
 # @vscode/test-cli: downloaded VS Code builds
 .vscode-test/
-
-# Profiles saved by "QSP: Collect Performance Profile"
-profile-*/
