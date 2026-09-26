@@ -29,9 +29,21 @@ import type {
 /** Per-location parse cache entry (only for large files). */
 export interface PerLocationParseResult {
   text: string;
+  /**
+   * The location's symbols, with line numbers counted from `symbolsLine`:
+   * 0 as parsed, the location's start line once placed in a document.
+   * The cache and the document share them, so a large file keeps one copy.
+   */
   symbols: LocationSymbols;
+  symbolsLine: number;
+  /** In the location's own coordinates (its header is line 0), like `tokens`. */
   errors: SyntaxError[];
-  tokens: number[];
+  /**
+   * Semantic token tuples [line, char, length, type, modifiers, …],
+   * packed: a large file holds millions of them, and a plain array of
+   * numbers takes twice the memory.
+   */
+  tokens: Uint32Array;
   hasErrors: boolean;
   tree?: Parser.Tree;
 }

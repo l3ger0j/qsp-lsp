@@ -19,6 +19,7 @@ import {
   LocationEntry,
   QspTreeSitterParser,
   computeTreeEdit,
+  type SymbolLocation,
   type SyntaxError,
   type WasmLoader,
 } from '../parser';
@@ -836,6 +837,24 @@ export function createQspServer(
   // for incremental re-parsing (avoids ~1s full parse for 200KB locations).
   const INCREMENTAL_LOC_THRESHOLD = 50_000; // 50 KB
 
+  // Put a cached location's symbols into `symbols` at the location's
+  // lines. The document and the cache then share the object, so a large
+  // file keeps one copy of its symbols, and a location that stays on the
+  // same lines is handed over without copying. Returns the cache entry
+  // to keep.
+  function placeLocation(
+    symbols: DocumentSymbols, loc: LocationEntry, locLoc: SymbolLocation, entry: PerLocationParseResult,
+  ): PerLocationParseResult {
+    const shift = loc.startLine - entry.symbolsLine;
+    if (shift === 0) {
+      symbols.adoptLocation(loc.name, locLoc, entry.symbols);
+      return entry;
+    }
+    const placed = LocationSymbols.copyWithLineShift(entry.symbols, shift);
+    symbols.adoptLocation(loc.name, locLoc, placed);
+    return { ...entry, symbols: placed, symbolsLine: loc.startLine };
+  }
+
   function releasePerLocationTrees(state: DocumentState | undefined): void {
     if (!state?.perLocationCache) return;
     for (const entry of state.perLocationCache.values()) {
@@ -1037,7 +1056,7 @@ export function createQspServer(
       const parsed = tree;
       const result = perf.step('symbols', () => extractSymbols(parsed, docUri, undefined, undefined, embedParseFn));
       const errors = perf.step('errors', () => extractErrors(parsed));
-      const tokens = perf.step('semantic tokens', () => collectSemanticTokenTuples(parsed, undefined, embedParseFn));
+      const tokens = perf.step('semantic tokens', () => Uint32Array.from(collectSemanticTokenTuples(parsed, undefined, embedParseFn)));
 
       // extractSymbols wraps the location in a DocumentSymbols with one entry.
       // Get the LocationSymbols for the single location_block.
@@ -1059,6 +1078,7 @@ export function createQspServer(
       return {
         text: locText,
         symbols: locSymbols,
+        symbolsLine: 0,
         errors,
         tokens,
         hasErrors: tree.rootNode.hasError,
@@ -1138,33 +1158,14 @@ export function createQspServer(
     // ── 5. Build DocumentSymbols ──────────────────────────────────
     const symbols = new DocumentSymbols(doc.uri);
     const allErrors: SyntaxError[] = [];
-    const prevSymbols = prevState.symbols;
-
     for (let i = 0; i < currentIndex.length; i++) {
       const loc = currentIndex[i];
       const cached = newCache.get(currentKeys[i]);
       if (!cached) continue;
 
-      // For unchanged locations, reuse previous absolute-coordinate
-      // symbols when the line number hasn't shifted (avoids deep copy).
-      if (i !== affIdx) {
-        const prevDef = prevSymbols.locationDefs.get(loc.nameLower);
-        if (prevDef?.definition?.line === loc.startLine) {
-          const prevLS = prevSymbols.getLocation(loc.name);
-          if (prevLS) {
-            symbols.locations.set(loc.nameLower, prevLS);
-            symbols.locationDefs.set(loc.nameLower, prevDef);
-
-            shiftErrors(cached.errors, loc.startLine, allErrors);
-            continue;
-          }
-        }
-      }
-
-      // Changed location or shifted locations: build from local coords
-      const locLoc = makeLocSymLoc(doc.uri, text, loc);
-      symbols.addLocationFrom(loc.name, locLoc, cached.symbols, loc.startLine);
-
+      // Unchanged locations on the same lines hand over their symbols
+      // as they are; shifted or changed ones get a moved copy.
+      newCache.set(currentKeys[i], placeLocation(symbols, loc, makeLocSymLoc(doc.uri, text, loc), cached));
       shiftErrors(cached.errors, loc.startLine, allErrors);
     }
 
@@ -1282,22 +1283,14 @@ export function createQspServer(
 
       if (canReuse && prev) {
         // Reuse cached result
-        newCache.set(cacheKey, prev);
-
-        // Add symbols with line shift from local → absolute coordinates.
-        // In per-location trees the header is always at local line 0,
-        // so the shift equals the location's absolute start line.
-        perf.step('copy into file', () => symbols.addLocationFrom(loc.name, locLoc, prev.symbols, loc.startLine));
+        newCache.set(cacheKey, perf.step('copy into file', () => placeLocation(symbols, loc, locLoc, prev)));
 
         shiftErrors(prev.errors, loc.startLine, allErrors);
       } else {
         // Parse this location (incrementally if prev has a retained tree)
         const result = parseLocationBlock(locText, doc.uri, loc.name, prev);
         if (result) {
-          newCache.set(cacheKey, result);
-
-          // Add symbols (local coords) with line shift to absolute
-          perf.step('copy into file', () => symbols.addLocationFrom(loc.name, locLoc, result.symbols, loc.startLine));
+          newCache.set(cacheKey, perf.step('copy into file', () => placeLocation(symbols, loc, locLoc, result)));
 
           shiftErrors(result.errors, loc.startLine, allErrors);
         } else {

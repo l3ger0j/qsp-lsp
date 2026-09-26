@@ -104,8 +104,16 @@ export class DocumentSymbols {
     source: LocationSymbols,
     lineShift: number,
   ): void {
+    this.adoptLocation(name, loc, LocationSymbols.copyWithLineShift(source, lineShift));
+  }
+
+  /**
+   * Add a location's symbols as they are, already in this document's
+   * coordinates, without copying: the per-location cache hands over the
+   * same object while a location stays on the same lines.
+   */
+  adoptLocation(name: string, loc: SymbolLocation, locSymbols: LocationSymbols): void {
     const key = name.toLowerCase();
-    const locSymbols = LocationSymbols.copyWithLineShift(source, lineShift);
     this.locations.set(key, locSymbols);
     this.locationDefs.set(key, {
       name,
