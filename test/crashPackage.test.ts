@@ -69,11 +69,15 @@ describe('crash runs', () => {
     put('heap-near-limit-111.heapprofile', '{}');
     put('session-222.json', '{}');
     put('clean-222.json', '{}');
+    // Killed with its editor: no clean mark, nothing unusual either.
+    put('session-333.json', '{}');
+    put('memory-333.csv', 'seconds,heapUsedMB,heapLimitMB,rssMB\n9000,183,4096,577\n');
 
     const runs = listRuns(dir);
     expect(runs.find(r => r.pid === 222)!.clean).toBe(true);
     const crashed = runs.find(r => r.pid === 111)!;
-    expect(crashed).toMatchObject({ clean: false, names: { workspaceFolders: ['file:///home/someone/Секретная_игра'] } });
+    expect(runs.find(r => r.pid === 333)).toMatchObject({ clean: false, anomalies: false });
+    expect(crashed).toMatchObject({ clean: false, anomalies: true, names: { workspaceFolders: ['file:///home/someone/Секретная_игра'] } });
 
     expect(claimRun(dir, 111)).toBe(true);
     expect(claimRun(dir, 111)).toBe(false);

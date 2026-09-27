@@ -1,7 +1,7 @@
 // ── Crash packages ───────────────────────────────────────────────────
 //
 // What a server run leaves in the recorder directory (see
-// src/server/nodeProfiler.ts), turned into a crash report: the run's
+// src/server/nodeRecorder.ts), turned into a crash report: the run's
 // files in a zip, with a summary on top. names-<pid>.json, the table of
 // what each pseudonym stands for, stays out of the zip: it is saved next
 // to it for the user alone. No vscode import, so it can be tested.
@@ -15,6 +15,13 @@ export interface RecordedRun {
   pid: number;
   /** It stopped normally (its recorder wrote clean-<pid>.json). */
   clean: boolean;
+  /**
+   * Its recorder saw something wrong: the heap past half its limit or
+   * growing fast, the analysis stuck, an uncaught exception. A run that
+   * stopped without a clean mark and without any of these was most
+   * likely killed with its editor, not crashed.
+   */
+  anomalies: boolean;
   /** Its names file: the workspace it served and the pseudonym table. */
   names?: { workspaceFolders?: string[]; pseudonyms?: Record<string, string> };
 }
@@ -59,6 +66,7 @@ export function listRuns(dir: string): RecordedRun[] {
   return [...pids].map(pid => ({
     pid,
     clean: files.includes(`clean-${pid}.json`),
+    anomalies: files.includes(`breadcrumbs-${pid}.jsonl`),
     names: readJson(path.join(dir, `names-${pid}.json`)),
   }));
 }

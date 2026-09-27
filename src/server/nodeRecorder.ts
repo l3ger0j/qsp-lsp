@@ -16,9 +16,15 @@
 //                           what the heap was allocated by, at 85% of the
 //                           limit and at the first fast-growth anomalies
 //   report-<pid>.json       the performance report, from the main thread
-//   clean-<pid>.json        the run ended normally (written on stop)
+//   clean-<pid>.json        the run ended normally: on the shutdown
+//                           request, or on any process.exit but one
+//                           after an uncaught exception
 // A run that dies of "heap out of memory" can't write anything more, so
-// everything is written as it goes.
+// everything is written as it goes. The clean mark is written at once
+// and synchronously: the client kills a server that takes over two
+// seconds to shut down, and a server whose editor went away exits right
+// after the request, so waiting for the worker would leave runs that
+// merely ended looking like crashes.
 //
 // The sampling runs in a worker thread attached to the main thread's
 // inspector, whose requests interrupt the main thread even inside a long
@@ -208,6 +214,17 @@ async function stop() {
 }
 `;
 
+/**
+ * One line of a stack trace with its script path cut to the file name:
+ * `at fn (C:\Users\me\out\server\nodeMain.js:1:2)` → `fn (nodeMain.js:1:2)`.
+ */
+export function stackFrame(line: string): string {
+  const m = /^\s*at (?:(.*?) \((.*)\)|(.*))$/.exec(line);
+  if (!m) return '';
+  const where = (m[2] ?? m[3] ?? '').split(/[\\/]/).pop() ?? '';
+  return m[1] ? `${m[1]} (${where})` : where;
+}
+
 /** Recorder that samples the main thread from a worker thread. */
 export class NodeRecorder implements Recorder {
   private worker: Worker | undefined;
@@ -215,6 +232,14 @@ export class NodeRecorder implements Recorder {
   private where: Int32Array | undefined;
   private readonly ids = { phase: new Map<string, number>(), step: new Map<string, number>() };
   private files = 0;
+  private uncaught = false;
+  private readonly onExit = () => {
+    if (!this.uncaught) this.markClean();
+  };
+  private readonly onUncaught = (e: unknown) => {
+    this.uncaught = true;
+    this.uncaughtCrumb(e);
+  };
 
   constructor(private readonly thresholds: RecorderThresholds = {}) {}
 
@@ -237,14 +262,20 @@ export class NodeRecorder implements Recorder {
     this.worker = new Worker(WORKER_SOURCE, { eval: true, workerData: settings });
     // The server exits on the client's request whatever the recorder is doing.
     this.worker.unref();
+    process.on('exit', this.onExit);
+    process.on('uncaughtExceptionMonitor', this.onUncaught);
   }
 
   async stop(): Promise<string[]> {
     const worker = this.worker;
     if (!worker) return [];
+    this.markClean();
     this.worker = undefined;
+    process.off('exit', this.onExit);
+    process.off('uncaughtExceptionMonitor', this.onUncaught);
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, 15_000);
+      // Shorter than the client's patience with a shutdown request.
+      const timer = setTimeout(resolve, 1_500);
       worker.once('message', () => { clearTimeout(timer); resolve(); });
       worker.postMessage('stop');
     });
@@ -298,6 +329,26 @@ export class NodeRecorder implements Recorder {
       }
     }
     Atomics.store(this.where, slot, id);
+  }
+
+  private markClean(): void {
+    try {
+      fs.writeFileSync(this.pathFor('clean', 'json'), JSON.stringify({ endedAt: new Date().toISOString() }));
+    } catch {
+      // The directory is gone; nothing to report from then.
+    }
+  }
+
+  // The error's message may quote the game, so only its type and the
+  // extension's own frames go in.
+  private uncaughtCrumb(e: unknown): void {
+    const error = e instanceof Error ? e : undefined;
+    const frames = (error?.stack ?? '').split('\n').slice(1, 11).map(stackFrame);
+    try {
+      fs.appendFileSync(this.pathFor('breadcrumbs', 'jsonl'), `${JSON.stringify({ kind: 'uncaught-exception', error: error?.name ?? typeof e, frames })}\n`);
+    } catch {
+      // Nowhere to write.
+    }
   }
 
   private pathFor(base: string, ext: string): string {

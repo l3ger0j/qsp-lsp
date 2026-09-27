@@ -1,6 +1,6 @@
 /**
  * The performance report (src/server/performanceReport.ts) and the
- * profile path stripping (src/server/nodeProfiler.ts).
+ * profile path stripping (src/server/nodeRecorder.ts).
  *
  * Why
  * ───
@@ -21,7 +21,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { QspTreeSitterParser } from '../src/parser/treeSitter';
 import { buildLocationIndex } from '../src/parser';
 import { buildPerformanceReport, distribution } from '../src/server/performanceReport';
-import { NodeRecorder, stripProfilePaths } from '../src/server/nodeRecorder';
+import { NodeRecorder, stackFrame, stripProfilePaths } from '../src/server/nodeRecorder';
 import { Pseudonyms } from '../src/server/pseudonyms';
 import type { DocumentState } from '../src/server/featureTypes';
 import { initParser, parseAndExtract } from './testHelpers';
@@ -109,7 +109,56 @@ describe('stripProfilePaths', () => {
   });
 });
 
+describe('stackFrame', () => {
+  it('keeps the function and the file name, not the path', () => {
+    expect(stackFrame('    at walk (C:\\Users\\Иван Петров\\.vscode\\extensions\\qsp\\out\\server\\nodeMain.js:12:345)')).toBe('walk (nodeMain.js:12:345)');
+    expect(stackFrame('    at /home/someone/out/server/nodeMain.js:1:2')).toBe('nodeMain.js:1:2');
+    expect(stackFrame('Error: Тайная_комната not found')).toBe('');
+  });
+});
+
 describe('NodeRecorder', () => {
+  // The handlers the recorder puts on the process, called directly: a
+  // test can't exit its own process.
+  type Handlers = { onExit: () => void; onUncaught: (e: unknown) => void };
+
+  it('marks a run clean at once when it stops, and on a plain exit', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qsp-crash-'));
+    const clean = path.join(dir, `clean-${process.pid}.json`);
+    const recorder = new NodeRecorder();
+    recorder.start(dir);
+    expect(process.listeners('exit')).toContain((recorder as unknown as Handlers).onExit);
+    (recorder as unknown as Handlers).onExit();
+    expect(fs.existsSync(clean)).toBe(true);
+    fs.rmSync(clean);
+
+    const stopping = recorder.stop();
+    // Written before the worker is asked to stop, so a server killed
+    // right after its shutdown request still counts as clean.
+    expect(fs.existsSync(clean)).toBe(true);
+    await stopping;
+    expect(process.listeners('exit')).not.toContain((recorder as unknown as Handlers).onExit);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }, 30_000);
+
+  it('does not mark an exit after an uncaught exception clean, and leaves no message in its breadcrumb', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qsp-crash-'));
+    const recorder = new NodeRecorder();
+    recorder.start(dir);
+    const handlers = recorder as unknown as Handlers;
+    handlers.onUncaught(new TypeError('Тайная_комната is not a function'));
+    handlers.onExit();
+    expect(fs.existsSync(path.join(dir, `clean-${process.pid}.json`))).toBe(false);
+    const crumb = JSON.parse(fs.readFileSync(path.join(dir, `breadcrumbs-${process.pid}.jsonl`), 'utf8').trim());
+    expect(crumb).toMatchObject({ kind: 'uncaught-exception', error: 'TypeError' });
+    expect(crumb.frames.length).toBeGreaterThan(0);
+    const text = JSON.stringify(crumb);
+    expect(text).not.toContain('Тайная');
+    expect(text).not.toContain(os.homedir());
+    await recorder.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }, 30_000);
+
   it('leaves breadcrumbs naming where the analysis was, under pseudonyms', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qsp-crash-'));
     const recorder = new NodeRecorder({ growthMb: 16, stallMs: 1500 });

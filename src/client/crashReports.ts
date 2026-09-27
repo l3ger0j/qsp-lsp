@@ -1,10 +1,10 @@
 // ── Crash reports ────────────────────────────────────────────────────
 //
 // The language server always runs with the light crash recorder
-// (src/server/nodeProfiler.ts, 'crash' mode), writing into this
-// extension's global storage. When a server run ends without its
-// recorder marking a clean stop (it ran out of memory, or was killed),
-// its files become a crash report: a zip in the project's
+// (src/server/nodeRecorder.ts), writing into this extension's global
+// storage. When a server run ends without its recorder marking a clean
+// stop and the recorder saw an anomaly before (the heap near its limit,
+// the analysis stuck), its files become a crash report: a zip in the project's
 // .qsp/crash-reports folder, with the table of what each pseudonym
 // stands for saved beside it for the user only. The report holds
 // numbers, pseudonyms and the extension's own function names; on the
@@ -18,6 +18,7 @@ import * as vscode from 'vscode';
 import { State, type LanguageClient } from 'vscode-languageclient/node';
 import { claimRun, isAlive, listRuns, packRun, pruneReports, removeRun, type CrashSummary, type RecordedRun } from './crashPackage';
 import { zip, type ZipEntry } from './zip';
+import * as logger from './logger';
 
 const KEEP_REPORTS = 5;
 
@@ -52,6 +53,11 @@ export function registerCrashReports(context: vscode.ExtensionContext, client: L
         }
         if (isAlive(run.pid) || !belongsHere(run)) continue;
         if (!claimRun(recorderDir, run.pid)) continue;
+        if (!run.anomalies) {
+          removeRun(recorderDir, run.pid);
+          logger.log(`Language server process ${run.pid} ended without shutting down, with nothing unusual recorded; no crash report made.`);
+          continue;
+        }
         await report(run);
       }
     } finally {
