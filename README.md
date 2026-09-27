@@ -80,8 +80,8 @@ A **QSP Locations** section in the Explorer side bar lists every location of the
 - Arrows are styled by kind: `goto`/`xgoto` (solid), `gosub` and `@` calls as statements (dashed), `func`/`@` in expressions (dotted), `desc` (thin). Each kind can be hidden.
 - The start location is marked with ▶. Locations nothing jumps to are dashed; a target no file defines is shown in red.
 - A jump whose target is an expression (`gt $next`, `gt 'room_' + $n`) goes to a **?** node; hover it to see the expressions.
-- Click a location to open it, double-click to centre on it, click an arrow to open where the jump is written. Hover shows files, lines and the calls.
-- Large graphs: up to about 80 locations the graph is drawn in layers; above that a force layout places the nodes, a slice at a time, so the panel stays usable (about 2 s for 1000 locations). Locations keep their places when the graph is redrawn after an edit, and a dragged location stays where you put it. The layout time is written to **QSP: Show Language Server Log**.
+- Click a location to open it, double-click to centre on it, double-click empty space to zoom in there, click an arrow to open where the jump is written. Hover shows files, lines and the calls.
+- Large graphs: up to about 80 locations the graph is drawn in layers; above that a force layout places the nodes, a slice at a time, so the panel stays usable (about 2 s for 1000 locations). Past 5000 arrows only the arrows of the location under the pointer, or the selected one, are drawn: tens of thousands at once are an unreadable tangle and made the panel crawl. Locations keep their places when the graph is redrawn after an edit, and a dragged location stays where you put it. The layout and drawing times are written to **QSP: Show Language Server Log**.
 
 ### Multi-File Operations
 - **List All Locations** — browse all locations across the file or project

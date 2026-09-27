@@ -212,7 +212,7 @@ class JumpGraphPanel {
 </div>
 <div id="notice"></div>
 <div id="graph"></div>
-<div id="info">Click a location to open it, double-click to centre on it; click an arrow to open where the jump is written; hover to see its neighbours.</div>
+<div id="info">Click a location to open it, double-click to centre on it, double-click empty space to zoom in; click an arrow to open where the jump is written; hover to see its neighbours.</div>
 <script nonce="${n}" src="${script}"></script>
 </body>
 </html>`;

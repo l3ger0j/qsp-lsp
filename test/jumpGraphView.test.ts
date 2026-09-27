@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ALL_EDGES, buildViewGraph, fileNodeId, foldByFile, type JumpGraphData } from '../src/common/jumpGraphView';
+import { ALL_EDGES, buildViewGraph, fileNodeId, foldByFile, nodeId, type JumpGraphData } from '../src/common/jumpGraphView';
 
 const M = 'file:///g/main.qsps';
 const site = (line: number) => ({ uri: M, line, text: 'x' });
@@ -118,6 +118,27 @@ describe('buildViewGraph', () => {
     const g = buildViewGraph(graph, { depth: 'all', filter: ALL_EDGES, startFileUri: M, hubThreshold: 0 });
     expect(g.hiddenHubs).toEqual([]);
     expect(g.nodes).toHaveLength(8);
+  });
+
+  it('gives a location with an empty name (`gt \'\'`, a bare `#` header) an id Cytoscape accepts', () => {
+    const empty: JumpGraphData = {
+      nodes: [{ name: 'Start', uri: M, line: 0 }, { name: '', uri: M, line: 5 }],
+      edges: [
+        { from: 'start', to: '', callType: 'goto', kind: 'exact', siteCount: 1, sites: [site(1)] },
+        { from: '', to: 'start', callType: 'goto', kind: 'exact', siteCount: 1, sites: [site(6)] },
+      ],
+      unresolved: [{ from: '', callType: 'goto', exprs: ['$x'], sites: [site(7)], siteCount: 1 }],
+    };
+    for (const focus of [undefined, '']) {
+      const g = buildViewGraph(empty, { focus, depth: focus === undefined ? 'all' : 1, filter: ALL_EDGES, startFileUri: M });
+      expect(g.focusMissing).toBe(false);
+      expect(g.nodes).toHaveLength(3);
+      for (const x of [...g.nodes.map(n => n.id), ...g.edges.flatMap(e => [e.id, e.source, e.target])]) expect(x).not.toBe('');
+      expect(g.nodes.find(n => n.id === nodeId(''))).toMatchObject({ label: "''", isFocus: focus === '' });
+      const folded = foldByFile(g, new Set());
+      for (const e of folded.edges) expect([e.source, e.target]).not.toContain('');
+    }
+    expect(nodeId(nodeId(''))).toBe(nodeId(''));
   });
 });
 

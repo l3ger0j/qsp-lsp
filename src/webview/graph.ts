@@ -13,6 +13,7 @@ import {
   ALL_EDGES,
   buildViewGraph,
   foldByFile,
+  nodeId,
   type HostToWebview,
   type JumpGraphData,
   type JumpGraphViewState,
@@ -45,6 +46,15 @@ let relPaths: Record<string, string> = {};
 const LARGE_GRAPH = 250;
 let large = false;
 
+// Past this many arrows only those of the location under the pointer (or
+// selected) are drawn. A thousand locations can have tens of thousands of
+// arrows: drawn at once they are a solid tangle that took seconds a frame
+// in the VS Code webview, and fitting them took seconds more.
+const EDGE_BUDGET = 5000;
+let edgesOnDemand = false;
+// Each shown node's arrows, both ways, for drawing on demand.
+let edgesOf = new Map<string, ViewEdge[]>();
+
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const info = $<HTMLDivElement>('info');
 const notice = $<HTMLDivElement>('notice');
@@ -52,7 +62,6 @@ const status = $<HTMLSpanElement>('status');
 
 const cy = cytoscape({
   container: $('graph'),
-  wheelSensitivity: 0.3,
   minZoom: 0.02,
   maxZoom: 3,
   boxSelectionEnabled: false,
@@ -150,6 +159,23 @@ function tuneViewport(): void {
   r.textureOnViewport = large;
 }
 
+// cy.batch() leaves Cytoscape batching for good if its callback throws,
+// and then nothing drawn afterwards shows.
+function batch(fn: () => void): void {
+  cy.startBatch();
+  try {
+    fn();
+  } finally {
+    cy.endBatch();
+  }
+}
+
+// Fit the nodes, not every element: the bounds of tens of thousands of
+// arrows cost seconds, and arrows lie between nodes anyway.
+function fitView(): void {
+  cy.fit(cy.nodes(), 30);
+}
+
 // ── Building the view ────────────────────────────────────────────────
 
 function currentView(): ViewGraph {
@@ -170,8 +196,21 @@ function nodeLabel(n: ViewNode): string {
   return label;
 }
 
+function edgeElement(e: ViewEdge, extra = ''): cytoscape.ElementDefinition {
+  return {
+    group: 'edges' as const,
+    data: {
+      id: e.id, source: e.source, target: e.target, edge: e,
+      count: e.siteCount, width: Math.min(6, 1 + Math.log2(e.siteCount)),
+    },
+    classes: [
+      e.callTypes.length > 1 ? 'mixed' : e.callType, e.unresolved ? 'unresolved' : '',
+      state.mode === 'files' && e.siteCount > 1 ? 'counted' : '', extra,
+    ].join(' '),
+  };
+}
+
 function elements(view: ViewGraph, positions: Positions | undefined): cytoscape.ElementDefinition[] {
-  const counted = state.mode === 'files';
   return [
     ...view.nodes.map(n => {
       const label = nodeLabel(n);
@@ -187,24 +226,31 @@ function elements(view: ViewGraph, positions: Positions | undefined): cytoscape.
         ].join(' '),
       };
     }),
-    ...view.edges.map(e => ({
-      group: 'edges' as const,
-      data: {
-        id: e.id, source: e.source, target: e.target, edge: e,
-        count: e.siteCount, width: Math.min(6, 1 + Math.log2(e.siteCount)),
-      },
-      classes: [
-        e.callTypes.length > 1 ? 'mixed' : e.callType, e.unresolved ? 'unresolved' : '', counted && e.siteCount > 1 ? 'counted' : '',
-      ].join(' '),
-    })),
+    ...(edgesOnDemand ? [] : view.edges.map(e => edgeElement(e))),
   ];
 }
 
-function showNotices(view: ViewGraph): void {
+// Draw the arrows of one location in place of the ones drawn before (on
+// demand only); undefined leaves those of the selected location, if any.
+function showEdgesOf(id: string | undefined): void {
+  if (!edgesOnDemand) return;
+  const selected = cy.$('node:selected');
+  const target = id ?? (selected.nonempty() ? selected.first().id() : undefined);
+  batch(() => {
+    cy.edges('.on-demand').remove();
+    const list = target === undefined ? [] : edgesOf.get(target) ?? [];
+    cy.add(list.filter(e => cy.hasElementWithId(e.source) && cy.hasElementWithId(e.target)).map(e => edgeElement(e, 'on-demand')));
+  });
+}
+
+function showNotices(view: ViewGraph, onDemand: boolean): void {
   notice.replaceChildren();
   if (graph.nodes.length === 0) {
     notice.textContent = 'No locations yet.';
     return;
+  }
+  if (onDemand) {
+    notice.append(`${view.edges.length} arrows are too many to draw at once: point at a location or select it to see its arrows. `);
   }
   if (view.focusMissing) {
     notice.append(`Location "${state.focus}" is not in the project; showing everything. `);
@@ -267,7 +313,20 @@ function nodeSize(n: ViewNode): { width: number; height: number } {
 // picture stays up meanwhile.
 function render(fit: boolean): void {
   const view = currentView();
-  showNotices(view);
+  // Taken over by draw(): the old picture stays up, and hoverable, until then.
+  const onDemand = view.edges.length > EDGE_BUDGET;
+  const byNode = new Map<string, ViewEdge[]>();
+  if (onDemand) {
+    const add = (id: string, e: ViewEdge) => {
+      const list = byNode.get(id);
+      if (list) list.push(e); else byNode.set(id, [e]);
+    };
+    for (const e of view.edges) {
+      add(e.source, e);
+      if (e.target !== e.source) add(e.target, e);
+    }
+  }
+  showNotices(view, onDemand);
   const run = ++layoutRun;
   const key = viewKey();
   vscode.setState(state);
@@ -278,32 +337,45 @@ function render(fit: boolean): void {
   const count = (kind: ViewNode['kind']) => view.nodes.filter(n => n.kind === kind).length;
   const parts = state.mode === 'files' ? [`${count('file')} files`] : [];
   if (state.mode !== 'files' || count('location') > 0) parts.push(`${count('location')} locations`);
-  const summary = `${parts.join(', ')}, ${view.edges.length} arrows`;
+  const summary = `${parts.join(', ')}, ${view.edges.length} arrows${onDemand ? ' (drawn on demand)' : ''}`;
   const started = performance.now();
 
   // `positions` undefined: small enough for dagre, which Cytoscape runs.
   const draw = (positions: Positions | undefined, how: string | undefined, placedBefore: boolean) => {
     if (run !== layoutRun) return;
-    if (large !== view.nodes.length >= LARGE_GRAPH) {
-      large = !large;
-      applyStyle();
-    }
-    tuneViewport();
-    cy.batch(() => {
-      cy.elements().remove();
-      cy.add(elements(view, positions));
-    });
-    if (!positions) cy.layout({ name: 'dagre', rankDir: 'LR', nodeSep: 25, rankSep: 70, fit: false, padding: 30 } as cytoscape.LayoutOptions).run();
-    layoutKey = key;
-    rememberPositions();
-    if (fit) {
-      cy.fit(undefined, 30);
-    } else if (!placedBefore) {
-      const focused = cy.$('node.focus');
-      if (focused.nonempty()) cy.center(focused);
+    const laidOut = performance.now();
+    try {
+      if (large !== view.nodes.length >= LARGE_GRAPH) {
+        large = !large;
+        applyStyle();
+      }
+      tuneViewport();
+      edgesOnDemand = onDemand;
+      edgesOf = byNode;
+      batch(() => {
+        cy.elements().remove();
+        cy.add(elements(view, positions));
+      });
+      if (!positions) cy.layout({ name: 'dagre', rankDir: 'LR', nodeSep: 25, rankSep: 70, fit: false, padding: 30 } as cytoscape.LayoutOptions).run();
+      layoutKey = key;
+      rememberPositions();
+      if (fit) {
+        fitView();
+      } else if (!placedBefore) {
+        const focused = cy.$('node.focus');
+        if (focused.nonempty()) cy.center(focused);
+      }
+    } catch (e) {
+      // Left as it was, the status would show the layout's last percentage for good.
+      status.textContent = 'Could not draw the graph (see the QSP Language Server log)';
+      vscode.postMessage({ type: 'log', message: `Jump graph: drawing ${summary} failed: ${e instanceof Error ? e.stack ?? e.message : String(e)}` });
+      return;
     }
     status.textContent = summary;
-    if (how) vscode.postMessage({ type: 'log', message: `Jump graph: ${summary} laid out (${how}) in ${Math.round(performance.now() - started)} ms` });
+    if (how) {
+      const drawn = performance.now();
+      vscode.postMessage({ type: 'log', message: `Jump graph: ${summary} laid out (${how}) in ${Math.round(laidOut - started)} ms, drawn in ${Math.round(drawn - laidOut)} ms` });
+    }
   };
 
   const seeded = seedFromCache(nodes, edges, positionCache.get(key));
@@ -333,7 +405,9 @@ function runForce(layout: ForceLayout, run: number, done: () => void): void {
   const slice = () => {
     if (run !== layoutRun) return;
     if (layout.step(40)) {
-      done();
+      status.textContent = 'Drawing…';
+      // A timeout, not requestAnimationFrame: that one doesn't fire while the panel is hidden.
+      setTimeout(() => { if (run === layoutRun) done(); }, 20);
     } else {
       status.textContent = `Laying out… ${Math.round(layout.progress * 100)}%`;
       setTimeout(slice, 0);
@@ -374,16 +448,22 @@ function describeEdge(e: ViewEdge): string {
 function highlight(node: cytoscape.NodeSingular): void {
   if (node.isParent()) return;
   const keep = node.closedNeighborhood();
-  cy.batch(() => {
+  batch(() => {
     cy.elements().not(keep.union(keep.ancestors())).addClass('faded');
   });
 }
 
 cy.on('mouseover', 'node', ev => {
   info.textContent = describeNode(ev.target.data('node') as ViewNode);
+  // Before the highlight, which keeps the neighbours these arrows lead to.
+  showEdgesOf(ev.target.id());
   highlight(ev.target as cytoscape.NodeSingular);
 });
-cy.on('mouseout', 'node', () => { cy.batch(() => { cy.elements('.faded').removeClass('faded'); }); });
+cy.on('mouseout', 'node', () => {
+  batch(() => { cy.elements('.faded').removeClass('faded'); });
+  showEdgesOf(undefined);
+});
+cy.on('select unselect', 'node', () => showEdgesOf(undefined));
 cy.on('mouseover', 'edge', ev => { info.textContent = describeEdge(ev.target.data('edge') as ViewEdge); });
 
 cy.on('tap', 'node', ev => {
@@ -401,6 +481,12 @@ cy.on('tap', 'node', ev => {
 cy.on('dbltap', 'node', ev => {
   const n = ev.target.data('node') as ViewNode;
   if (n.kind === 'location') centreOn(n.id);
+});
+// Double-click on empty space zooms in there: getting from the whole
+// project to a readable cluster took a dozen turns of the wheel.
+cy.on('dbltap', ev => {
+  if (ev.target !== cy) return;
+  cy.animate({ zoom: { level: Math.min(cy.maxZoom(), cy.zoom() * 2), position: ev.position } }, { duration: 200 });
 });
 cy.on('tap', 'edge', ev => {
   const e = ev.target.data('edge') as ViewEdge;
@@ -436,9 +522,10 @@ function fillSearchList(): void {
 }
 
 function find(text: string): void {
-  const id = text.trim().toLowerCase();
-  if (!id) return;
-  if (!graph.nodes.some(n => !n.missing && n.name.toLowerCase() === id)) {
+  const name = text.trim().toLowerCase();
+  if (!name) return;
+  const id = nodeId(name);
+  if (!graph.nodes.some(n => !n.missing && n.name.toLowerCase() === name)) {
     status.textContent = `No location "${text.trim()}"`;
     return;
   }
@@ -448,7 +535,7 @@ function find(text: string): void {
 
 // Select a drawn location and pan to it, keeping the layout.
 function reveal(id: string): boolean {
-  const node = cy.getElementById(id);
+  const node = cy.getElementById(nodeId(id));
   if (node.empty()) return false;
   cy.$(':selected').unselect();
   node.select();
@@ -487,7 +574,7 @@ filterBoxes.forEach(box => box.addEventListener('change', () => {
   state.filter = { ...state.filter, [box.dataset.filter!]: box.checked };
   render(false);
 }));
-$('fit').addEventListener('click', () => cy.fit(undefined, 30));
+$('fit').addEventListener('click', fitView);
 
 // ── Messages from the extension ──────────────────────────────────────
 
@@ -502,7 +589,7 @@ window.addEventListener('message', (event: MessageEvent<HostToWebview>) => {
     render(first);
   } else if (msg.type === 'focus') {
     if (!msg.force && !state.followCursor) return;
-    if (state.focus === msg.name && state.mode === 'around') return;
+    if (state.focus !== undefined && nodeId(state.focus) === nodeId(msg.name) && state.mode === 'around') return;
     // Rebuilding a whole-project or by-file picture on every click in the
     // editor would be slow and lose the user's bearings; point at the
     // location in it instead. Only a command switches to its neighbourhood.

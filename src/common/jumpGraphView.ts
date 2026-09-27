@@ -104,6 +104,17 @@ export interface ViewOptions {
 
 const unknownId = (from: string) => `?:${from}`;
 
+// Cytoscape refuses an empty id, and `gt ''` or a header with no name gives
+// one; a NUL can't be part of a location name, so this one clashes with none.
+const EMPTY_NAME_ID = '\u0000(empty)';
+
+/**
+ * Id of the node of a location (or missing target) with this lowercase
+ * name. Idempotent, so an id can go through it again.
+ */
+export const nodeId = (lowerName: string) => (lowerName === '' ? EMPTY_NAME_ID : lowerName);
+const labelOf = (name: string) => (name === '' ? "''" : name);
+
 /** Id of the node that stands for a whole file in the by-file view. */
 export const fileNodeId = (uri: string) => `file:${uri}`;
 
@@ -113,16 +124,17 @@ export function buildViewGraph(graph: JumpGraphData, opts: ViewOptions): ViewGra
   let startLine = Infinity;
   for (const n of graph.nodes) {
     if (n.uri !== undefined && n.uri === opts.startFileUri && (n.line ?? 0) < startLine) {
-      start = n.name.toLowerCase();
+      start = nodeId(n.name.toLowerCase());
       startLine = n.line ?? 0;
     }
   }
-  const focus = opts.focus ?? start;
+  const focus = opts.focus === undefined ? start : nodeId(opts.focus);
 
   // Counted over every call type, like reachability below, so a hub stays
   // hidden while the filters change.
   const callers = new Map<string, Set<string>>();
-  for (const e of graph.edges) {
+  const edgesIn = graph.edges.map(e => ({ ...e, from: nodeId(e.from), to: nodeId(e.to) }));
+  for (const e of edgesIn) {
     if (e.from === e.to) continue;
     let set = callers.get(e.to);
     if (!set) callers.set(e.to, set = new Set());
@@ -132,18 +144,18 @@ export function buildViewGraph(graph: JumpGraphData, opts: ViewOptions): ViewGra
   if (opts.hubThreshold) {
     const kept = opts.depth === 'all' ? undefined : focus;
     for (const n of graph.nodes) {
-      const id = n.name.toLowerCase();
+      const id = nodeId(n.name.toLowerCase());
       const count = callers.get(id)?.size ?? 0;
-      if (count >= opts.hubThreshold && id !== kept) hubs.set(id, { id, label: n.name, callers: count });
+      if (count >= opts.hubThreshold && id !== kept) hubs.set(id, { id, label: labelOf(n.name), callers: count });
     }
   }
 
   const all = new Map<string, ViewNode>();
   for (const n of graph.nodes) {
-    const id = n.name.toLowerCase();
+    const id = nodeId(n.name.toLowerCase());
     if (hubs.has(id)) continue;
     all.set(id, {
-      id, label: n.name, kind: n.missing ? 'missing' : 'location', uri: n.uri, line: n.line,
+      id, label: labelOf(n.name), kind: n.missing ? 'missing' : 'location', uri: n.uri, line: n.line,
       isStart: id === start, isFocus: false,
       // Reachability is judged on every call type, not just the ones shown,
       // so hiding `desc` edges doesn't make a location look unreachable.
@@ -151,14 +163,14 @@ export function buildViewGraph(graph: JumpGraphData, opts: ViewOptions): ViewGra
     });
   }
 
-  const fileOf = new Map(graph.nodes.map(n => [n.name.toLowerCase(), n.uri]));
+  const fileOf = new Map(graph.nodes.map(n => [nodeId(n.name.toLowerCase()), n.uri]));
   const sitesOf = (from: string, sites: WireSite[]): JumpSite[] => {
     const uri = fileOf.get(from) ?? '';
     return sites.map(s => ({ uri: s.uri ?? uri, line: s.line, text: s.text }));
   };
 
   const edges: ViewEdge[] = [];
-  for (const e of graph.edges) {
+  for (const e of edgesIn) {
     if (!opts.filter[e.callType] || hubs.has(e.from)) continue;
     const hub = hubs.get(e.to);
     if (hub) {
@@ -178,7 +190,8 @@ export function buildViewGraph(graph: JumpGraphData, opts: ViewOptions): ViewGra
   if (opts.filter.unresolved) {
     // One "?" per location, with an edge per call type, keeps the graph
     // readable when a location has several dynamic jumps.
-    for (const u of graph.unresolved) {
+    for (const unresolved of graph.unresolved) {
+      const u = { ...unresolved, from: nodeId(unresolved.from) };
       if (!opts.filter[u.callType] || hubs.has(u.from)) continue;
       const target = unknownId(u.from);
       edges.push({
@@ -191,7 +204,7 @@ export function buildViewGraph(graph: JumpGraphData, opts: ViewOptions): ViewGra
     }
   }
 
-  const focusMissing = opts.focus !== undefined && !all.has(opts.focus);
+  const focusMissing = opts.focus !== undefined && !all.has(focus!);
   let keep: Set<string>;
   if (opts.depth === 'all' || focus === undefined || !all.has(focus)) {
     keep = new Set(all.keys());
