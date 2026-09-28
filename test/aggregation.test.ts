@@ -339,7 +339,7 @@ x = 2
     expect(ext![0].sourceLoc).toBe('b');
     expect(ext![0].varNameLower).toBe('x');
     expect(ext![0].binding.isLocal).toBe(false);
-    expect(ext![0].binding.value).toEqual({ kind: 'expr' });
+    expect(ext![0].binding.value).toMatchObject({ kind: 'expr' });
   });
 
   it('records callee non-local string write via func', () => {

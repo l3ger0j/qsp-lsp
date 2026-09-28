@@ -15,6 +15,7 @@ import {
   type VariableBinding,
 } from './symbolTypes';
 import type { SyntaxError } from './extractErrors';
+import type { TargetPattern } from './targetPattern';
 
 /** A jump or call with a non-literal target; see `LocationSymbols.dynamicLocationRefs`. */
 export interface DynamicLocationRef {
@@ -22,6 +23,10 @@ export interface DynamicLocationRef {
   loc: SymbolLocation;
   /** Source text of the target expression, e.g. `'room_' + $n`. */
   exprText: string;
+  /** What is known of the target, for the jump graph to resolve; absent when nothing is. */
+  target?: TargetPattern;
+  /** Column the jump statement (or call) starts at: its indentation, for the resolver's nearest writes. */
+  callColumn?: number;
 }
 
 export class LocationSymbols {

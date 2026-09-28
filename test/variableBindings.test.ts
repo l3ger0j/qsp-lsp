@@ -297,13 +297,13 @@ local #count = 5
     expect(bs.length).toBe(3);
     // Pre-declaration write: still a real global.
     expect(bs[0].isLocal).toBe(false);
-    expect(bs[0].value).toEqual({ kind: 'expr' });
+    expect(bs[0].value).toMatchObject({ kind: 'expr' });
     // The `local` declaration itself.
     expect(bs[1].isLocal).toBe(true);
-    expect(bs[1].value).toEqual({ kind: 'expr' });
+    expect(bs[1].value).toMatchObject({ kind: 'expr' });
     // Post-declaration bare write: retagged to the local.
     expect(bs[2].isLocal).toBe(true);
-    expect(bs[2].value).toEqual({ kind: 'expr' });
+    expect(bs[2].value).toMatchObject({ kind: 'expr' });
   });
 
   it('setvar BEFORE `local x` stays global, setvar AFTER retags', () => {
@@ -510,7 +510,7 @@ x = 777
     expect(ext).toBeDefined();
     const fromC = ext!.filter(e => e.sourceLoc === 'c');
     expect(fromC).toHaveLength(1);
-    expect(fromC[0].binding.value).toEqual({ kind: 'expr' });
+    expect(fromC[0].binding.value).toMatchObject({ kind: 'expr' });
   });
 
   it('callee nested-block write bubbles up to caller local', () => {
@@ -609,7 +609,7 @@ gs 'A'
     const ext = agg.externalLocalBindings.get(sym) ?? [];
     const fromB = ext.filter(e => e.sourceLoc === 'b');
     expect(fromB).toHaveLength(1);
-    expect(fromB[0].binding.value).toEqual({ kind: 'expr' });
+    expect(fromB[0].binding.value).toMatchObject({ kind: 'expr' });
   });
 
   it('3-cycle A→B→C→A: C\'s write pops back to A\'s local', () => {
@@ -3379,7 +3379,7 @@ describe('variableBindings: tuple unpacking', () => {
         const full = `# main\n${src}\n---\n`;
         for (const name of ['a', 'b', 'c']) {
           const bs = bindingsFor(full, 'main', name);
-          expect(bs[0].value).toEqual({ kind: 'expr' });
+          expect(bs[0].value).toMatchObject({ kind: 'expr' });
           expect(bs[0].rhsTypePrefix).toBe('#');
         }
       }

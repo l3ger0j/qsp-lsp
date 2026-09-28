@@ -33,6 +33,7 @@ import {
 import { lookupArgConstraints, lookupFunctionReturnType } from './builtins';
 import { parseVarStringArg } from './variableBindings';
 import { isTupleTypedRhs, tupleLiteralOf, subtreeReferencesVariable } from './variableUtils';
+import { literalOf, share, targetPatternOf, type TargetPattern } from './targetPattern';
 
 /**
  * Internal binding info with parse-tree metadata for the retag pass
@@ -66,6 +67,16 @@ function rhsSnippet(node: Parser.SyntaxNode): string {
 }
 
 // ── Main entry point ─────────────────────────────────────────────────
+
+// What the jump graph may need of an assigned value (see BindingValue):
+// any string-variable write it can read something from, and single
+// literals, which also feed `'room_' + n`. Numeric arithmetic is left out.
+function valuePattern(rhs: Parser.SyntaxNode, writePrefix: TypePrefix): TargetPattern | undefined {
+  const pattern = targetPatternOf(rhs);
+  if (!pattern) return undefined;
+  if (literalOf(pattern) === undefined) return writePrefix === '$' ? pattern : undefined;
+  return share(pattern);
+}
 
 export function collectVariableBindings(
   locBlock: Parser.SyntaxNode,
@@ -210,6 +221,11 @@ export function collectVariableBindings(
           }
         }
       }
+    }
+
+    if (value.kind === 'expr' && !isCompound) {
+      const pattern = valuePattern(rhs, writePrefix);
+      if (pattern) value = { kind: 'expr', pattern };
     }
 
     const info: BindingInfo = {

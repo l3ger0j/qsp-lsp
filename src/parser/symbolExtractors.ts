@@ -40,6 +40,7 @@ import {
 } from './walkHelpers';
 import { lookupValidPrefixes, lookupArgConstraints, lookupDeprecated } from './builtins';
 import { parseVarStringArg } from './variableBindings';
+import { argPatternsOf, targetPatternOf } from './targetPattern';
 
 // ── Variable extraction ───────────────────────────────────────────────
 
@@ -200,7 +201,21 @@ function recordDynamicLocationRef(
   loc.callType = CALL_TYPE_MAP.get(callName);
   loc.callText = collapseNewlines(node.text);
   loc.argCount = Math.max(0, countCallArgs(node) - 1);
-  locSymbols.dynamicLocationRefs.push({ loc, exprText: collapseNewlines(target.text) });
+  locSymbols.dynamicLocationRefs.push({
+    loc, exprText: collapseNewlines(target.text), target: targetPatternOf(target, true), callColumn: node.startPosition.column,
+  });
+}
+
+// The arguments after the location name of `gs 'name', a, b` / `func('name', a)`.
+function setArgPatterns(loc: SymbolLocation, node: Parser.SyntaxNode): void {
+  if (!loc.argCount) return;
+  const args: Parser.SyntaxNode[] = [];
+  for (let i = 1; i <= Math.min(loc.argCount, 4); i++) {
+    const a = getNthArgNode(node, i);
+    if (a) args.push(a);
+  }
+  const patterns = argPatternsOf(args);
+  if (patterns) loc.argPatterns = patterns;
 }
 
 export function extractLocationRef(
@@ -237,6 +252,7 @@ export function extractLocationRef(
     loc.callType = CALL_TYPE_MAP.get(stmtName);
     loc.callText = collapseNewlines(node.text);
     loc.argCount = Math.max(0, countCallArgs(node) - 1);
+    setArgPatterns(loc, node);
     locSymbols.addLocationRef(refName, loc);
     return;
   }
@@ -314,6 +330,7 @@ export function extractFuncCallLocationRef(
     loc.callType = CALL_TYPE_MAP.get(funcName);
     loc.callText = collapseNewlines(node.text);
     loc.argCount = Math.max(0, countCallArgs(node) - 1);
+    setArgPatterns(loc, node);
     locSymbols.addLocationRef(refName, loc);
     return;
   }
@@ -433,6 +450,12 @@ export function extractUserCallRef(
     callText: collapseNewlines(node.text),
     argCount,
   };
+  if (argCount > 0) {
+    const paren = node.namedChildren.find(c => c.type === 'paren_args');
+    const args = paren ? paren.namedChildren : node.namedChildren.filter(c => c.type !== 'user_name');
+    const patterns = argPatternsOf(args);
+    if (patterns) loc.argPatterns = patterns;
+  }
 
   locSymbols.addLocationRef(nameNode.text.trim(), loc);
 }
