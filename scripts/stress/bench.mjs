@@ -149,7 +149,7 @@ function onMessage(msg) {
     if (msg.error) p?.reject(new Error(msg.error.message)); else p?.resolve(msg.result);
     return;
   }
-  if (msg.method === 'window/logMessage' && msg.params.message.includes('[perf]')) {
+  if (msg.method === 'window/logMessage' && /\[(perf|jump graph)\]/.test(msg.params.message)) {
     perfLines.push(`${elapsed().toFixed(1).padStart(6)}s ${msg.params.message}`);
     console.log(perfLines.at(-1));
   }
@@ -217,6 +217,7 @@ try {
     results.graph = {
       seconds: (Date.now() - started) / 1000,
       nodes: graph.nodes.length, edges: graph.edges.length, unresolved: graph.unresolved.length,
+      possible: graph.edges.filter(e => e.kind === 'possible').length,
       megabytes: JSON.stringify(graph).length / 1e6,
     };
   }
@@ -268,7 +269,7 @@ function finish(code) {
   if (results.readySeconds) console.log(`ready          ${results.readySeconds.toFixed(1)} s`);
   if (heapMb !== undefined) console.log(`heap at end    ${heapMb} MB of ${Math.round(mem.heapLimit / 1048576)} MB`);
   if (results.peakRssMb) console.log(`peak rss       ${results.peakRssMb} MB`);
-  if (results.graph) console.log(`jump graph     ${results.graph.nodes} nodes, ${results.graph.edges} edges, ${results.graph.megabytes.toFixed(1)} MB in ${results.graph.seconds.toFixed(1)} s`);
+  if (results.graph) console.log(`jump graph     ${results.graph.nodes} nodes, ${results.graph.edges} edges (${results.graph.possible} possible), ${results.graph.unresolved} unresolved, ${results.graph.megabytes.toFixed(1)} MB in ${results.graph.seconds.toFixed(1)} s`);
   if (results.edits) console.log(`edits          median ${results.edits.medianMs} ms, max ${results.edits.maxMs} ms (${results.edits.count})`);
   if (results.crashed) console.log(`CRASHED        after ${results.crashed.seconds.toFixed(1)} s${results.crashed.outOfMemory ? ' (heap out of memory)' : ''}`);
 
