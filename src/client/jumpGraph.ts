@@ -183,6 +183,7 @@ class JumpGraphPanel {
   .func { border-color: var(--vscode-charts-purple); border-top-style: dotted; }
   .desc { border-color: var(--vscode-charts-orange); }
   .unresolved { border-color: var(--vscode-errorForeground); border-top-style: dashed; }
+  .possible { border-color: var(--vscode-charts-yellow); border-top-style: dotted; }
   input:not([type]) { color: var(--vscode-input-foreground); background: var(--vscode-input-background);
                       border: 1px solid var(--vscode-input-border, transparent); width: 14em; }
   #status { margin-left: auto; color: var(--vscode-descriptionForeground); white-space: nowrap; }
@@ -206,6 +207,7 @@ class JumpGraphPanel {
   <label><input type="checkbox" data-filter="gosub"><span class="swatch gosub"></span> gosub</label>
   <label><input type="checkbox" data-filter="func"><span class="swatch func"></span> func</label>
   <label><input type="checkbox" data-filter="desc"><span class="swatch desc"></span> desc</label>
+  <label title="Dynamic jumps (gt $next) to the locations their variables are known to name"><input type="checkbox" data-filter="possible"><span class="swatch possible"></span> possible</label>
   <label><input type="checkbox" data-filter="unresolved"><span class="swatch unresolved"></span> unknown target</label>
   <button id="fit" title="Fit the graph to the panel">Fit</button>
   <span id="status"></span>

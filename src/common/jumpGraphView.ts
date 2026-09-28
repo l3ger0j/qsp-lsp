@@ -11,7 +11,7 @@
 export interface JumpGraphData {
   nodes: Array<{ name: string; uri?: string; line?: number; missing?: boolean }>;
   /** `sites` holds the first few places; `siteCount` counts them all. */
-  edges: Array<{ from: string; to: string; callType: CallType; kind: 'exact'; sites: WireSite[]; siteCount: number }>;
+  edges: Array<{ from: string; to: string; callType: CallType; kind: 'exact' | 'possible'; via?: string[]; sites: WireSite[]; siteCount: number }>;
   /** Grouped per location and call type. */
   unresolved: Array<{ from: string; callType: CallType; exprs: string[]; sites: WireSite[]; siteCount: number }>;
 }
@@ -29,9 +29,11 @@ export interface EdgeFilter {
   desc: boolean;
   /** Jumps whose target the analysis can't name, drawn to a "?" node. */
   unresolved: boolean;
+  /** Dynamic jumps (`gt $next`) drawn to the locations their variables' known values name. */
+  possible: boolean;
 }
 
-export const ALL_EDGES: EdgeFilter = { goto: true, gosub: true, func: true, desc: true, unresolved: true };
+export const ALL_EDGES: EdgeFilter = { goto: true, gosub: true, func: true, desc: true, unresolved: true, possible: true };
 
 export interface ViewNode {
   id: string;
@@ -62,11 +64,13 @@ export interface ViewEdge {
   /** Every call type among the jumps this edge stands for. */
   callTypes: CallType[];
   unresolved: boolean;
+  /** A dynamic jump that may go here (see `EdgeFilter.possible`); for a merged edge, all its jumps are. */
+  possible: boolean;
   /** The first few places the jumps are written. */
   sites: JumpSite[];
   /** How many places in all. */
   siteCount: number;
-  /** For an unresolved edge, the target expressions (`$next`, …). */
+  /** For an unresolved or possible edge, the target expressions (`$next`, …). */
   exprs: string[];
 }
 
@@ -171,7 +175,8 @@ export function buildViewGraph(graph: JumpGraphData, opts: ViewOptions): ViewGra
 
   const edges: ViewEdge[] = [];
   for (const e of edgesIn) {
-    if (!opts.filter[e.callType] || hubs.has(e.from)) continue;
+    const possible = e.kind === 'possible';
+    if (!opts.filter[e.callType] || (possible && !opts.filter.possible) || hubs.has(e.from)) continue;
     const hub = hubs.get(e.to);
     if (hub) {
       const from = all.get(e.from);
@@ -182,9 +187,9 @@ export function buildViewGraph(graph: JumpGraphData, opts: ViewOptions): ViewGra
       continue;
     }
     edges.push({
-      id: `${e.from}\u0000${e.to}\u0000${e.callType}`,
-      source: e.from, target: e.to, callType: e.callType, callTypes: [e.callType], unresolved: false,
-      sites: sitesOf(e.from, e.sites), siteCount: e.siteCount, exprs: [],
+      id: `${e.from}\u0000${e.to}\u0000${e.callType}${possible ? '\u0000~' : ''}`,
+      source: e.from, target: e.to, callType: e.callType, callTypes: [e.callType], unresolved: false, possible,
+      sites: sitesOf(e.from, e.sites), siteCount: e.siteCount, exprs: e.via ?? [],
     });
   }
   if (opts.filter.unresolved) {
@@ -196,7 +201,7 @@ export function buildViewGraph(graph: JumpGraphData, opts: ViewOptions): ViewGra
       const target = unknownId(u.from);
       edges.push({
         id: `${u.from}\u0000${u.callType}\u0000?`, source: u.from, target,
-        callType: u.callType, callTypes: [u.callType], unresolved: true, sites: sitesOf(u.from, u.sites), siteCount: u.siteCount, exprs: u.exprs,
+        callType: u.callType, callTypes: [u.callType], unresolved: true, possible: false, sites: sitesOf(u.from, u.sites), siteCount: u.siteCount, exprs: u.exprs,
       });
       if (!all.has(target)) {
         all.set(target, { id: target, label: '?', kind: 'unknown', isStart: false, isFocus: false, unreachable: false });
@@ -291,7 +296,7 @@ export function foldByFile(view: ViewGraph, expanded: ReadonlySet<string>): View
     const key = `${source}\u0000${target}`;
     let edge = edges.get(key);
     if (!edge) {
-      edge = { id: key, source, target, callType: e.callType, callTypes: [], unresolved: e.unresolved, sites: [], siteCount: 0, exprs: [] };
+      edge = { id: key, source, target, callType: e.callType, callTypes: [], unresolved: e.unresolved, possible: e.possible, sites: [], siteCount: 0, exprs: [] };
       edges.set(key, edge);
       if (e.unresolved && !unknown.has(target)) {
         unknown.add(target);
@@ -299,6 +304,7 @@ export function foldByFile(view: ViewGraph, expanded: ReadonlySet<string>): View
       }
     }
     for (const t of e.callTypes) if (!edge.callTypes.includes(t)) edge.callTypes.push(t);
+    edge.possible &&= e.possible;
     // A few examples are enough for the tooltip and the click.
     if (edge.sites.length < 3) edge.sites.push(...e.sites.slice(0, 3 - edge.sites.length));
     edge.siteCount += e.siteCount;

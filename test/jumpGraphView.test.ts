@@ -142,6 +142,41 @@ describe('buildViewGraph', () => {
   });
 });
 
+describe('possible edges', () => {
+  // start -> hall exactly; start may go to orphan through `gt $next`.
+  const withPossible: JumpGraphData = {
+    ...graph,
+    edges: [
+      ...graph.edges,
+      { from: 'start', to: 'orphan', callType: 'goto', kind: 'possible', via: ['$next'], siteCount: 1, sites: [site(2)] },
+    ],
+  };
+
+  it('draws them apart from exact edges, with the expressions they come through', () => {
+    const g = buildViewGraph(withPossible, { depth: 'all', filter: ALL_EDGES, startFileUri: M });
+    const e = g.edges.find(x => x.target === 'orphan')!;
+    expect(e).toMatchObject({ possible: true, exprs: ['$next'], unresolved: false });
+    expect(g.edges.filter(x => !x.possible).every(x => !x.id.endsWith('~'))).toBe(true);
+    // Something may jump there: not unreachable any more.
+    expect(g.nodes.find(n => n.id === 'orphan')!.unreachable).toBe(false);
+  });
+
+  it('can be hidden, without changing reachability', () => {
+    const g = buildViewGraph(withPossible, { depth: 'all', filter: { ...ALL_EDGES, possible: false }, startFileUri: M });
+    expect(g.edges.some(x => x.possible)).toBe(false);
+    expect(g.nodes.find(n => n.id === 'orphan')!.unreachable).toBe(false);
+  });
+
+  it('stay possible when folded only if every jump behind them is', () => {
+    const g = buildViewGraph(withPossible, { depth: 'all', filter: ALL_EDGES, startFileUri: M });
+    const lib = 'file:///g/lib.qsps';
+    const folded = foldByFile(g, new Set());
+    expect(folded.edges.find(e => e.target === fileNodeId(lib))!.possible).toBe(false);
+    const onlyPossible = foldByFile(buildViewGraph({ ...withPossible, edges: withPossible.edges.filter(e => e.to !== 'util') }, { depth: 'all', filter: ALL_EDGES, startFileUri: M }), new Set([M]));
+    expect(onlyPossible.edges.find(e => e.target === 'orphan')!.possible).toBe(true);
+  });
+});
+
 describe('foldByFile', () => {
   const L = 'file:///g/lib.qsps';
   const view = buildViewGraph(graph, { depth: 'all', filter: ALL_EDGES, startFileUri: M });

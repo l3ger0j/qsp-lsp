@@ -33,9 +33,11 @@ cytoscape.use(dagre);
 const vscode = acquireVsCodeApi();
 
 // Saved state from an older version of the panel lacks the newer fields.
+const saved = vscode.getState();
 const state: JumpGraphViewState = {
-  mode: 'around', depth: 2, followCursor: true, filter: { ...ALL_EDGES }, hubThreshold: 20, expandedFiles: [],
-  ...vscode.getState(),
+  mode: 'around', depth: 2, followCursor: true, hubThreshold: 20, expandedFiles: [],
+  ...saved,
+  filter: { ...ALL_EDGES, ...saved?.filter },
 };
 let graph: JumpGraphData = { nodes: [], edges: [], unresolved: [] };
 let startFileUri: string | undefined;
@@ -98,6 +100,7 @@ function applyStyle(): void {
     gosub: themeColor('--vscode-charts-green', '#89d185'),
     func: themeColor('--vscode-charts-purple', '#b180d7'),
     desc: themeColor('--vscode-charts-orange', '#d18616'),
+    possible: themeColor('--vscode-charts-yellow', '#cca700'),
   };
   cy.style([
     {
@@ -136,6 +139,10 @@ function applyStyle(): void {
     { selector: 'edge.desc', style: { 'width': 1, 'line-color': colors.desc, 'target-arrow-color': colors.desc } },
     { selector: 'edge.mixed', style: { 'line-color': muted, 'target-arrow-color': muted } },
     { selector: 'edge.unresolved', style: { 'line-style': 'dashed', 'line-color': error, 'target-arrow-color': error } },
+    {
+      selector: 'edge.possible',
+      style: { 'line-style': 'dashed', 'line-dash-pattern': [2, 3], 'line-color': colors.possible, 'target-arrow-color': colors.possible, 'target-arrow-shape': 'vee' },
+    },
     {
       selector: 'edge.counted',
       style: {
@@ -204,7 +211,7 @@ function edgeElement(e: ViewEdge, extra = ''): cytoscape.ElementDefinition {
       count: e.siteCount, width: Math.min(6, 1 + Math.log2(e.siteCount)),
     },
     classes: [
-      e.callTypes.length > 1 ? 'mixed' : e.callType, e.unresolved ? 'unresolved' : '',
+      e.callTypes.length > 1 ? 'mixed' : e.callType, e.unresolved ? 'unresolved' : '', e.possible ? 'possible' : '',
       state.mode === 'files' && e.siteCount > 1 ? 'counted' : '', extra,
     ].join(' '),
   };
@@ -441,7 +448,8 @@ function describeEdge(e: ViewEdge): string {
   const target = e.unresolved ? e.exprs.join(', ') : label(e.target);
   const sites = e.sites.map(s => `${place(s.uri, s.line)} ${s.text}`).join(' · ');
   const more = e.siteCount > e.sites.length ? ` · +${e.siteCount - e.sites.length} more` : '';
-  return `${e.callTypes.join('/')}: ${label(e.source)} → ${target} — ${sites}${more}`;
+  const kind = e.possible ? `possible ${e.callTypes.join('/')} via ${e.exprs.join(', ')}` : e.callTypes.join('/');
+  return `${kind}: ${label(e.source)} → ${target} — ${sites}${more}`;
 }
 
 // Fade everything but the hovered location and its neighbours.
