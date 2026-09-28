@@ -2,6 +2,13 @@
 
 Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Visual Studio Code, powered by a Language Server Protocol (LSP) server and [tree-sitter](https://tree-sitter.github.io/) grammar.
 
+## Installation
+
+- **VS Code Marketplace** / **Open VSX**: search for *QSP Language Support* in the Extensions view.
+- **From a release**: download `qsp-lsp-<version>.vsix` from [GitHub Releases](https://github.com/QSPFoundation/qsp-lsp/releases) and run **Extensions: Install from VSIX…**.
+
+Requires VS Code 1.85 or later. On [vscode.dev](https://vscode.dev) the extension runs in a lighter mode without the tree-sitter parser. What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
+
 ## Features
 
 ### Syntax Highlighting
@@ -295,6 +302,8 @@ Debug configurations are in `.vscode/launch.json` (open this repository in VS Co
 - **Attach to Language Server** — attaches to the server on port 6009; **Extension + Language Server** starts both.
 - **UI Tests** — runs `test/ui` under the debugger.
 
+Before a pull request, run `npm run check` (what CI runs: grammar tests, bundles, type-check, tests, lint, third-party notices); `npm run release` also packages the VSIX. The architecture, invariants and conventions of the code base are in [CLAUDE.md](CLAUDE.md), planned work in [TODO.md](TODO.md).
+
 ## License
 
-MPL-2.0
+[MPL-2.0](LICENSE). The extension bundles third-party libraries under their own licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -16,7 +16,8 @@
 #   6. Type-check (tsc --noEmit)
 #   7. Run vitest
 #   8. Lint
-#   9. Package the VSIX
+#   9. Write THIRD_PARTY_NOTICES.md (--check: fail if it is out of date)
+#  10. Package the VSIX
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -123,6 +124,16 @@ ok "Tests passed"
 step "Linting"
 npx eslint
 ok "Lint passed"
+
+# The licenses of what the bundles contain; CI fails when the committed
+# file no longer matches them (e.g. after a dependency update).
+step "Third-party notices"
+if $CHECK_ONLY; then
+  node scripts/thirdPartyNotices.mjs --check
+else
+  node scripts/thirdPartyNotices.mjs
+fi
+ok "Notices OK"
 
 if $CHECK_ONLY; then
   green ""

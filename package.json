@@ -1,18 +1,18 @@
 {
   "name": "qsp-lsp",
   "displayName": "QSP Language Support",
-  "description": "Language server for QSP (Quest Soft Player) game files",
-  "version": "0.2.0",
+  "description": "QSP (Quest Soft Player) game development: IntelliSense, diagnostics, navigation, a jump graph of locations, building .qsp games and an MCP server for AI agents",
+  "version": "0.3.0",
   "publisher": "qsp",
   "license": "MPL-2.0",
   "icon": "icons/qsp-logo.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/qsp/qsp-lsp"
+    "url": "https://github.com/QSPFoundation/qsp-lsp.git"
   },
-  "homepage": "https://github.com/qsp/qsp-lsp#readme",
+  "homepage": "https://github.com/QSPFoundation/qsp-lsp#readme",
   "bugs": {
-    "url": "https://github.com/qsp/qsp-lsp/issues"
+    "url": "https://github.com/QSPFoundation/qsp-lsp/issues"
   },
   "engines": {
     "vscode": "^1.85.0"
@@ -25,8 +25,26 @@
     }
   },
   "categories": [
-    "Programming Languages"
+    "Programming Languages",
+    "Linters",
+    "Snippets",
+    "Visualization"
   ],
+  "keywords": [
+    "qsp",
+    "quest soft player",
+    "interactive fiction",
+    "text quest",
+    "text adventure",
+    "game development",
+    "language server",
+    "txt2gam"
+  ],
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
+  "pricing": "Free",
   "activationEvents": [
     "onWebviewPanel:qsp.jumpGraph"
   ],

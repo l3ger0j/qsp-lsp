@@ -116,6 +116,7 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
 | Stress game (synthetic QSP project) | `npm run stress:gen -- --out <dir> [--locations 1000] [--chars 26000] [--files 1] [--shape report.json]` |
 | Load test the server on a project | `npm run build:server:node && npm run bench:stress -- <dir> [--graph] [--edits 5] [--json out.json]` |
 | Everything CI runs (no packaging) | `npm run check` (= `scripts/build.sh --check`) |
+| Third-party notices (after a dependency change; CI checks it) | `node scripts/thirdPartyNotices.mjs` |
 | Package VSIX | `npm run release` (optional version: `bash scripts/build.sh 1.2.3`) |
 
 Notes:
