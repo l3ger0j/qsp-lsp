@@ -97,7 +97,12 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
    e.g. the `parser.reset()` note in `treeSitter.ts` (web-tree-sitter resumes a halted parse unless reset).
 
 ❌ Don't: leave changelog notes (authors, dates, "fixed by X") or commented-out code without a reason.
-✅ Do: put history in commit messages; a TODO/FIXME must say why (and link an issue if there is one).
+✅ Do: put history in the commit subject and CHANGELOG.md; a TODO/FIXME must say why (and link an issue if there is one).
+
+**Commit messages** (the maintainer's rule: a tidy, one-line history)
+❌ Don't: write a commit body, bullet lists or trailers (`Co-Authored-By:` and the like), or merge commits into `unstable`/`main`.
+✅ Do: one line, imperative, about 50–72 characters (`Add the Jump Graph panel`); explain the change in the PR
+   description or CHANGELOG.md instead. Rebase instead of merging (see **Commits**).
 
 ## Build & Verification Commands
 
@@ -153,6 +158,15 @@ Content rules are in **Critical Invariants → Comments**. Style:
 - `/** */` JSDoc on exported functions, classes and public interface members. Internal helpers get `//` or nothing,
   unless the logic is non-obvious. Applies to new code only — existing JSDoc on internal helpers stays.
 - `//` for single-line notes, not `/* */`. No comment directly above `return` unless it explains the returned expression.
+
+## Commits
+
+- **Subject only.** One line in the imperative (`Fix …`, `Add …`, `Keep …`), no body, no trailers, no attribution lines.
+  What the change does in detail belongs in the PR description; what users notice belongs in CHANGELOG.md.
+- **One logical change per commit**, building and passing `npm run check` on its own.
+- **Linear history.** Update a branch with `git rebase`, not `git merge`; integrate it by fast-forward or rebase,
+  never with a merge commit.
+- Commit only when asked; never push (the maintainer pushes and tags releases).
 
 ## Visual verification
 
