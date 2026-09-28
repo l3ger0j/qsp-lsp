@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(/tree-sitter-qsp/src/parser.c)",
+      "Edit(/tree-sitter-qsp/src/grammar.json)",
+      "Edit(/tree-sitter-qsp/src/node-types.json)",
+      "Edit(/tree-sitter-qsp/src/tree_sitter/**)",
+      "Edit(/tree-sitter-qsp/**/*.wasm)",
+      "Read(/tree-sitter-qsp/src/parser.c)",
+
+      "Edit(/out/**)",
+      "Edit(/vendor/**)",
+      "Edit(/node_modules/**)",
+      "Edit(/package-lock.json)",
+
+      "Read(/.env)",
+      "Read(/.env.*)",
+      "Read(~/.npmrc)",
+      "Read(~/.vsce)",
+
+      "Bash(npm publish:*)",
+      "Bash(npm run publish:*)",
+      "Bash(npx @vscode/vsce publish:*)",
+      "Bash(npx tree-sitter init:*)",
+      "Bash(git push:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean:*)",
+      "Bash(rm -rf:*)"
+    ]
+  }
+}

@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { QspTreeSitterParser, extractSymbols } from '../src/parser/treeSitter';
-import { extractEmbeddedExec, decodeDoubledQuotes } from '../src/parser/embeddedExec';
+import { extractEmbeddedExec, decodeDoubledQuotes, EXEC_LINK_RE } from '../src/parser/embeddedExec';
 import type { DocumentSymbols } from '../src/parser/symbolTable';
 import { initParser } from './testHelpers';
 import { buildFileAggregates } from '../src/server/aggregation';
@@ -2081,3 +2081,26 @@ pl '<a href="exec:local x = 3">c</a>'
     });
   });
 });
+
+// EXEC_LINK_RE runs on every string literal containing `exec:`; its
+// repeated parts are bounded so crafted or half-typed input stays linear.
+describe('EXEC_LINK_RE', () => {
+  const bodies = (s: string) => [...s.matchAll(EXEC_LINK_RE)].map(m => m[2]);
+
+  it('stays fast on many links that are never closed with `>`', () => {
+    const start = performance.now();
+    expect(bodies('<a href="exec:x" '.repeat(300))).toEqual([]);
+    expect(bodies('<a x '.repeat(32_000))).toEqual([]);
+    expect(performance.now() - start).toBeLessThan(500);
+  });
+
+  it('allows `>` in the body and `<<$var>>` after href', () => {
+    expect(bodies(`<a href="exec:if x>3: pl 1">X</a> <a href="exec:pl 1" title="<<$t>>">Y</a>`))
+      .toEqual(['if x>3: pl 1', 'pl 1']);
+  });
+
+  it('ends the body at its own closing quote, not a later one', () => {
+    expect(bodies(`<a href="exec:gt 'a'" class="c">A</a><a href='exec:gt "b"'>B</a>`)).toEqual([`gt 'a'`, 'gt "b"']);
+  });
+});
+

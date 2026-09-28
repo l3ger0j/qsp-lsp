@@ -7,3 +7,19 @@ tree-sitter-qsp/src/*
 !tree-sitter-qsp/src/scanner.c
 tree-sitter-qsp/*.wasm
 vendor/
+
+# tree-sitter: native build artifacts & debug output
+tree-sitter-qsp/*.so
+tree-sitter-qsp/*.dylib
+tree-sitter-qsp/*.dll
+tree-sitter-qsp/log.html
+
+# secrets
+.env
+.env.*
+
+# Claude Code local overrides
+.claude/settings.local.json
+
+# @vscode/test-cli: downloaded VS Code builds
+.vscode-test/

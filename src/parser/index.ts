@@ -4,7 +4,7 @@ export { ALL_BUILTINS, QSP_FUNCTIONS, QSP_KEYWORDS, QSP_STATEMENTS, QSP_VARIABLE
 export type { BuiltinInfo } from './builtins';
 export { DocumentSymbols, LocationSymbols, QspSymbolKind } from './symbolTable';
 export type { PrefixWarning, ArgCountWarning, DeprecationWarning, QspSymbol, SymbolLocation } from './symbolTable';
-export { QspTreeSitterParser, computeTreeEdit } from './treeSitter';
+export { QspTreeSitterParser, computeTreeEdit, fullParseTimeoutMicros } from './treeSitter';
 export type { WasmLoader, WasmDirProvider } from './treeSitter';
 export { extractErrors, hasStructuralErrors } from './extractErrors';
 export type { SyntaxError } from './extractErrors';

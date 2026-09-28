@@ -21,15 +21,19 @@ import {
   buildLocationIndex,
   DocumentSymbols,
   LocationSymbols,
+  extractErrors,
   extractSymbols,
+  fullParseTimeoutMicros,
   QspSymbolKind,
   type QspSymbol,
   type SymbolLocation,
   type LocationEntry,
   type QspTreeSitterParser,
+  type SyntaxError,
 } from '../parser';
 import {
   buildRegexSymbols,
+  extractLocationSymbolsFromText,
 } from './regexFallback';
 import {
   type ProjectAggregates,
@@ -40,7 +44,28 @@ import {
 import type { DiagnosticSettings } from './diagnostics';
 import type { DocumentState } from './lspFeatures';
 import { computeDiagnostics } from './diagnostics';
-import { stripBom, QSP_FILE_EXTENSIONS, safeSendDiagnostics } from './serverUtils';
+import { PerfLog, formatChars } from './perfLog';
+import { stripBom, makeLocSymLoc, shiftErrors, QSP_FILE_EXTENSIONS, safeSendDiagnostics, safeConsole, type FsProvider } from './serverUtils';
+
+/**
+ * Files at or above this size are parsed per-location instead of as one
+ * whole-document tree-sitter tree. Mirrors `PER_LOCATION_BYTE_THRESHOLD`
+ * in common.ts (kept as a separate constant because project-mode files
+ * don't need the incremental-retained-tree machinery that threshold also
+ * gates there — project files aren't edited in place). A single
+ * `parseOnce()` call on a multi-MB file can still take seconds even
+ * though it's individually timeout-bounded; splitting by location keeps
+ * each parse in the low-single-digit-millisecond range, the same reason
+ * common.ts avoids one huge tree for large open documents.
+ */
+const PROJECT_PER_LOCATION_BYTE_THRESHOLD = 500_000; // 500 KB
+
+/** Yield to the event loop between files during a bulk scan, so pending
+ *  LSP requests (hover, completion, …) get a turn instead of queuing
+ *  behind a long run of synchronous parses. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
 
 // ──────────────────────────────────────────────────────────────────────
 
@@ -61,6 +86,16 @@ export class ProjectModeService {
    */
   embeddedExecEnabled = true;
 
+  /** Times the phases below; the server replaces it with its own. */
+  perf = new PerfLog(() => {});
+  /** True when the server is short of memory (see memoryGuard.ts). */
+  shouldStop: (() => boolean) | undefined;
+  /** Told which file's per-location analysis is running, for the crash recorder. */
+  tracking: {
+    /** The per-location analysis running now, or undefined when it ends. */
+    progress: (state: { uri: string; locationIndex: readonly LocationEntry[]; parsedLocations: number } | undefined) => void;
+  } | undefined;
+
   constructor(
     private connection: Connection,
     private documents: TextDocuments<TextDocument>,
@@ -68,41 +103,62 @@ export class ProjectModeService {
     private tsParser: QspTreeSitterParser,
   ) {}
 
+  // A debounced/async operation can complete after the connection is
+  // closed/disposed (test teardown, client disconnect) — connection.console.*
+  // throws synchronously in that case, so logging goes through this wrapper.
+  private get log(): ReturnType<typeof safeConsole> {
+    return safeConsole(this.connection);
+  }
+
   // ── Lifecycle ───────────────────────────────────────────────────────
 
   /**
    * Scan workspace folders for QSP source files and populate
    * documentStates for non-open files by reading them from disk.
+   *
+   * Async and cooperative: `fsProvider.findFiles` is an async iterable
+   * that yields to the event loop between directories, and each file is
+   * `await`-read individually, so a large workspace scan no longer
+   * blocks every other LSP request (hover, completion, …) for as long
+   * as the whole scan takes. See the FsProvider doc comment for why.
    */
-  init(
-    fsProvider: {
-      readFile(filePath: string, encoding?: string): string;
-      findFiles(dir: string, extensions: string[]): string[];
-      pathToUri(filePath: string): string;
-      uriToPath(uri: string): string;
-    },
+  async init(
+    // Undefined in the browser: only open documents make up the project there.
+    fsProvider: FsProvider | undefined,
     fileEncoding: string,
     collectCallTypes: () => Map<string, { name: string; types: Set<string> }>,
     collectPeerDocs: (ownUri: string) => DocumentSymbols[],
     diagnosticsSettings: DiagnosticSettings,
-  ): void {
-    this.connection.console.log('[QSP] Initializing project mode...');
+    onFileFound?: (filesSoFar: number) => void,
+  ): Promise<void> {
+    this.log.log('[QSP] Initializing project mode...');
     this.projectFileUris.clear();
 
-    // Discover all QSP files in workspace folders
-    for (const folder of this.workspaceFolders) {
-      const files = fsProvider.findFiles(folder, QSP_FILE_EXTENSIONS);
-      for (const filePath of files) {
-        const uri = fsProvider.pathToUri(filePath);
-        this.projectFileUris.add(uri);
+    // Discover all QSP files in workspace folders. `findFiles` already
+    // yields between directories; this counter adds an extra yield every
+    // few files so a single directory holding thousands of files can't
+    // monopolize the event loop between those directory-level yields.
+    let processedSinceYield = 0;
+    if (fsProvider) {
+      for (const folder of this.workspaceFolders) {
+        for await (const filePath of fsProvider.findFiles(folder, QSP_FILE_EXTENSIONS)) {
+          const uri = fsProvider.pathToUri(filePath);
+          this.projectFileUris.add(uri);
+          onFileFound?.(this.projectFileUris.size);
 
-        // If not already open in editor, read from disk and analyze
-        if (!this.documents.get(uri)) {
-          try {
-            const text = fsProvider.readFile(filePath, fileEncoding);
-            this.analyzeFile(uri, text);
-          } catch (e) {
-            this.connection.console.error(`[QSP] Failed to read project file ${filePath}: ${e}`);
+          // If not already open in editor, read from disk and analyze
+          if (!this.documents.get(uri)) {
+            try {
+              const text = await fsProvider.readFile(filePath, fileEncoding);
+              this.analyzeFile(uri, text);
+            } catch (e) {
+              this.log.error(`[QSP] Failed to read project file ${filePath}: ${e}`);
+            }
+          }
+
+          if (++processedSinceYield >= 20) {
+            processedSinceYield = 0;
+            await yieldToEventLoop();
           }
         }
       }
@@ -116,14 +172,14 @@ export class ProjectModeService {
     // Build aggregates and re-diagnose everything
     this.rebuildAndReanalyzeAll(diagnosticsSettings, collectCallTypes, collectPeerDocs);
 
-    this.connection.console.log(
+    this.log.log(
       `[QSP] Project mode initialized with ${this.projectFileUris.size} files`,
     );
   }
 
   /** Tear down project mode: clear non-open file states, clear aggregates. */
   teardown(): void {
-    this.connection.console.log('[QSP] Tearing down project mode');
+    this.log.log('[QSP] Tearing down project mode');
 
     // Clear diagnostics for non-open files
     for (const uri of this.projectFileUris) {
@@ -142,30 +198,97 @@ export class ProjectModeService {
    * Creates a DocumentState from the raw text.
    */
   analyzeFile(uri: string, text: string): void {
+    this.perf.phase('project file analysis', () => this.analyzeFileNow(uri, text), () => formatChars(text.length));
+  }
+
+  private analyzeFileNow(uri: string, text: string): void {
     const locationIndex = buildLocationIndex(text);
     let symbols: DocumentSymbols;
+    // Kept on the state because the tree is freed here: without them a
+    // syntax error in a closed file would show only once it is opened.
+    let syntaxErrors: SyntaxError[] | undefined;
 
-    if (this.tsParser.isReady) {
-      const tree = this.tsParser.parseOnce(text);
-      if (tree) {
-        const result = extractSymbols(
-          tree, uri, undefined, undefined,
-          this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
-        );
-        symbols = result.symbols;
-        tree.delete();
-      } else {
-        symbols = buildRegexSymbols(uri, locationIndex, text);
-      }
-    } else {
+    if (!this.tsParser.isReady) {
       symbols = buildRegexSymbols(uri, locationIndex, text);
+    } else if (text.length >= PROJECT_PER_LOCATION_BYTE_THRESHOLD) {
+      syntaxErrors = [];
+      symbols = this.analyzePerLocation(uri, text, locationIndex, syntaxErrors);
+    } else {
+      const tree = this.perf.step('parse', () => this.tsParser.parseOnce(text, fullParseTimeoutMicros(text.length)));
+      if (tree) {
+        try {
+          symbols = this.perf.step('symbols', () => extractSymbols(
+            tree, uri, undefined, undefined,
+            this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
+          ).symbols);
+          syntaxErrors = this.perf.step('errors', () => extractErrors(tree));
+        } finally {
+          tree.delete();
+        }
+      } else {
+        syntaxErrors = [];
+        symbols = this.analyzePerLocation(uri, text, locationIndex, syntaxErrors);
+      }
     }
 
     this.documentStates.set(uri, {
       locationIndex,
       symbols,
       cachedSemanticTokens: undefined,
+      syntaxErrors,
     });
+  }
+
+  // Large project files, and files whose whole-file parse timed out, are
+  // parsed one location at a time. See PROJECT_PER_LOCATION_BYTE_THRESHOLD.
+  private analyzePerLocation(
+    uri: string,
+    text: string,
+    locationIndex: LocationEntry[],
+    syntaxErrors: SyntaxError[],
+  ): DocumentSymbols {
+    const symbols = new DocumentSymbols(uri);
+    const progress = { uri, locationIndex, parsedLocations: 0 };
+    this.tracking?.progress(progress);
+    for (const [i, loc] of locationIndex.entries()) {
+      progress.parsedLocations++;
+      this.perf.atLocation(i);
+      const locText = text.slice(loc.startOffset, loc.endOffset);
+      const locLoc = makeLocSymLoc(uri, text, loc);
+      const tree = this.perf.step('parse', () => this.tsParser.parseOnce(locText));
+      if (tree) {
+        let result: ReturnType<typeof extractSymbols>;
+        try {
+          result = this.perf.step('symbols', () => extractSymbols(
+            tree, uri, undefined, undefined,
+            this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
+          ));
+          this.perf.step('errors', () => shiftErrors(extractErrors(tree), loc.startLine, syntaxErrors));
+        } finally {
+          tree.delete();
+        }
+        // extractSymbols wraps the location in a DocumentSymbols with
+        // one entry — pull out its LocationSymbols (same pattern as
+        // common.ts's parseLocationBlock).
+        let locSymbols: LocationSymbols | undefined;
+        for (const [, ls] of result.symbols.locations) { locSymbols = ls; break; }
+        if (locSymbols) {
+          const found = locSymbols;
+          this.perf.step('copy into file', () => symbols.addLocationFrom(loc.name, locLoc, found, loc.startLine));
+        } else {
+          const empty = symbols.addLocation(loc.name, locLoc);
+          empty.hasErrors = true;
+        }
+      } else {
+        // Tree-sitter failed (timeout) for this one location — fall
+        // back to regex extraction for just that location.
+        const locSymbols = symbols.addLocation(loc.name, locLoc);
+        extractLocationSymbolsFromText(text, loc, locSymbols, uri);
+      }
+    }
+    this.tracking?.progress(undefined);
+    symbols.rebuildGlobalBindings();
+    return symbols;
   }
 
   // ── Aggregate management ────────────────────────────────────────────
@@ -255,7 +378,7 @@ export class ProjectModeService {
           allLocs.push({ locName: locSyms.locationName, locSyms, uri });
         }
       }
-      buildPropagatedLocals(allLocs, agg);
+      buildPropagatedLocals(allLocs, agg, this.shouldStop);
     }
 
     // Build the flat map once (used by computeDiagnostics)
@@ -280,8 +403,9 @@ export class ProjectModeService {
     collectCallTypes: () => Map<string, { name: string; types: Set<string> }>,
     collectPeerDocs: (ownUri: string) => DocumentSymbols[],
     getDoc: (uri: string) => TextDocument | undefined,
-  ): void {
-    if (!this.projectAggregates) return;
+  ): number {
+    if (!this.projectAggregates) return 0;
+    let published = 0;
 
     const callTypes = this.projectAggregates.callTypesPerTarget ?? collectCallTypes();
 
@@ -298,13 +422,16 @@ export class ProjectModeService {
         this.tsParser,
         callTypes,
         state.symbols,
-        undefined,
+        // An open document's errors come from its tree; a closed one has none.
+        doc ? undefined : state.syntaxErrors,
         this.projectAggregates,
         undefined,
         collectPeerDocs(uri),
       );
+      published += diagnostics.length;
       safeSendDiagnostics(this.connection, { uri, diagnostics });
     }
+    return published;
   }
 
   /** Convenience: rebuild aggregates then re-diagnose everything. */
@@ -313,78 +440,94 @@ export class ProjectModeService {
     collectCallTypes: () => Map<string, { name: string; types: Set<string> }>,
     collectPeerDocs: (ownUri: string) => DocumentSymbols[],
   ): void {
-    this.rebuildAggregates(collectCallTypes);
-    this.reanalyzeAll(
+    this.perf.phase('project aggregates', () => this.rebuildAggregates(collectCallTypes), () => `${this.projectFileUris.size} files`);
+    this.perf.phase('project diagnostics', () => this.reanalyzeAll(
       diagnosticsSettings, collectCallTypes, collectPeerDocs,
       uri => this.documents.get(uri),
-    );
+    ), (n) => `${this.projectFileUris.size} files, ${n} diagnostics`);
   }
 
   // ── File watcher handling ───────────────────────────────────────────
 
   /**
-   * Handle a file change from the file watcher (project mode).
-   * Re-reads the file from disk if not open in editor, rebuilds
-   * aggregates, and re-diagnoses all project files.
+   * Apply a single file-watcher change to project state, without
+   * rebuilding aggregates or re-diagnosing. Callers batch multiple
+   * changes and rebuild once — see `handleWatchedFileChanges`.
    */
-  handleFileChange(
+  private async applyFileChange(
     uri: string,
     changeType: number,
-    fsProvider: {
-      readFile(filePath: string, encoding?: string): string;
-      uriToPath(uri: string): string;
-    } | undefined,
+    fsProvider: FsProvider | undefined,
     fileEncoding: string,
-    diagnosticsSettings: DiagnosticSettings,
-    collectCallTypes: () => Map<string, { name: string; types: Set<string> }>,
-    collectPeerDocs: (ownUri: string) => DocumentSymbols[],
-  ): void {
+  ): Promise<void> {
     if (changeType === FileChangeType.Deleted) {
       const label = uri.split('/').pop() ?? uri;
-      this.connection.console.log(`[QSP] File deleted: ${label}`);
+      this.log.log(`[QSP] File deleted: ${label}`);
       // File deleted — remove from project
       this.projectFileUris.delete(uri);
       if (!this.documents.get(uri)) {
         safeSendDiagnostics(this.connection, { uri, diagnostics: [] });
         this.documentStates.delete(uri);
       }
-    } else {
-      // Created or changed
-      const label = uri.split('/').pop() ?? uri;
-      this.connection.console.log(`[QSP] File ${changeType === FileChangeType.Created ? 'created' : 'changed'}: ${label}`);
-      this.projectFileUris.add(uri);
-
-      const openDoc = this.documents.get(uri);
-      if (!openDoc && fsProvider) {
-        // File not open in editor — re-read from disk
-        try {
-          const filePath = fsProvider.uriToPath(uri);
-          const text = fsProvider.readFile(filePath, fileEncoding);
-          this.analyzeFile(uri, text);
-        } catch (e) {
-          const filePath = uri.split('/').pop() ?? uri;
-          this.connection.console.error(`[QSP] Failed to read project file ${filePath}: ${e}`);
-          return;
-        }
-      } else if (openDoc) {
-        // File IS open in editor.  The watcher fires as soon as the file
-        // is saved to disk, which may be BEFORE the 150 ms fast-tier
-        // debounce has had a chance to call analyzeDocumentFast and
-        // refresh documentStates.  If we call rebuildProjectAggregates()
-        // below with the stale pre-debounce documentState, cross-file
-        // duplicate detection will use the old locationIndex and report
-        // false positives.  Refresh the locationIndex from the open
-        // document's current content right now so the aggregate rebuild
-        // is accurate.
-        const text = stripBom(openDoc.getText());
-        const locationIndex = buildLocationIndex(text);
-        const prevState = this.documentStates.get(uri);
-        if (prevState) {
-          this.documentStates.set(uri, { ...prevState, locationIndex });
-        }
-      }
+      return;
     }
 
+    // Created or changed
+    const label = uri.split('/').pop() ?? uri;
+    this.log.log(`[QSP] File ${changeType === FileChangeType.Created ? 'created' : 'changed'}: ${label}`);
+    this.projectFileUris.add(uri);
+
+    const openDoc = this.documents.get(uri);
+    if (!openDoc && fsProvider) {
+      // File not open in editor — re-read from disk
+      try {
+        const filePath = fsProvider.uriToPath(uri);
+        const text = await fsProvider.readFile(filePath, fileEncoding);
+        this.analyzeFile(uri, text);
+      } catch (e) {
+        const filePath = uri.split('/').pop() ?? uri;
+        this.log.error(`[QSP] Failed to read project file ${filePath}: ${e}`);
+      }
+    } else if (openDoc) {
+      // File IS open in editor.  The watcher fires as soon as the file
+      // is saved to disk, which may be BEFORE the 150 ms fast-tier
+      // debounce has had a chance to call analyzeDocumentFast and
+      // refresh documentStates.  If we call rebuildProjectAggregates()
+      // below with the stale pre-debounce documentState, cross-file
+      // duplicate detection will use the old locationIndex and report
+      // false positives.  Refresh the locationIndex from the open
+      // document's current content right now so the aggregate rebuild
+      // is accurate.
+      const text = stripBom(openDoc.getText());
+      const locationIndex = buildLocationIndex(text);
+      const prevState = this.documentStates.get(uri);
+      if (prevState) {
+        this.documentStates.set(uri, { ...prevState, locationIndex });
+      }
+    }
+  }
+
+  /**
+   * Handle a batch of file-watcher changes (project mode).
+   *
+   * Applies every change first (re-reading changed/created files from
+   * disk where needed) and rebuilds aggregates + re-diagnoses ONCE at
+   * the end, rather than once per change. A single external event (e.g.
+   * `git checkout` touching hundreds of files, or a workspace-wide
+   * find-and-replace) would otherwise trigger one full project rebuild
+   * per changed file.
+   */
+  async handleWatchedFileChanges(
+    changes: readonly { uri: string; type: number }[],
+    fsProvider: FsProvider | undefined,
+    fileEncoding: string,
+    diagnosticsSettings: DiagnosticSettings,
+    collectCallTypes: () => Map<string, { name: string; types: Set<string> }>,
+    collectPeerDocs: (ownUri: string) => DocumentSymbols[],
+  ): Promise<void> {
+    for (const change of changes) {
+      await this.applyFileChange(change.uri, change.type, fsProvider, fileEncoding);
+    }
     this.rebuildAndReanalyzeAll(diagnosticsSettings, collectCallTypes, collectPeerDocs);
   }
 }

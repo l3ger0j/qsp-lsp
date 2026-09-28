@@ -139,8 +139,11 @@ export function checkFunctionNameAsLvalue(tree: Parser.Tree): SyntaxError[] {
     if (isIntp) interpolationDepth--;
   }
 
-  visit();
-  cursor.delete();
+  try {
+    visit();
+  } finally {
+    cursor.delete();
+  }
   return errors;
 }
 
@@ -214,8 +217,11 @@ export function checkReservedWordMisuse(tree: Parser.Tree): SyntaxError[] {
     }
   }
 
-  visit();
-  cursor.delete();
+  try {
+    visit();
+  } finally {
+    cursor.delete();
+  }
   return errors;
 }
 
@@ -311,7 +317,10 @@ export function checkPrefixWhitespace(tree: Parser.Tree): SyntaxError[] {
     if (isErr) errorDepth--;
   }
 
-  visit();
-  cursor.delete();
+  try {
+    visit();
+  } finally {
+    cursor.delete();
+  }
   return errors;
 }

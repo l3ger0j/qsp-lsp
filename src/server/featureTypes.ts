@@ -7,14 +7,13 @@
 import type {
   SemanticTokens,
 } from 'vscode-languageserver';
+import type Parser from 'web-tree-sitter';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import type {
   DocumentSymbols,
   LocationSymbols,
   LocationEntry,
-  QspSymbol,
   QspTreeSitterParser,
-  CursorValueEntry,
   PossibleValueEntry,
   SyntaxError,
 } from '../parser';
@@ -30,12 +29,23 @@ import type {
 /** Per-location parse cache entry (only for large files). */
 export interface PerLocationParseResult {
   text: string;
+  /**
+   * The location's symbols, with line numbers counted from `symbolsLine`:
+   * 0 as parsed, the location's start line once placed in a document.
+   * The cache and the document share them, so a large file keeps one copy.
+   */
   symbols: LocationSymbols;
+  symbolsLine: number;
+  /** In the location's own coordinates (its header is line 0), like `tokens`. */
   errors: SyntaxError[];
-  tokens: number[];
+  /**
+   * Semantic token tuples [line, char, length, type, modifiers, …],
+   * packed: a large file holds millions of them, and a plain array of
+   * numbers takes twice the memory.
+   */
+  tokens: Uint32Array;
   hasErrors: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  tree?: any;
+  tree?: Parser.Tree;
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -54,20 +64,17 @@ export interface DocumentState {
   /** Cached call-types-per-target for THIS document. Lazily built. */
   cachedCallTypes?: Map<string, { name: string; types: Set<string> }>;
   /**
-   * Cached `getCursorEntries` resolver results keyed by `QspSymbol`
-   * object identity.  Symbols from unchanged locations retain their
-   * object identity across incremental re-parses, so their resolver
-   * results survive.  Only entries whose symbol objects changed
-   * (the re-parsed location) need to be recomputed.
-   * Uses WeakMap so stale symbol objects are automatically evicted by GC.
-   */
-  cachedCursorEntries?: WeakMap<QspSymbol, CursorValueEntry[] | null>;
-  /**
    * True when the symbol positions (line/column) may be approximate
    * because the symbols were reused from a previous parse cycle
    * during the fast tier.
    */
   positionsApproximate?: boolean;
+  /**
+   * Syntax errors of a project file that is not open in the editor, found
+   * while the project scan parsed it. Open documents keep a tree instead;
+   * a closed file's tree is freed right after the scan.
+   */
+  syntaxErrors?: SyntaxError[];
 }
 
 // ──────────────────────────────────────────────────────────────────────

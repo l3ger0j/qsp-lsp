@@ -326,6 +326,8 @@ export function checkUnusedVariables(
         const writeKey = `${docUri}\0${sym.definition.line},${sym.definition.column}`;
         if (crossCallWrites.has(writeKey)) continue;
 
+        if (agg.hasRegexOnlyLocations) continue;
+
         // A global is used if it is read (isProperUsage) anywhere in the
         // project — globallyRead aggregates isProperUsage refs across all
         // locations and documents, so it is the correct and sufficient check.

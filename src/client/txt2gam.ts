@@ -4,132 +4,23 @@
  * The module is loaded once on first use; subsequent calls reuse the
  * same instance.  The WASM binary is read via `vscode.workspace.fs`
  * so that the same code works on both the desktop Node.js extension
- * host and the browser extension host (VS Code for Web).
- *
- * The `Txt2gam` class is instantiated and destroyed around every
- * encode/decode call so the library's internal state is never shared
- * between concurrent invocations.
+ * host and the browser extension host (VS Code for Web). The calls
+ * themselves live in src/common/txt2gamCore.ts.
  */
 
 import * as vscode from 'vscode';
 import * as logger from './logger';
+import {
+  decodeWith,
+  encodeWith,
+  parseTextWith,
+  type CreateT2gModule,
+  type DecodeOptions,
+  type EncodeOptions,
+  type T2gModule,
+} from '../common/txt2gamCore';
 
-// ── Type declarations for the Emscripten module ───────────────────────
-
-/** The Emscripten module factory exported by txt2gam.js. */
-type CreateT2gModule = (opts?: {
-  wasmBinary?: Uint8Array;
-  print?:    (s: string) => void;
-  printErr?: (s: string) => void;
-}) => Promise<T2gModule>;
-
-interface T2gModule {
-  Txt2gam: new () => Txt2gam;
-  /** Error class thrown by all Txt2gam methods on failure. */
-  T2gError: new (code: number) => T2gError;
-  T2G_ERROR_NONE:           number; // 0
-  T2G_ERROR_FAILED:         number; // 1
-  T2G_ERROR_INVALID_DATA:   number; // 2
-  T2G_ERROR_WRONG_PASSWORD: number; // 3
-  T2G_ERROR_NO_MEMORY:      number; // 10
-}
-
-/** The `Txt2gam` binding injected by the --post-js shim. */
-interface Txt2gam {
-  /**
-   * Parse raw text bytes (with optional BOM) to a JS string.
-   * BOM takes priority; `isUnicode` is the fallback encoding hint
-   * (true = UTF-8, false = ANSI/CP1251).
-   */
-  parseText(data: Uint8Array, isUnicode: boolean): string | null;
-
-  /**
-   * Encode a text source to QSP binary game data.
-   *
-   * @param text        The .qsps source (UTF-16 JS string).
-   * @param locStart    Location-start marker, or null for `"#"`.
-   * @param locEnd      Location-end marker, or null for `"--"`.
-   * @param isOldFormat `true` to use the old QSP binary format.
-   * @param isUnicode   `true` to encode game strings as UTF-16;
-   *                    `false` for ANSI/CP1251.
-   * @param password    Game password, or null for the default `"No"`.
-   * @returns Binary game data.
-   * @throws {T2gError} On failure (`WRONG_PASSWORD`, `FAILED`, etc.).
-   */
-  textToGame(
-    text: string,
-    locStart: string | null,
-    locEnd: string | null,
-    isOldFormat: boolean,
-    isUnicode: boolean,
-    password: string | null,
-  ): Uint8Array;
-
-  /**
-   * Decode QSP binary game data to a text source.
-   *
-   * @param gameBytes   The raw `.qsp` file bytes.
-   * @param password    Game password, or null for the default `"No"`.
-   * @param locStart    Location-start marker, or null for `"#"`.
-   * @param locEnd      Location-end marker, or null for `"--"`.
-   * @returns The .qsps source as a JS string.
-   * @throws {T2gError} On failure (`WRONG_PASSWORD`, `INVALID_DATA`, etc.).
-   */
-  gameToText(
-    gameBytes: Uint8Array,
-    password: string | null,
-    locStart: string | null,
-    locEnd: string | null,
-  ): string;
-
-  /** Free library resources. */
-  destroy(): void;
-}
-
-// ── Error type ───────────────────────────────────────────────────────
-
-/**
- * Error thrown by Txt2gam methods on failure.
- * `code` matches one of the `T2G_ERROR_*` constants on the module.
- */
-export interface T2gError extends Error {
-  name: 'T2gError';
-  code: number;
-}
-
-/** Return true when `e` is a T2gError with the given code. */
-export function isT2gError(e: unknown, code?: number): e is T2gError {
-  return (
-    typeof e === 'object' && e !== null &&
-    (e as T2gError).name === 'T2gError' &&
-    (code === undefined || (e as T2gError).code === code)
-  );
-}
-
-/**
- * Error code constants — mirrored from the Emscripten module so callers
- * don't need access to the raw module object.
- */
-export const T2gErrorCode = {
-  FAILED:         1,
-  INVALID_DATA:   2,
-  WRONG_PASSWORD: 3,
-  NO_MEMORY:      10,
-} as const;
-
-// ── Options types ─────────────────────────────────────────────────────
-
-export interface EncodeOptions {
-  /** Game password (default: `"No"`). */
-  password?: string;
-}
-
-export interface DecodeOptions {
-  /** Game password (default: `"No"`). */
-  password?: string;
-}
-
-// ── Module singleton ──────────────────────────────────────────────────
+export { isT2gError, T2gErrorCode, type T2gError, type EncodeOptions, type DecodeOptions } from '../common/txt2gamCore';
 
 let modulePromise: Promise<T2gModule> | undefined;
 
@@ -175,15 +66,10 @@ export async function encodeTextToGame(
   opts: EncodeOptions = {},
 ): Promise<Uint8Array> {
   const mod = await getModule(extensionUri);
-  const t2g = new mod.Txt2gam();
   logger.log(`[Encode] ${text.length.toLocaleString()} chars...`);
-  try {
-    const result = t2g.textToGame(text, null, null, false, true, opts.password ?? null);
-    logger.log(`[Encode] Done: ${(result.byteLength / 1024).toFixed(1)} kb`);
-    return result;
-  } finally {
-    t2g.destroy();
-  }
+  const result = encodeWith(mod, text, opts);
+  logger.log(`[Encode] Done: ${(result.byteLength / 1024).toFixed(1)} kb`);
+  return result;
 }
 
 /**
@@ -202,15 +88,10 @@ export async function decodeGameToText(
   opts: DecodeOptions = {},
 ): Promise<string> {
   const mod = await getModule(extensionUri);
-  const t2g = new mod.Txt2gam();
   logger.log(`[Decode] ${(gameBytes.byteLength / 1024).toFixed(1)} kb...`);
-  try {
-    const result = t2g.gameToText(gameBytes, opts.password ?? null, null, null);
-    logger.log(`[Decode] Done: ${result.length.toLocaleString()} chars`);
-    return result;
-  } finally {
-    t2g.destroy();
-  }
+  const result = decodeWith(mod, gameBytes, opts);
+  logger.log(`[Decode] Done: ${result.length.toLocaleString()} chars`);
+  return result;
 }
 
 /**
@@ -227,13 +108,7 @@ export async function parseTextBytes(
   data: Uint8Array,
   isUnicode = true,
 ): Promise<string | null> {
-  const mod = await getModule(extensionUri);
-  const t2g = new mod.Txt2gam();
-  try {
-    return t2g.parseText(data, isUnicode);
-  } finally {
-    t2g.destroy();
-  }
+  return parseTextWith(await getModule(extensionUri), data, isUnicode);
 }
 
 /**

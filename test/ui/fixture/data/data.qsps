@@ -1,0 +1,4 @@
+# data
+$name = 'Алиса'
+*pl $name
+--- data ---

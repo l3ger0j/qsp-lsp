@@ -173,7 +173,7 @@ $x = 'from_callee'
 `;
     const { symbols } = parseAndExtract(parser, src, 'test://m');
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(symbols, 'test://m'), agg, [symbols]);
+    buildPropagatedLocals(iterLocs(symbols, 'test://m'), agg);
 
     const sym = findLocalSym(symbols, 'caller', 'x');
     const loc = getLoc(symbols, 'caller');
@@ -297,13 +297,13 @@ local #count = 5
     expect(bs.length).toBe(3);
     // Pre-declaration write: still a real global.
     expect(bs[0].isLocal).toBe(false);
-    expect(bs[0].value).toEqual({ kind: 'expr' });
+    expect(bs[0].value).toMatchObject({ kind: 'expr' });
     // The `local` declaration itself.
     expect(bs[1].isLocal).toBe(true);
-    expect(bs[1].value).toEqual({ kind: 'expr' });
+    expect(bs[1].value).toMatchObject({ kind: 'expr' });
     // Post-declaration bare write: retagged to the local.
     expect(bs[2].isLocal).toBe(true);
-    expect(bs[2].value).toEqual({ kind: 'expr' });
+    expect(bs[2].value).toMatchObject({ kind: 'expr' });
   });
 
   it('setvar BEFORE `local x` stays global, setvar AFTER retags', () => {
@@ -497,7 +497,7 @@ x = 777
 `;
     const { symbols } = parseAndExtract(parser, src, 'test://deep');
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(symbols, 'test://deep'), agg, [symbols]);
+    buildPropagatedLocals(iterLocs(symbols, 'test://deep'), agg);
 
     const locA = getLoc(symbols, 'a');
     let aSym: QspSymbol | undefined;
@@ -510,7 +510,7 @@ x = 777
     expect(ext).toBeDefined();
     const fromC = ext!.filter(e => e.sourceLoc === 'c');
     expect(fromC).toHaveLength(1);
-    expect(fromC[0].binding.value).toEqual({ kind: 'expr' });
+    expect(fromC[0].binding.value).toMatchObject({ kind: 'expr' });
   });
 
   it('callee nested-block write bubbles up to caller local', () => {
@@ -531,7 +531,7 @@ end
 `;
     const { symbols } = parseAndExtract(parser, src, 'test://deep2');
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(symbols, 'test://deep2'), agg, [symbols]);
+    buildPropagatedLocals(iterLocs(symbols, 'test://deep2'), agg);
 
     const locA = getLoc(symbols, 'a');
     let aSym: QspSymbol | undefined;
@@ -557,7 +557,7 @@ describe('variableBindings: recursive calls', () => {
 
   function aggFor(syms: DocumentSymbols, uri: string) {
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(syms, uri), agg, [syms]);
+    buildPropagatedLocals(iterLocs(syms, uri), agg);
     return agg;
   }
   function localSymOf(syms: DocumentSymbols, locName: string, varBase: string): QspSymbol {
@@ -609,7 +609,7 @@ gs 'A'
     const ext = agg.externalLocalBindings.get(sym) ?? [];
     const fromB = ext.filter(e => e.sourceLoc === 'b');
     expect(fromB).toHaveLength(1);
-    expect(fromB[0].binding.value).toEqual({ kind: 'expr' });
+    expect(fromB[0].binding.value).toMatchObject({ kind: 'expr' });
   });
 
   it('3-cycle A→B→C→A: C\'s write pops back to A\'s local', () => {
@@ -696,7 +696,7 @@ describe('variableBindings: dynamic inside dynamic', () => {
 
   function aggFor(syms: DocumentSymbols, uri: string) {
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(syms, uri), agg, [syms]);
+    buildPropagatedLocals(iterLocs(syms, uri), agg);
     return agg;
   }
   function localSymOf(syms: DocumentSymbols, locName: string, varBase: string): QspSymbol {
@@ -872,7 +872,7 @@ describe('variableBindings: var-mediated dynamic/dyneval by holder kind', () => 
 
   function aggFor(syms: DocumentSymbols, uri: string) {
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(syms, uri), agg, [syms]);
+    buildPropagatedLocals(iterLocs(syms, uri), agg);
     return agg;
   }
   function localSymOf(syms: DocumentSymbols, locName: string, varBase: string): QspSymbol {
@@ -1168,7 +1168,7 @@ describe('variableBindings: getPossibleValuesAtCursor', () => {
   }
   function aggFor(syms: DocumentSymbols, uri: string) {
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(syms, uri), agg, [syms]);
+    buildPropagatedLocals(iterLocs(syms, uri), agg);
     return agg;
   }
 
@@ -1652,7 +1652,7 @@ pl $shared
       ...iterLocs(a.symbols, 'test://pv-proj-a'),
       ...iterLocs(b.symbols, 'test://pv-proj-b'),
     ];
-    buildPropagatedLocals(allLocs, agg, [a.symbols, b.symbols]);
+    buildPropagatedLocals(allLocs, agg);
 
     const { line, column } = locate(srcB, 'pl $shared', 3);
     const vals = getPossibleValuesAtCursor(
@@ -1830,7 +1830,7 @@ describe('variableBindings: goto-style calls do NOT propagate locals', () => {
   }
   function aggFor(syms: DocumentSymbols, uri: string) {
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(syms, uri), agg, [syms]);
+    buildPropagatedLocals(iterLocs(syms, uri), agg);
     return agg;
   }
   function locate(src: string, needle: string, offset = 0) {
@@ -1992,7 +1992,7 @@ x = 77
 `;
     const { symbols } = parseAndExtract(parser, src, 'test://gt-ext');
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(symbols, 'test://gt-ext'), agg, [symbols]);
+    buildPropagatedLocals(iterLocs(symbols, 'test://gt-ext'), agg);
 
     const locA = getLoc(symbols, 'a');
     let aSym: QspSymbol | undefined;
@@ -2030,7 +2030,7 @@ describe('variableBindings: code-block-in-local + dynamic/dyneval with extras', 
   }
   function aggFor(syms: DocumentSymbols, uri: string) {
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(syms, uri), agg, [syms]);
+    buildPropagatedLocals(iterLocs(syms, uri), agg);
     return agg;
   }
   function locate(src: string, needle: string, offset = 0): { line: number; column: number } {
@@ -2727,7 +2727,7 @@ describe('variableBindings: self-shadow rebinding', () => {
 
   function aggFor(syms: DocumentSymbols, uri: string) {
     const agg = emptyAggregates();
-    buildPropagatedLocals(iterLocs(syms, uri), agg, [syms]);
+    buildPropagatedLocals(iterLocs(syms, uri), agg);
     return agg;
   }
   function locate(src: string, needle: string, offset = 0) {
@@ -3379,7 +3379,7 @@ describe('variableBindings: tuple unpacking', () => {
         const full = `# main\n${src}\n---\n`;
         for (const name of ['a', 'b', 'c']) {
           const bs = bindingsFor(full, 'main', name);
-          expect(bs[0].value).toEqual({ kind: 'expr' });
+          expect(bs[0].value).toMatchObject({ kind: 'expr' });
           expect(bs[0].rhsTypePrefix).toBe('#');
         }
       }
@@ -3643,3 +3643,59 @@ describe('variableBindings: tuple unpacking', () => {
   });
 });
 
+
+// ──────────────────────────────────────────────────────────────────────
+// Code blocks that dispatch each other
+// ──────────────────────────────────────────────────────────────────────
+//
+// A write inside a `dynamic $var` block is attributed to the places the
+// block runs from. Blocks that dispatch each other (menus opening
+// menus) once had every write copied again at each hop, up to 16 hops:
+// two blocks calling each other twice made ~200 000 bindings from ten
+// lines, and a real game ran out of memory on one location.
+describe('variableBindings: code blocks that dispatch each other', () => {
+  const parser = new QspTreeSitterParser();
+  beforeAll(() => initParser(parser));
+
+  const bindingCount = (ls: LocationSymbols, name: string) => ls.variableBindings.get(name)?.length ?? 0;
+
+  it('attributes each write once per outside call site, however the blocks cycle', () => {
+    const code = [
+      '# menu',
+      '$a = {',
+      '\tx = 1',
+      '\tdynamic $b',
+      '\tdynamic $b',
+      '\tdynamic $b',
+      '}',
+      '$b = {',
+      '\ty = 2',
+      '\tdynamic $a',
+      '\tdynamic $a',
+      '\tdynamic $a',
+      '}',
+      'dynamic $a',
+      'dynamic $b',
+      '--- menu ---',
+      '',
+    ].join('\n');
+    const started = Date.now();
+    const { symbols } = parseAndExtract(parser, code);
+    expect(Date.now() - started).toBeLessThan(2000);
+    const ls = symbols.getLocation('menu')!;
+    // x and y each run from the two top-level `dynamic` statements.
+    expect(bindingCount(ls, 'x')).toBe(2);
+    expect(bindingCount(ls, 'y')).toBe(2);
+    let total = 0;
+    for (const list of ls.variableBindings.values()) total += list.length;
+    expect(total).toBeLessThan(10);
+  });
+
+  it('keeps writes of blocks only ever run from inside each other', () => {
+    const code = "# loop\n$a = {\n\tx = 1\n\tdynamic $b\n}\n$b = {\n\ty = 2\n\tdynamic $a\n}\n--- loop ---\n";
+    const { symbols } = parseAndExtract(parser, code);
+    const ls = symbols.getLocation('loop')!;
+    expect(bindingCount(ls, 'x')).toBeGreaterThanOrEqual(1);
+    expect(bindingCount(ls, 'y')).toBeGreaterThanOrEqual(1);
+  });
+});

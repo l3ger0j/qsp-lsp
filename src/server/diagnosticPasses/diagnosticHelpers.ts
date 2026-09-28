@@ -34,8 +34,32 @@ export class DiagnosticCtx {
     this._diagnostics = [];
   }
 
-  /** Collect the built diagnostics. */
-  results(): Diagnostic[] { return this._diagnostics; }
+  /**
+   * Collect the built diagnostics: all of them, or with `maxPerFile` set
+   * the most severe that many, in order, and a note saying how many more
+   * there were. A large game can make hundreds of thousands, which the
+   * editor can't show and the protocol takes minutes to carry.
+   */
+  results(): Diagnostic[] {
+    const max = this.settings.maxPerFile;
+    const all = this._diagnostics;
+    if (!max || all.length <= max) return all;
+    const kept: Diagnostic[] = [];
+    for (const severity of [DiagnosticSeverity.Error, DiagnosticSeverity.Warning, DiagnosticSeverity.Information, DiagnosticSeverity.Hint]) {
+      for (const d of all) {
+        if ((d.severity ?? DiagnosticSeverity.Error) !== severity) continue;
+        if (kept.length === max) break;
+        kept.push(d);
+      }
+    }
+    kept.push({
+      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+      severity: DiagnosticSeverity.Information,
+      source: 'qsp',
+      message: `${all.length - max} more problems in this file are not shown (qsp.diagnostics.maxPerFile is ${max}); the most severe come first`,
+    });
+    return kept;
+  }
 
   /** Length of a line; reasonable fallback when `doc` is null. */
   lineLength(line: number): number {

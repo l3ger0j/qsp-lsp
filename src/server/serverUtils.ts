@@ -14,12 +14,21 @@ import { locationNameCol } from './regexFallback';
 /**
  * File-system provider for project mode.
  * Only available in the Node.js server — browser has no direct FS access.
+ *
+ * `readFile` and `findFiles` are async and `findFiles` is an async
+ * iterable (rather than `string[]`/`Promise<string[]>`) specifically so
+ * that project-mode workspace scans (potentially thousands of files) can
+ * be awaited one file at a time. That lets the Node.js event loop
+ * interleave other pending LSP requests between files instead of the
+ * whole scan running as one uninterrupted synchronous block — see
+ * ProjectModeService.init()/handleWatchedFileChanges().
  */
 export interface FsProvider {
   /** Read a file as text, decoded according to the given encoding. */
-  readFile(filePath: string, encoding?: string): string;
-  /** List all files matching glob patterns in a directory (recursive). */
-  findFiles(dir: string, extensions: string[]): string[];
+  readFile(filePath: string, encoding?: string): Promise<string>;
+  /** Enumerate all files matching the given extensions in a directory
+   *  (recursive), skipping common non-project directories. */
+  findFiles(dir: string, extensions: string[]): AsyncIterable<string>;
   /** Convert a file path to a URI string. */
   pathToUri(filePath: string): string;
   /** Convert a URI string to a file path. */
@@ -44,6 +53,42 @@ export function shiftErrors(errors: SyntaxError[], lineOffset: number, out: Synt
   }
 }
 
+/**
+ * Compute a `perLocationCache` key for every entry of a `LocationEntry[]`,
+ * in source order, keyed by lowercase name plus an occurrence counter.
+ *
+ * `perLocationCache` (used by common.ts's `analyzeDocumentPerLocation`,
+ * `tryIncrementalPerLocationUpdate`, and `buildTokensFromCache`, and read
+ * directly by hover/document-highlight in lspFeatures.ts) can't be keyed
+ * by plain `loc.nameLower`: a file with a duplicate location name — an
+ * error the user will see reported, but one they may be mid-typing when
+ * this runs — would collapse onto the same cache slot.
+ * `currentIndex.length !== prevCache.size` would then hold forever, so
+ * `tryIncrementalPerLocationUpdate` never succeeds again for that file
+ * (every keystroke pays for a full per-location re-analysis instead of
+ * an O(1)-location incremental one); the full-analysis path silently
+ * overwrites one duplicate's cache entry with the other's, leaking the
+ * discarded entry's retained tree-sitter tree if it had one; and
+ * semantic tokens / hover / document-highlight for every duplicate past
+ * the first silently get nothing (a lookup by plain name only ever
+ * finds whichever one happens to be stored under it).
+ *
+ * The occurrence counter gives each duplicate a distinct, and — as long
+ * as their relative order doesn't change — *stable* key, so both the
+ * `.size` comparison and normal cache reuse work exactly as they did for
+ * non-duplicate names. Lives here (rather than in common.ts, which
+ * imports lspFeatures.ts) so both common.ts and lspFeatures.ts can use
+ * it without a circular import.
+ */
+export function perLocationCacheKeys(locationIndex: readonly LocationEntry[]): string[] {
+  const occurrenceOf = new Map<string, number>();
+  return locationIndex.map((loc) => {
+    const n = occurrenceOf.get(loc.nameLower) ?? 0;
+    occurrenceOf.set(loc.nameLower, n + 1);
+    return n === 0 ? loc.nameLower : `${loc.nameLower}\u0000${n}`;
+  });
+}
+
 /** Build the `SymbolLocation` for a location header, used by both the
  *  full-tree and per-location analysis paths. */
 export function makeLocSymLoc(uri: string, text: string, loc: LocationEntry): SymbolLocation {
@@ -62,13 +107,42 @@ export function makeLocSymLoc(uri: string, text: string, loc: LocationEntry): Sy
  * `ConnectionErrors.Closed` and `ConnectionErrors.Disposed` errors.
  * These occur when a debounced timer fires after the LSP connection has
  * been torn down (e.g. at test teardown), and they are harmless.
+ *
+ * Unlike `connection.console.*` (which vscode-languageserver already
+ * `.catch`es internally), `sendDiagnostics` returns the underlying
+ * `sendNotification` promise uncaught — if the transport write itself
+ * fails (the stream closes between the synchronous not-closed check and
+ * the write completing), that becomes an unhandled rejection unless we
+ * catch it here too.
  */
 export function safeSendDiagnostics(
   connection: Connection,
   params: Parameters<Connection['sendDiagnostics']>[0],
 ): void {
+  safeConnectionCall(() => connection.sendDiagnostics(params));
+}
+
+/**
+ * Wrapper around arbitrary connection calls that silently ignores
+ * `ConnectionErrors.Closed` and `ConnectionErrors.Disposed` errors
+ * for the same reason as safeSendDiagnostics.
+ *
+ * `fn` may return a Promise (e.g. `client.register(...)`,
+ * `semanticTokens.refresh()`) — that promise is awaited internally so a
+ * rejection can't become an unhandled rejection and crash the process.
+ * Any rejection other than Closed/Disposed is logged via `console.error`
+ * (not `connection.console.error`: the connection may be the very thing
+ * that's failing).
+ */
+export function safeConnectionCall(fn: () => void | Promise<unknown>): void {
   try {
-    connection.sendDiagnostics(params);
+    const result = fn();
+    if (result && typeof (result as Promise<unknown>).catch === 'function') {
+      (result as Promise<unknown>).catch((err: unknown) => {
+        if (err instanceof ConnectionError && (err.code === ConnectionErrors.Closed || err.code === ConnectionErrors.Disposed)) return;
+        console.error('[QSP] Unhandled connection call rejection:', err);
+      });
+    }
   } catch (err) {
     if (err instanceof ConnectionError && (err.code === ConnectionErrors.Closed || err.code === ConnectionErrors.Disposed)) return;
     throw err;
@@ -76,15 +150,17 @@ export function safeSendDiagnostics(
 }
 
 /**
- * Wrapper around arbitrary connection calls that silently ignores
- * `ConnectionErrors.Closed` and `ConnectionErrors.Disposed` errors
- * for the same reason as safeSendDiagnostics.
+ * `connection.console.*` throws synchronously (not a rejected promise) once
+ * the connection is closed or disposed — a debounced analysis timer that
+ * fires during test teardown, or after a client disconnects, would crash
+ * the process on its next log line otherwise. Wraps every method with
+ * `safeConnectionCall` so logging after teardown is silently dropped.
  */
-export function safeConnectionCall(fn: () => void): void {
-  try {
-    fn();
-  } catch (err) {
-    if (err instanceof ConnectionError && (err.code === ConnectionErrors.Closed || err.code === ConnectionErrors.Disposed)) return;
-    throw err;
-  }
+export function safeConsole(connection: Connection): Pick<Connection['console'], 'error' | 'warn' | 'info' | 'log'> {
+  return {
+    error: (m: string) => safeConnectionCall(() => connection.console.error(m)),
+    warn: (m: string) => safeConnectionCall(() => connection.console.warn(m)),
+    info: (m: string) => safeConnectionCall(() => connection.console.info(m)),
+    log: (m: string) => safeConnectionCall(() => connection.console.log(m)),
+  };
 }

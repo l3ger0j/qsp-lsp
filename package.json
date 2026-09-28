@@ -1,26 +1,53 @@
 {
   "name": "qsp-lsp",
   "displayName": "QSP Language Support",
-  "description": "Language server for QSP (Quest Soft Player) game files",
-  "version": "0.2.0",
+  "description": "QSP (Quest Soft Player) game development: IntelliSense, diagnostics, navigation, a jump graph of locations, building .qsp games and an MCP server for AI agents",
+  "version": "0.3.0",
   "publisher": "qsp",
   "license": "MPL-2.0",
   "icon": "icons/qsp-logo.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/qsp/qsp-lsp"
+    "url": "https://github.com/QSPFoundation/qsp-lsp.git"
   },
-  "homepage": "https://github.com/qsp/qsp-lsp#readme",
+  "homepage": "https://github.com/QSPFoundation/qsp-lsp#readme",
   "bugs": {
-    "url": "https://github.com/qsp/qsp-lsp/issues"
+    "url": "https://github.com/QSPFoundation/qsp-lsp/issues"
   },
   "engines": {
     "vscode": "^1.85.0"
   },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": ">=22.12.0",
+      "onFail": "warn"
+    }
+  },
   "categories": [
-    "Programming Languages"
+    "Programming Languages",
+    "Linters",
+    "Snippets",
+    "Visualization"
   ],
-  "activationEvents": [],
+  "keywords": [
+    "qsp",
+    "quest soft player",
+    "interactive fiction",
+    "text quest",
+    "text adventure",
+    "game development",
+    "language server",
+    "txt2gam"
+  ],
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
+  "pricing": "Free",
+  "activationEvents": [
+    "onWebviewPanel:qsp.jumpGraph"
+  ],
   "main": "./out/client/nodeMain.js",
   "browser": "./out/client/browserMain.js",
   "contributes": {
@@ -165,6 +192,50 @@
         "title": "Import QSP Game…",
         "category": "QSP",
         "icon": "$(go-to-file)"
+      },
+      {
+        "command": "qsp.showServerLog",
+        "title": "Show Language Server Log",
+        "category": "QSP"
+      },
+      {
+        "command": "qsp.copyMcpConfig",
+        "title": "Copy MCP Server Config",
+        "category": "QSP"
+      },
+      {
+        "command": "qsp.locations.refresh",
+        "title": "Refresh",
+        "category": "QSP Locations",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "qsp.locations.groupByFile",
+        "title": "Group by File",
+        "category": "QSP Locations",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "qsp.locations.groupFlat",
+        "title": "Show as List",
+        "category": "QSP Locations",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "qsp.locations.open",
+        "title": "Open Location",
+        "category": "QSP Locations"
+      },
+      {
+        "command": "qsp.locations.findReferences",
+        "title": "Find References",
+        "category": "QSP Locations"
+      },
+      {
+        "command": "qsp.showJumpGraph",
+        "title": "Show Jump Graph",
+        "category": "QSP",
+        "icon": "$(type-hierarchy)"
       }
     ],
     "debuggers": [
@@ -216,6 +287,11 @@
         {
           "command": "qsp.goToLocation",
           "when": "editorLangId == qsp",
+          "group": "navigation"
+        },
+        {
+          "command": "qsp.showJumpGraph",
+          "when": "resourceLangId == qsp",
           "group": "navigation"
         }
       ],
@@ -351,6 +427,71 @@
         },
         {
           "command": "qsp.importGame"
+        },
+        {
+          "command": "qsp.locations.open",
+          "when": "false"
+        },
+        {
+          "command": "qsp.locations.findReferences",
+          "when": "false"
+        },
+        {
+          "command": "qsp.locations.groupByFile",
+          "when": "false"
+        },
+        {
+          "command": "qsp.locations.groupFlat",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "qsp.locations.groupFlat",
+          "when": "view == qsp.locations && qsp.locations.grouping != flat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "qsp.locations.groupByFile",
+          "when": "view == qsp.locations && qsp.locations.grouping == flat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "qsp.locations.refresh",
+          "when": "view == qsp.locations",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "qsp.locations.open",
+          "when": "view == qsp.locations && viewItem == qspLocation",
+          "group": "1_open@1"
+        },
+        {
+          "command": "qsp.locations.findReferences",
+          "when": "view == qsp.locations && viewItem == qspLocation",
+          "group": "1_open@2"
+        },
+        {
+          "command": "qsp.renameLocation",
+          "when": "view == qsp.locations && viewItem == qspLocation",
+          "group": "2_modify@1"
+        },
+        {
+          "command": "qsp.duplicateLocation",
+          "when": "view == qsp.locations && viewItem == qspLocation",
+          "group": "2_modify@2"
+        },
+        {
+          "command": "qsp.deleteLocation",
+          "when": "view == qsp.locations && viewItem == qspLocation",
+          "group": "2_modify@3"
+        },
+        {
+          "command": "qsp.showJumpGraph",
+          "when": "view == qsp.locations && viewItem == qspLocation",
+          "group": "1_open@3"
         }
       ]
     },
@@ -389,6 +530,12 @@
         "command": "qsp.formatLocation",
         "key": "ctrl+shift+f",
         "mac": "cmd+shift+f",
+        "when": "editorLangId == qsp"
+      },
+      {
+        "command": "qsp.showJumpGraph",
+        "key": "ctrl+k j",
+        "mac": "cmd+k j",
         "when": "editorLangId == qsp"
       }
     ],
@@ -546,6 +693,12 @@
           "minimum": 1,
           "description": "Maximum number of syntax errors reported per location. Locations exceeding this limit show a single summary warning instead."
         },
+        "qsp.diagnostics.maxPerFile": {
+          "type": "integer",
+          "default": 5000,
+          "minimum": 0,
+          "description": "Maximum number of problems reported per file, the most severe first; the rest are summed up in one note. A very large game can produce hundreds of thousands, which the editor can't show usefully and which take long to send. 0 reports them all."
+        },
         "qsp.diagnostics.maxLocationLines": {
           "type": "integer",
           "default": 500,
@@ -568,6 +721,31 @@
           "minimum": 1,
           "description": "Maximum number of items rendered per category in hover tooltips (e.g. 'Possible values', 'Called from', 'Navigated from', 'Uses globals', 'Also defined in', 'Propagated from/to'). Lists exceeding this limit are truncated with a '…and N more' tail."
         },
+        "qsp.crashReports.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Record the language server's memory and where its analysis is, and when it stops unexpectedly (e.g. out of memory on a large game) save a crash report to .qsp/crash-reports in the project. Reports hold numbers, neutral names like f01_l0007 and the extension's own function names, never game text; the table of what the neutral names stand for is saved beside the report and is not part of it. Takes effect when the language server restarts."
+        },
+        "qsp.crashReports.includeAnonymizedCode": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "always",
+            "never"
+          ],
+          "enumDescriptions": [
+            "Offer to add it when a crash report is saved.",
+            "Add it to every crash report.",
+            "Never add it."
+          ],
+          "default": "ask",
+          "description": "Whether a crash report may include the anonymized code of the location the server was analysing: names replaced by neutral ones, strings by x-es, numbers by 0, comments removed. It keeps the structure that made the analysis fail, so the problem can be reproduced without the game."
+        },
+        "qsp.debug.performanceLog": {
+          "type": "boolean",
+          "default": false,
+          "description": "Write the time and memory of every analysis phase (parsing, symbols, project aggregates, diagnostics) to the QSP Language Server log. Phases longer than a second are logged anyway. The lines hold only numbers, never file, location or variable names."
+        },
         "qsp.game.password": {
           "type": "string",
           "default": "",
@@ -578,13 +756,60 @@
           "default": true,
           "description": "When exporting a game, prompt for the password. The configured password is shown as the default value. Disable to export silently using only the configured password."
         },
+        "qsp.game.buildMode": {
+          "type": "string",
+          "enum": [
+            "single",
+            "perFile"
+          ],
+          "enumDescriptions": [
+            "Combine all project source files into one .qsp file (the output path comes from txt2gam.json).",
+            "Build each source file into its own .qsp next to it (data.qsps → data.qsp). 'Run QSP Game' starts the first file in txt2gam.json order; the game loads the others with INCLIB."
+          ],
+          "default": "single",
+          "description": "How 'Export QSP Game' and 'Run QSP Game' build a project in project mode. A \"buildMode\" field in txt2gam.json overrides this setting for that project."
+        },
+        "qsp.game.mainFile": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Regular expression for the project's main file, searched case-insensitively in each source's workspace-relative path (e.g. `^main\\.qsps$`). The first match in build order is moved to the front: in `single` builds its first location starts the game, in `perFile` builds its `.qsp` is the one **Run QSP Game** opens. A build fails if the pattern is invalid or matches nothing. A `mainFile` field in `txt2gam.json` overrides this setting. Leave empty to use the first file in `txt2gam.json` order."
+        },
+        "qsp.game.mainFileStrategy": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "root"
+          ],
+          "enumDescriptions": [
+            "Ask for the main file with a list; if the list is dismissed, put files from the workspace root first.",
+            "Don't ask: put files from the workspace root first."
+          ],
+          "default": "ask",
+          "markdownDescription": "How the setup wizard chooses the main file when it creates `txt2gam.json` and no main file is set in `qsp.game.mainFile`. Either way, the chosen file is saved as `mainFile` in `txt2gam.json`."
+        },
+        "qsp.mcp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Offer the QSP MCP server to AI agents in VS Code (e.g. Copilot agent mode; VS Code 1.101+). It answers questions about the project's locations, references and diagnostics, builds the game and applies renames. Agents outside VS Code can use it through **QSP: Copy MCP Server Config**."
+        },
         "qsp.game.playerExecutable": {
           "type": "string",
           "default": "",
-          "description": "Path to the QSP player executable or script used by the 'Run QSP Game' command. The .qsp file path is appended as a quoted argument. Example: /usr/local/bin/qsp-player or C:\\QSP\\player.exe"
+          "markdownDescription": "Path to the QSP player executable or script used by the **Run QSP Game** command. The .qsp file path is passed as its argument. Example: `/usr/local/bin/qsp-player` or `C:\\QSP\\player.exe`. `playerExecutable` in `txt2gam.json` overrides this setting for the project."
+        },
+        "qsp.locations.followCursor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Select the location under the cursor in the QSP Locations view."
         }
       }
     },
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "qsp",
+        "label": "QSP"
+      }
+    ],
     "semanticTokenScopes": [
       {
         "language": "qsp",
@@ -648,17 +873,30 @@
           }
         }
       }
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "qsp.locations",
+          "name": "QSP Locations",
+          "icon": "$(symbol-namespace)",
+          "when": "qsp.hasSources"
+        }
+      ]
     }
   },
   "scripts": {
-    "build:grammar": "cd tree-sitter-qsp && npx tree-sitter generate && npx tree-sitter build --wasm && cp tree-sitter-qsp.wasm ../out/",
+    "build:grammar": "mkdir -p out && cd tree-sitter-qsp && npx tree-sitter generate && npx tree-sitter build --wasm && cp tree-sitter-qsp.wasm ../out/",
     "build:server:node": "esbuild src/server/nodeMain.ts --bundle --outfile=out/server/nodeMain.js --platform=node --format=cjs --external:vscode --target=node18",
     "build:server:browser": "esbuild src/server/browserMain.ts --bundle --outfile=out/server/browserMain.js --platform=browser --format=esm --target=es2020 --external:web-tree-sitter",
     "build:client:node": "esbuild src/client/nodeMain.ts --bundle --outfile=out/client/nodeMain.js --platform=node --format=cjs --external:vscode --target=node18 --alias:txt2gamJs=./vendor/txt2gam/txt2gam.js",
     "build:client:browser": "esbuild src/client/browserMain.ts --bundle --outfile=out/client/browserMain.js --platform=browser --format=esm --external:vscode --external:node:fs --target=es2020 --alias:txt2gamJs=./vendor/txt2gam/txt2gam.js",
     "build:copy-wasm": "cp node_modules/web-tree-sitter/tree-sitter.wasm out/server/tree-sitter.wasm && cp vendor/txt2gam/txt2gam.wasm out/client/txt2gam.wasm",
+    "build:mcp": "esbuild src/mcp/server.js --outfile=out/mcp/server.js --target=es5 && esbuild src/mcp/main.ts --bundle --outfile=out/mcp/main.js --platform=node --format=cjs --target=node18 --minify-whitespace --minify-syntax --main-fields=module,main --alias:txt2gamJs=./vendor/txt2gam/txt2gam.js",
+    "build:bundles": "npm run build:server:node && npm run build:server:browser && npm run build:client:node && npm run build:client:browser && npm run build:mcp && npm run build:webview && npm run build:copy-wasm",
+    "build:ui-tests": "npm run build:bundles && esbuild test/ui/*.test.ts --outdir=out/test/ui --platform=node --format=cjs --target=node20",
     "fetch:txt2gam": "node scripts/fetchTxt2gam.mjs",
-    "build": "npm run fetch:txt2gam && npm run build:grammar && npm run build:server:node && npm run build:server:browser && npm run build:client:node && npm run build:client:browser && npm run build:copy-wasm",
+    "build": "npm run fetch:txt2gam && npm run build:grammar && npm run build:server:node && npm run build:server:browser && npm run build:client:node && npm run build:client:browser && npm run build:mcp && npm run build:webview && npm run build:copy-wasm",
     "watch:server:node": "esbuild src/server/nodeMain.ts --bundle --outfile=out/server/nodeMain.js --platform=node --format=cjs --external:vscode --target=node18 --watch",
     "watch:server:browser": "esbuild src/server/browserMain.ts --bundle --outfile=out/server/browserMain.js --platform=browser --format=esm --target=es2020 --external:web-tree-sitter --watch",
     "watch:client:node": "esbuild src/client/nodeMain.ts --bundle --outfile=out/client/nodeMain.js --platform=node --format=cjs --external:vscode --target=node18 --alias:txt2gamJs=./vendor/txt2gam/txt2gam.js --watch",
@@ -666,27 +904,48 @@
     "watch": "npm run watch:server:node & npm run watch:server:browser & npm run watch:client:node & npm run watch:client:browser",
     "lint": "eslint",
     "test": "vitest run",
+    "test:ui": "npm run build:ui-tests && vscode-test",
     "check": "bash scripts/build.sh --check",
     "release": "bash scripts/build.sh",
     "package": "npx @vscode/vsce package",
-    "publish": "npx @vscode/vsce publish"
+    "publish": "npx @vscode/vsce publish",
+    "stress:gen": "node scripts/stress/genGame.mjs",
+    "bench:stress": "node scripts/stress/bench.mjs",
+    "build:webview": "esbuild src/webview/graph.ts --bundle --outfile=out/webview/graph.js --platform=browser --format=iife --target=es2020 --minify"
+  },
+  "overrides": {
+    "@vscode/test-cli": {
+      "mocha": "^12.0.2"
+    }
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.1",
+    "cytoscape": "^3.34.3",
+    "cytoscape-dagre": "^4.0.1",
+    "d3-force": "^3.0.0",
+    "jsonc-parser": "^3.3.1",
+    "picomatch": "^4.0.7",
     "vscode-languageclient": "^9.0.1",
     "vscode-languageserver": "^9.0.1",
     "vscode-languageserver-textdocument": "^1.0.11",
     "vscode-uri": "^3.1.0",
-    "web-tree-sitter": "^0.24.7"
+    "web-tree-sitter": "^0.24.7",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@types/d3-force": "^3.0.10",
+    "@types/mocha": "^10.0.10",
     "@types/node": "^25.5.0",
+    "@types/picomatch": "^4.0.3",
     "@types/vscode": "^1.85.0",
-    "@vscode/vsce": "^3.2.0",
-    "esbuild": "^0.24.0",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.0",
     "eslint": "^9.0.0",
     "tree-sitter-cli": "^0.24.7",
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.0.0",
-    "vitest": "^2.0.0"
+    "vitest": "^5.0.2"
   }
 }

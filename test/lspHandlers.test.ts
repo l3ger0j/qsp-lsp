@@ -111,7 +111,7 @@ function makeProjectFixture(files: { uri: string; code: string }[]): {
         allLocs.push({ locName: locSyms.locationName, locSyms, uri });
       }
     }
-    buildPropagatedLocals(allLocs, projectAggregates, allDocs);
+    buildPropagatedLocals(allLocs, projectAggregates);
   }
   const ctx = {
     documentStates: states,

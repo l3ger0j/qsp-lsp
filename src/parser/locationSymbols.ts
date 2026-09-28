@@ -15,6 +15,19 @@ import {
   type VariableBinding,
 } from './symbolTypes';
 import type { SyntaxError } from './extractErrors';
+import type { TargetPattern } from './targetPattern';
+
+/** A jump or call with a non-literal target; see `LocationSymbols.dynamicLocationRefs`. */
+export interface DynamicLocationRef {
+  /** The target expression; `callType`, `callText` and `argCount` are set as on location refs. */
+  loc: SymbolLocation;
+  /** Source text of the target expression, e.g. `'room_' + $n`. */
+  exprText: string;
+  /** What is known of the target, for the jump graph to resolve; absent when nothing is. */
+  target?: TargetPattern;
+  /** Column the jump statement (or call) starts at: its indentation, for the resolver's nearest writes. */
+  callColumn?: number;
+}
 
 export class LocationSymbols {
   public readonly locationName: string;
@@ -65,6 +78,12 @@ export class LocationSymbols {
   public readonly embeddedExecErrors: SyntaxError[] = [];
   /** True when the tree-sitter location_block node contained ERROR sub-nodes. */
   public hasErrors = false;
+  /**
+   * True when this location was filled by the regex fallback instead of
+   * tree-sitter. Regex extraction finds only actions and labels, so the
+   * location's outgoing references (locations, objects, variables) are unknown.
+   */
+  public regexOnly = false;
 
   /**
    * Transient: host scope at the syntactic position of a
@@ -239,6 +258,14 @@ export class LocationSymbols {
     /** Number of extra positional args after the var argument. */
     argCount: number;
   }> = [];
+
+  /**
+   * Jumps and calls whose target is not a string literal: `gt $next`,
+   * `gosub 'room_' + $n`, `func($f)`. They don't reach `locationRefs`
+   * (there is no name to key them by), so the jump graph lists them from
+   * here as targets it can't name.
+   */
+  public readonly dynamicLocationRefs: DynamicLocationRef[] = [];
 
   /**
    * Var-mediated `dynamic`/`dyneval` call sites whose enclosing code
@@ -673,6 +700,7 @@ export class LocationSymbols {
   ): LocationSymbols {
     const copy = new LocationSymbols(source.locationName);
     copy.hasErrors = source.hasErrors;
+    copy.regexOnly = source.regexOnly;
 
     // Copy scope hierarchy and local-name indices (shared, no line info)
     for (const [k, v] of source.scopeParent) copy.scopeParent.set(k, v);
@@ -707,6 +735,7 @@ export class LocationSymbols {
       for (const d of source.dynamicVarCalls) copy.dynamicVarCalls.push(d);
       for (const d of source.untrackedDynamicVarCalls) copy.untrackedDynamicVarCalls.push(d);
       for (const d of source.unresolvedDynamicVarCalls) copy.unresolvedDynamicVarCalls.push(d);
+      for (const d of source.dynamicLocationRefs) copy.dynamicLocationRefs.push(d);
       for (const d of source.deferredDynamicVarCalls) copy.deferredDynamicVarCalls.push(d);
       for (const d of source.resolvedDynamicBlocks) copy.resolvedDynamicBlocks.push(d);
       for (const [k, v] of source.variableBindings) copy.variableBindings.set(k, v);
@@ -791,6 +820,9 @@ export class LocationSymbols {
     }
     for (const d of source.unresolvedDynamicVarCalls) {
       copy.unresolvedDynamicVarCalls.push({ ...d, loc: shift(d.loc) });
+    }
+    for (const d of source.dynamicLocationRefs) {
+      copy.dynamicLocationRefs.push({ ...d, loc: shift(d.loc) });
     }
     for (const d of source.deferredDynamicVarCalls) {
       copy.deferredDynamicVarCalls.push({ ...d, loc: shift(d.loc) });

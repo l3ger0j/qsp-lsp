@@ -64,6 +64,8 @@ export interface DiagnosticSettings {
   shadowsPropagatedLocal: boolean;
   maxErrorsPerLocation: number;
   maxLocationLines: number;
+  /** At most this many diagnostics per file, the most severe first; 0 = all. */
+  maxPerFile: number;
 }
 
 // ── Main entry point ──────────────────────────────────────────────────
@@ -122,7 +124,7 @@ export function computeDiagnostics(
     checkLocationSymbols(
       ctx, locSyms, allLocationDefs,
       definedActions, definedObjects, referencedObjects,
-      callTypesPerTarget, isProject,
+      callTypesPerTarget, isProject, agg.hasRegexOnlyLocations,
     );
   }
 

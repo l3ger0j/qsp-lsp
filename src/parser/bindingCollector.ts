@@ -33,6 +33,7 @@ import {
 import { lookupArgConstraints, lookupFunctionReturnType } from './builtins';
 import { parseVarStringArg } from './variableBindings';
 import { isTupleTypedRhs, tupleLiteralOf, subtreeReferencesVariable } from './variableUtils';
+import { literalOf, share, targetPatternOf, type TargetPattern } from './targetPattern';
 
 /**
  * Internal binding info with parse-tree metadata for the retag pass
@@ -66,6 +67,16 @@ function rhsSnippet(node: Parser.SyntaxNode): string {
 }
 
 // ── Main entry point ─────────────────────────────────────────────────
+
+// What the jump graph may need of an assigned value (see BindingValue):
+// any string-variable write it can read something from, and single
+// literals, which also feed `'room_' + n`. Numeric arithmetic is left out.
+function valuePattern(rhs: Parser.SyntaxNode, writePrefix: TypePrefix): TargetPattern | undefined {
+  const pattern = targetPatternOf(rhs);
+  if (!pattern) return undefined;
+  if (literalOf(pattern) === undefined) return writePrefix === '$' ? pattern : undefined;
+  return share(pattern);
+}
 
 export function collectVariableBindings(
   locBlock: Parser.SyntaxNode,
@@ -113,8 +124,6 @@ export function collectVariableBindings(
   const callSites: CallSite[] = [];
 
   const isConsumed = (_id: number): boolean => false;
-
-  const cursor = locBlock.walk();
 
   // ── record(): convert an assignment pair into a BindingInfo ────
   //
@@ -212,6 +221,11 @@ export function collectVariableBindings(
           }
         }
       }
+    }
+
+    if (value.kind === 'expr' && !isCompound) {
+      const pattern = valuePattern(rhs, writePrefix);
+      if (pattern) value = { kind: 'expr', pattern };
     }
 
     const info: BindingInfo = {
@@ -571,11 +585,16 @@ export function collectVariableBindings(
       cursor.gotoParent();
     }
   };
-  if (cursor.gotoFirstChild()) {
-    do { visit(inDeferredExecution); } while (cursor.gotoNextSibling());
-    cursor.gotoParent();
+  // Created only here, after the setup above, so a throw there can't leak it.
+  const cursor = locBlock.walk();
+  try {
+    if (cursor.gotoFirstChild()) {
+      do { visit(inDeferredExecution); } while (cursor.gotoNextSibling());
+      cursor.gotoParent();
+    }
+  } finally {
+    cursor.delete();
   }
-  cursor.delete();
 
   // ── Retag pass: non-local binds → local scope ──────────────────
   const retagPass = () => {
@@ -735,32 +754,45 @@ export function collectVariableBindings(
   }
 
   // ── Capture code-block body writes ─────────────────────────────
+  //
+  // Each write walks up its ancestors once and is filed under every code
+  // block on the way. Asking every block about every write, walking up
+  // each time, costs blocks × writes × depth tree-sitter calls, which
+  // adds up on large locations.
   {
+    const codeBlockIds = new Set<number>();
     for (const bindings of bindingsByName.values()) {
       for (const cb of bindings) {
-        if (cb.value.kind !== 'code-block' || !cb.blockNode) continue;
-        const blockId = cb.blockNode.id;
-        const writes: Array<{ varBaseName: string; binding: VariableBinding }> = [];
-        for (const [otherName, otherBindings] of bindingsByName) {
-          for (const ob of otherBindings) {
-            if (ob === cb) continue;
-            let p: Parser.SyntaxNode | null = ob.stmtNode.parent;
-            let inside = false;
-            while (p) {
-              if (p.id === blockId) { inside = true; break; }
-              if (p.id === locBlock.id) break;
-              p = p.parent;
-            }
-            if (!inside) continue;
-            writes.push({ varBaseName: otherName, binding: { value: ob.value, stmtLoc: ob.stmtLoc, stmtText: ob.stmtText, isLocal: ob.isLocal, writePrefix: ob.writePrefix, isValueBearing: ob.isValueBearing, compoundOp: ob.compoundOp, scopeNodeId: ob.scopeNodeId, isolationAncestorId: ob.isolationAncestorId } });
+        if (cb.value.kind === 'code-block' && cb.blockNode) codeBlockIds.add(cb.blockNode.id);
+      }
+    }
+    if (codeBlockIds.size > 0) {
+      const writesByBlock = new Map<number, Array<{ source: BindingInfo; varBaseName: string; binding: VariableBinding }>>();
+      for (const [otherName, otherBindings] of bindingsByName) {
+        for (const ob of otherBindings) {
+          let write: { source: BindingInfo; varBaseName: string; binding: VariableBinding } | undefined;
+          for (let p = ob.stmtNode.parent; p && p.id !== locBlock.id; p = p.parent) {
+            if (!codeBlockIds.has(p.id)) continue;
+            write ??= { source: ob, varBaseName: otherName, binding: { value: ob.value, stmtLoc: ob.stmtLoc, stmtText: ob.stmtText, isLocal: ob.isLocal, writePrefix: ob.writePrefix, isValueBearing: ob.isValueBearing, compoundOp: ob.compoundOp, scopeNodeId: ob.scopeNodeId, isolationAncestorId: ob.isolationAncestorId } };
+            let list = writesByBlock.get(p.id);
+            if (!list) { list = []; writesByBlock.set(p.id, list); }
+            list.push(write);
           }
         }
-        if (writes.length > 0) cb.value = { ...cb.value, bodyWrites: writes };
+      }
+      for (const bindings of bindingsByName.values()) {
+        for (const cb of bindings) {
+          if (cb.value.kind !== 'code-block' || !cb.blockNode) continue;
+          const writes = (writesByBlock.get(cb.blockNode.id) ?? [])
+            .filter(w => w.source !== cb)
+            .map(w => ({ varBaseName: w.varBaseName, binding: w.binding }));
+          if (writes.length > 0) cb.value = { ...cb.value, bodyWrites: writes };
+        }
       }
     }
   }
 
-  // ── Virtual inlining fixpoint ──────────────────────────────────
+  // ── Virtual inlining ───────────────────────────────────────────
   {
     const deferredIds = new Set<number>();
     for (const targets of callSiteTargets.values()) {
@@ -792,27 +824,54 @@ export function collectVariableBindings(
         return null;
       };
 
-      let changed = true, guard = 0;
-      while (changed && guard++ < 16) {
-        changed = false;
-        for (const [name, bindings] of bindingsByName) {
-          const toAdd: BindingInfo[] = [];
-          const toRemove = new Set<BindingInfo>();
-          for (const b of bindings) {
-            const enclosing = findEnclosingDeferred(b.stmtNode);
-            if (!enclosing) continue;
-            const css = blockCallSites.get(enclosing.id);
-            if (!css || css.length === 0) continue;
-            toRemove.add(b);
-            for (const cs of css) {
-              toAdd.push({ ...b, stmtNode: cs.stmtNode, scopeNodeId: cs.scopeNodeId, isolationAncestorId: cs.isolationAncestorId });
+      // Where a block's writes end up: the call sites outside every
+      // deferred block, reached through the call sites that sit inside
+      // other deferred blocks. One walk over the block graph with a
+      // visited set: copying the writes again at every hop grew as
+      // (call sites)^hops for blocks that dispatch each other (menus
+      // opening menus) and ran large games out of memory. A block only
+      // ever run from inside a cycle has no such site; its writes stay
+      // at its direct call sites.
+      const landingSites = new Map<number, CSInfo[]>();
+      const landingSitesOf = (blockId: number): CSInfo[] => {
+        const cached = landingSites.get(blockId);
+        if (cached) return cached;
+        const out: CSInfo[] = [];
+        const seenSites = new Set<number>();
+        const visited = new Set<number>([blockId]);
+        const stack = [blockId];
+        while (stack.length > 0) {
+          for (const cs of blockCallSites.get(stack.pop()!) ?? []) {
+            const outer = findEnclosingDeferred(cs.stmtNode);
+            if (!outer) {
+              if (!seenSites.has(cs.stmtNode.id)) { seenSites.add(cs.stmtNode.id); out.push(cs); }
+            } else if (!visited.has(outer.id)) {
+              visited.add(outer.id);
+              stack.push(outer.id);
             }
           }
-          if (toRemove.size > 0 || toAdd.length > 0) {
-            bindingsByName.set(name, bindings.filter(b => !toRemove.has(b)).concat(toAdd));
-            changed = true;
+        }
+        const sites = out.length > 0 ? out : (blockCallSites.get(blockId) ?? []);
+        landingSites.set(blockId, sites);
+        return sites;
+      };
+
+      for (const [name, bindings] of bindingsByName) {
+        let moved = false;
+        const next: BindingInfo[] = [];
+        for (const b of bindings) {
+          const enclosing = findEnclosingDeferred(b.stmtNode);
+          const sites = enclosing && blockCallSites.has(enclosing.id) ? landingSitesOf(enclosing.id) : [];
+          if (sites.length === 0) {
+            next.push(b);
+            continue;
+          }
+          moved = true;
+          for (const cs of sites) {
+            next.push({ ...b, stmtNode: cs.stmtNode, scopeNodeId: cs.scopeNodeId, isolationAncestorId: cs.isolationAncestorId });
           }
         }
+        if (moved) bindingsByName.set(name, next);
       }
     }
   }

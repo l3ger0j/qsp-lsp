@@ -2,6 +2,13 @@
 
 Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Visual Studio Code, powered by a Language Server Protocol (LSP) server and [tree-sitter](https://tree-sitter.github.io/) grammar.
 
+## Installation
+
+- **VS Code Marketplace** / **Open VSX**: search for *QSP Language Support* in the Extensions view.
+- **From a release**: download `qsp-lsp-<version>.vsix` from [GitHub Releases](https://github.com/QSPFoundation/qsp-lsp/releases) and run **Extensions: Install from VSIX…**.
+
+Requires VS Code 1.85 or later. On [vscode.dev](https://vscode.dev) the extension runs in a lighter mode without the tree-sitter parser. What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
+
 ## Features
 
 ### Syntax Highlighting
@@ -48,7 +55,40 @@ Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Vi
     ]
   }
   ```
-  `outputFile` is relative to the workspace root. `files` controls the order in which source files are combined (each entry is a glob; omit `files` to collect all `.qsps`/`.qsrc` files alphabetically).
+  `outputFile` is relative to the workspace root (default: `<folder name>.qsp`). `files` controls the order in which source files are combined (each entry is a glob). If `files` is missing, **Run** and **Export** add it: they list the workspace's `.qsps`/`.qsrc` files with the main file first (see below), so the build order is always written down.
+- **Main file** — the file the game starts from: in a combined build its first location is the start location, in a `perFile` build its `.qsp` is the one **Run QSP Game** opens. It is chosen in this order:
+  1. `"mainFile"` in `txt2gam.json`, a regular expression searched case-insensitively in each source's workspace-relative path, e.g. `"^main\\.qsps$"`. The first match in build order wins.
+  2. The `qsp.game.mainFile` setting, same format.
+  3. Otherwise the first file in `files` order. When the setup wizard creates `txt2gam.json`, it asks for the main file with a list; if the list is dismissed, or `qsp.game.mainFileStrategy` is `root`, the first file from the workspace root is used instead. Either way the chosen file is saved as `mainFile`, so `txt2gam.json` always shows which file is the main one.
+
+  A configured pattern that is invalid or matches no source file stops the build with an error.
+- **Player** — **Run QSP Game** launches `"playerExecutable"` from `txt2gam.json` if it is set, otherwise the `qsp.game.playerExecutable` setting; with neither, it asks for the player once and saves it to the setting. In `txt2gam.json` a path with a `/` or `\` is relative to the workspace root (so a player kept in the repository works in any checkout), a bare name such as `qspgui` is looked up on `PATH`, and an absolute path is used as is. Since `txt2gam.json` is usually shared, it can hold one path per OS; an OS without an entry falls back to the setting:
+  ```json
+  "playerExecutable": {
+    "win32": "tools/qspgui/qspgui.exe",
+    "linux": "/usr/bin/qspgui",
+    "darwin": "/Applications/QSP.app/Contents/MacOS/qspgui"
+  }
+  ```
+- **Separate module builds** — set `"buildMode": "perFile"` in `txt2gam.json` (or the `qsp.game.buildMode` setting) to build each source file into its own `.qsp` next to it instead of one combined game: `main.qsps` → `main.qsp`, `data.qsps` → `data.qsp`. `outputFile` is not used in this mode. **Run QSP Game** starts the main file's `.qsp` (see above), and the game loads the other modules itself with `INCLIB 'data.qsp'`. When it creates `txt2gam.json` in this mode, the setup wizard writes `buildMode` instead of `outputFile`. A `.qsp` whose content hasn't changed is not rewritten. The `txt2gam.json` value overrides the setting. Two sources that would produce the same `.qsp` (e.g. `a.qsps` and `a.qsrc` in one folder) are reported as an error, and nothing is written if any file fails to build.
+
+### QSP Locations view
+A **QSP Locations** section in the Explorer side bar lists every location of the project (in project mode) or of the active file:
+- **Group by file** (folders and files as in the project, locations in source order) or **Show as list** (all locations alphabetically, with their file), switched with the button in the section header.
+- The start location — the first location of the main file — has a ▶ icon; locations with errors or warnings show the counts.
+- Click a location to open it. The location under the cursor is selected as you move through the code (`qsp.locations.followCursor`).
+- Right-click for **Find References**, **Rename**, **Duplicate** and **Delete**.
+
+### Jump Graph
+**QSP: Show Jump Graph** (the graph button in the editor title bar, `Ctrl+K J`, or **Show in Jump Graph** on a location in QSP Locations) opens a graph of who jumps to or calls whom in a tab beside the editor:
+- **Around location** shows the locations up to 1–3 steps away from one location, in either direction; **whole project** shows everything; **by file** shows one box per file with the number of jumps between files on the arrows (click a file to open it into its locations, click again to fold it). With **Follow cursor**, the graph centres on the location you are editing; in the whole-project and by-file views it selects that location instead of redrawing.
+- **Hubs**: locations that many others jump to or call (an inventory, shared functions) tangle the graph, so by default those with 20 or more callers are hidden. Their callers get a `↗N` mark, and the hidden hubs are listed above the graph; click one to centre on it. The threshold is in the toolbar.
+- **Find location** in the toolbar selects a location in the graph, or centres the graph on it if it isn't drawn. Hovering a location fades everything but its neighbours.
+- Arrows are styled by kind: `goto`/`xgoto` (solid), `gosub` and `@` calls as statements (dashed), `func`/`@` in expressions (dotted), `desc` (thin). Each kind can be hidden.
+- The start location is marked with ▶. Locations nothing jumps to are dashed; a target no file defines is shown in red.
+- A jump whose target is an expression (`gt $next`, `gt 'room_' + n`, `gt "room_<<n>>"`, `gt iif(x, 'a', 'b')`) gets a **possible** arrow (yellow, dotted) to each location its variables' known values name: the nearest write before the jump in its own location (`$loc = 'forest'` … `gt $loc`; every arm of an `if` just before it counts), else the nearest writes before the jumps and calls into the location (`$to = 'forest'` then `gt 'road'`, and `gt $to` in road), otherwise `$next = 'hall'` anywhere in the project (or in the same location for a `local`), chains like `$a = $b`, numbers for `'room_' + n` or `'room_' + $str(n)`, `$curloc` (`$back = $curloc` … `gt $back`), `$args[0]` from the arguments at the location's calls (`gs 'go', 'hall'`), and `func('pick')` from what `pick` puts in `result`. An unknown part is matched against location names (`'room_' + $f(x)` → every `room_…`), but a jump that could go to more than 20 locations is left unknown. Nothing is run, so values computed at run time are not seen: when some are, the jump also goes to a **?** node; hover it to see the expressions. Possible arrows count for reachability and can be hidden. The server log gets a `[jump graph]` line with how many dynamic jumps were resolved and, for the rest, why not (counts only, no names).
+- Click a location to open it, double-click to centre on it, double-click empty space to zoom in there, click an arrow to open where the jump is written. Hover shows files, lines and the calls.
+- Large graphs: up to about 80 locations the graph is drawn in layers; above that a force layout places the nodes, a slice at a time, so the panel stays usable (about 2 s for 1000 locations). Past 5000 arrows only the arrows of the location under the pointer, or the selected one, are drawn: tens of thousands at once are an unreadable tangle and made the panel crawl. Locations keep their places when the graph is redrawn after an edit, and a dragged location stays where you put it. The layout and drawing times are written to **QSP: Show Language Server Log**.
 
 ### Multi-File Operations
 - **List All Locations** — browse all locations across the file or project
@@ -56,6 +96,44 @@ Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Vi
 - **List All Variables** — browse all variables with usage summaries
 - **Move Locations to File** — select locations and move them to another QSP file
 - **Split Locations into Files** — select locations and create one `.qsps` file per location
+
+### Analysis Status
+- The `{}` item next to **QSP** in the status bar shows what the language server is doing: a spinner while it starts, loads the project (with a file count) or analyzes a large file, then **Ready** with the project size.
+- It also warns about degraded modes: **Limited mode** when the tree-sitter parser failed to load (regex-only analysis), **Per-location parsing** when a file's whole-file parse took too long, and **Reduced analysis** when the server ran short of memory (past 70% of its ~4 GB heap) and, rather than crash, stopped tracking locals passed between locations (and the checks built on them) and semantic highlighting of large files until it restarts. Click it (or run **QSP: Show Language Server Log**) for the server log.
+
+### Performance Diagnostics
+For large games (hundreds of locations, tens of megabytes), every analysis phase longer than a second (parsing, symbols, project aggregates, diagnostics) writes a `[perf]` line to **QSP: Show Language Server Log** with its time, a breakdown by step, and the heap before and after. Turn on `qsp.debug.performanceLog` to log every phase. The lines hold only numbers, never file, location or variable names. The server runs on VS Code's own runtime, whose heap is capped near 4 GB.
+
+### Crash Reports
+If the language server stops unexpectedly (for example it runs out of memory on a very large game), the extension saves a crash report to `.qsp/crash-reports/` in the project (the folder gets its own `.gitignore`, and the last five reports are kept) and tells you where the analysis was, e.g. *while analysing f01_l0007 (243 K chars, 4630 lines), step symbols, heap 3905 of 4096 MB*. The server records all the time, lightly: memory about every second, breadcrumbs when something looks wrong (the heap passing 50/70/85% of its limit, growing fast on one location, the analysis stuck on one location), the last locations it went through, and a heap sample near the limit. A server that was simply closed along with the editor, with nothing unusual recorded, gets no report. Turn it off with `qsp.crashReports.enabled`.
+- Files and locations appear in the report only under neutral names (`f01`, `f01_l0007`). What they stand for is saved next to the report (`crash-….names.json`) for you, and is not part of it.
+- With your consent (`qsp.crashReports.includeAnonymizedCode`: ask by default) the report can also carry the **anonymized code** of the location the server was stuck on: names become `var_0003`/`loc_0012`, strings become x-es, numbers 0, comments are removed. It keeps the structure that made the analysis fail, so the problem can be reproduced without the game.
+
+### MCP Server (AI agents)
+The extension ships an [MCP](https://modelcontextprotocol.io) server that lets AI agents work with a QSP project through the same analysis the editor uses, instead of plain text search.
+
+See [MCP.md](MCP.md) for what each tool does and how to connect agents.
+
+**Tools** (names are case-insensitive, lines are 1-based):
+- **Reading the project:**
+  - `qsp_list_locations`, `qsp_get_location`: list locations or get one's source.
+  - `qsp_find_references`: where a location, variable or object is defined and used.
+  - `qsp_diagnostics`: errors and warnings of the project or one file.
+  - `qsp_check_code`: diagnostics of code that isn't saved yet.
+  - `qsp_lookup_builtin`: documentation of a builtin. The whole reference is also the `qsp://builtins` resource.
+  - `qsp_list_variables`, `qsp_list_objects`: every variable or object in the project.
+- **`qsp_build`**: builds the `.qsp` like **Export QSP Game**, following `txt2gam.json`. It is never interactive: the password comes from the `qsp.game.password` setting.
+- **`qsp_rename`, `qsp_format_location`**: rename a location, variable or object across the project, or format one location. Both only show the changes unless called with `apply: true`.
+
+**In VS Code** (1.101+), the server is offered to agents such as Copilot agent mode automatically; turn it off with `qsp.mcp.enabled`.
+
+**Other agents** (Cline, Claude Code, Cursor, Claude Desktop, …): run **QSP: Copy MCP Server Config** and paste the JSON into the agent's MCP configuration. The config starts the server with VS Code's own runtime, so no separate Node.js is needed; it points at the installed VS Code and extension versions, so copy it again after updating either. To start the server with your own Node.js instead, use Node.js 18 or newer, e.g. for Claude Code:
+```
+claude mcp add qsp -- node <extension folder>/out/mcp/server.js --workspace .
+```
+If the agent reports "Connection closed", its log shows the server's stderr: an older Node.js is reported there by name and version.
+
+The server reads the files on disk: save files open in the editor before asking an agent to rename or format, and a file changed on disk after the analysis is not overwritten.
 
 ### Project Mode
 - When `qsp.project.enabled` is true, all `.qsps`/`.qsrc` files in the workspace are treated as one combined game
@@ -130,7 +208,12 @@ Full-featured [QSP (Quest Soft Player)](https://qsp.org) language support for Vi
 | `qsp.project.enabled` | `true` | Enable project mode: treat all `.qsps`/`.qsrc` files as one combined game |
 | `qsp.trace.server`    | `off`  | Traces LSP communication (`off`, `messages`, `verbose`) |
 | `qsp.semanticHighlighting.enabled` | `true` | Enable semantic token highlighting (requires tree-sitter) |
-| `qsp.game.playerExecutable` | — | Path to the QSP player executable used by Run Game. Set once and persisted globally. |
+| `qsp.locations.followCursor` | `true` | Select the location under the cursor in the QSP Locations view. |
+| `qsp.mcp.enabled` | `true` | Offer the QSP MCP server to AI agents in VS Code (1.101+). |
+| `qsp.game.playerExecutable` | — | Path to the QSP player executable used by Run Game. Set once and persisted globally. `playerExecutable` in `txt2gam.json` overrides it. |
+| `qsp.game.mainFile` | — | Regular expression for the main file, searched in workspace-relative paths (e.g. `^main\.qsps$`). Overridden by `mainFile` in `txt2gam.json` |
+| `qsp.game.mainFileStrategy` | `ask` | How the setup wizard picks the main file when none is configured: `ask` shows a list (dismiss → root files first), `root` puts root files first without asking |
+| `qsp.game.buildMode` | `single` | `single` builds one combined `.qsp`; `perFile` builds each source into its own `.qsp` next to it. Overridden by `buildMode` in `txt2gam.json` |
 | `qsp.game.password` | — | Default game password for export/import (leave blank for no password) |
 | `qsp.game.promptPassword` | `true` | Prompt for a password before each export |
 
@@ -208,10 +291,19 @@ npm run watch
 
 # Run tests
 npm test
+
+# UI tests: run inside a downloaded VS Code (needs a display; use xvfb-run on a headless Linux)
+npm run test:ui
 ```
 
-Press **F5** in VS Code to launch the Extension Development Host with the extension loaded.
+Debug configurations are in `.vscode/launch.json` (open this repository in VS Code, then **Run and Debug**):
+- **Run Extension** (**F5**) — builds the bundles and opens an Extension Development Host on `examples/`.
+- **Run Extension (Web)** — the same with the browser bundle, as on vscode.dev.
+- **Attach to Language Server** — attaches to the server on port 6009; **Extension + Language Server** starts both.
+- **UI Tests** — runs `test/ui` under the debugger.
+
+Before a pull request, run `npm run check` (what CI runs: grammar tests, bundles, type-check, tests, lint, third-party notices); `npm run release` also packages the VSIX. The architecture, invariants and conventions of the code base are in [CLAUDE.md](CLAUDE.md), planned work in [TODO.md](TODO.md).
 
 ## License
 
-MPL-2.0
+[MPL-2.0](LICENSE). The extension bundles third-party libraries under their own licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

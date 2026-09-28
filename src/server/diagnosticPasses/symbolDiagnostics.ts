@@ -330,6 +330,7 @@ export function checkLocationSymbols(
   referencedObjects: ReadonlySet<string>,
   callTypesPerTarget: ReadonlyMap<string, { name: string; types: Set<string> }>,
   isProject: boolean,
+  referencesIncomplete: boolean,
 ): void {
   if (ctx.settings.duplicateLabels)            checkDuplicateLabels(ctx, locSyms);
   if (ctx.settings.duplicateActions)           checkDuplicateActions(ctx, locSyms);
@@ -339,7 +340,7 @@ export function checkLocationSymbols(
   if (ctx.settings.unresolvedActionRefs)       checkUnresolvedActionRefs(ctx, locSyms, definedActions);
   if (ctx.settings.unresolvedObjectRefs)       checkUnresolvedObjectRefs(ctx, locSyms, definedObjects);
   if (ctx.settings.unusedLabels)               checkUnusedLabels(ctx, locSyms);
-  if (ctx.settings.unusedObjects)              checkUnusedObjects(ctx, locSyms, referencedObjects);
+  if (ctx.settings.unusedObjects && !referencesIncomplete) checkUnusedObjects(ctx, locSyms, referencedObjects);
   if (ctx.settings.invalidFunctionPrefix)      checkInvalidFunctionPrefix(ctx, locSyms);
   if (ctx.settings.invalidBuiltinArgCount)     checkInvalidArgCount(ctx, locSyms);
   if (ctx.settings.mixedLocationCallTypes)     checkMixedCallTypes(ctx, locSyms, callTypesPerTarget);

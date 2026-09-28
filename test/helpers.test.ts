@@ -2,7 +2,10 @@
  * Tests for server-side pure helper functions.
  */
 import { describe, it, expect } from 'vitest';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 import {
+  getWordInfo,
+  startsWithKeyword,
   opensBlock,
   findColonOutsideStrings,
   splitInlineStatement,
@@ -728,5 +731,34 @@ describe('parseActName', () => {
   it('should handle nested parens inside an expression', () => {
     expect(parseActName("act (iif(x, 'a', 'b')):"))
       .toEqual({ name: "iif(x, 'a', 'b')", extraLines: 0 });
+  });
+});
+
+// QSP names may contain Cyrillic and symbols like `№` (grammar.js
+// `identifier_text`); JS `\b` and `\p{L}` classes don't match those.
+describe('QSP names with Cyrillic and symbols', () => {
+  it('startsWithKeyword treats a Cyrillic continuation as part of a longer name', () => {
+    expect(startsWithKeyword('endсчёт = 2', 'end')).toBe(false);
+    expect(startsWithKeyword('end_game = 1', 'end')).toBe(false);
+    expect(startsWithKeyword('End ! done', 'end')).toBe(true);
+    expect(startsWithKeyword('end', 'end')).toBe(true);
+    expect(startsWithKeyword('if(x): pl 1', 'if')).toBe(true);
+    expect(startsWithKeyword('elseif x:', 'else', 'elseif')).toBe(true);
+    expect(startsWithKeyword('elseсчёт', 'else', 'elseif')).toBe(false);
+  });
+
+  it('formatLines indents a variable whose name starts with `end`', () => {
+    expect(formatLines(['if x:', 'endсчёт = 2', 'pl 1', 'end'])).toBe('if x:\n  endсчёт = 2\n  pl 1\nend');
+  });
+
+  it('opensBlock rejects a Cyrillic name that starts with a keyword', () => {
+    expect(opensBlock('ifсчёт:')).toBe(false);
+  });
+
+  it('getWordInfo returns the whole name including `№`', () => {
+    const doc = TextDocument.create('file:///w.qsps', 'qsp', 1, 'счёт№1 = $имя№2 + 1');
+    expect(getWordInfo(doc, { line: 0, character: 5 })?.word).toBe('счёт№1');
+    const prefixed = getWordInfo(doc, { line: 0, character: 12 });
+    expect(prefixed).toMatchObject({ word: 'имя№2', hasTypePrefix: true });
   });
 });

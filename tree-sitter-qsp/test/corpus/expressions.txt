@@ -617,6 +617,98 @@ x = (1 +
     (location_end)))
 
 ================
+Multiline or with closing paren on next line
+================
+# test
+x = (a or b
+)
+--
+---
+
+(source_file
+  (location_block
+    (location_header
+      (location_name))
+    (single_line_block
+      (assignment_statement
+        variables: (variable_list
+          (variable_ref
+            name: (identifier_text)))
+        operator: (assignment_operator)
+        value: (paren_expr
+          (ml_binary
+            (ml_variable_ref
+              name: (identifier_text))
+            (op_or)
+            (ml_variable_ref
+              name: (identifier_text))))))
+    (location_end)))
+
+================
+Multiline or chain is left-associative and closes on next line
+================
+# test
+x = (a
+ or b
+ or c
+)
+--
+---
+
+(source_file
+  (location_block
+    (location_header
+      (location_name))
+    (single_line_block
+      (assignment_statement
+        variables: (variable_list
+          (variable_ref
+            name: (identifier_text)))
+        operator: (assignment_operator)
+        value: (paren_expr
+          (ml_binary
+            (ml_binary
+              (ml_variable_ref
+                name: (identifier_text))
+              (op_or)
+              (ml_variable_ref
+                name: (identifier_text)))
+            (op_or)
+            (ml_variable_ref
+              name: (identifier_text))))))
+    (location_end)))
+
+================
+Multiline or in function args with closing paren on next line
+================
+# test
+x = max(a or b
+)
+--
+---
+
+(source_file
+  (location_block
+    (location_header
+      (location_name))
+    (single_line_block
+      (assignment_statement
+        variables: (variable_list
+          (variable_ref
+            name: (identifier_text)))
+        operator: (assignment_operator)
+        value: (na_func_call
+          name: (function_name)
+          (paren_args
+            (ml_binary
+              (ml_variable_ref
+                name: (identifier_text))
+              (op_or)
+              (ml_variable_ref
+                name: (identifier_text)))))))
+    (location_end)))
+
+================
 Division operator
 ================
 # test
@@ -695,4 +787,266 @@ x = ((1 + 2) * (3 + 4))
                 (number_literal)
                 (op_arith)
                 (number_literal)))))))
+    (location_end)))
+
+================
+Multiline grouping: comparison binds tighter than or across a newline
+================
+# test
+x = (a = 1
+ or b = 2)
+--
+---
+
+(source_file
+  (location_block
+    (location_header
+      (location_name))
+    (single_line_block
+      (assignment_statement
+        (variable_list
+          (variable_ref
+            (identifier_text)))
+        (assignment_operator)
+        (paren_expr
+          (ml_binary
+            (ml_binary
+              (ml_variable_ref
+                (identifier_text))
+              (op_cmp)
+              (number_literal))
+            (op_or)
+            (ml_binary
+              (ml_variable_ref
+                (identifier_text))
+              (op_cmp)
+              (number_literal))))))
+    (location_end)))
+
+================
+Multiline grouping: product binds tighter than sum across a newline
+================
+# test
+x = (a
+ + 1
+ * 2)
+--
+---
+
+(source_file
+  (location_block
+    (location_header
+      (location_name))
+    (single_line_block
+      (assignment_statement
+        (variable_list
+          (variable_ref
+            (identifier_text)))
+        (assignment_operator)
+        (paren_expr
+          (ml_binary
+            (ml_variable_ref
+              (identifier_text))
+            (op_arith)
+            (ml_binary
+              (number_literal)
+              (op_arith)
+              (number_literal))))))
+    (location_end)))
+
+================
+Multiline grouping: and binds tighter than a preceding or
+================
+# test
+x = (a or b
+ and c)
+--
+---
+
+(source_file
+  (location_block
+    (location_header
+      (location_name))
+    (single_line_block
+      (assignment_statement
+        (variable_list
+          (variable_ref
+            (identifier_text)))
+        (assignment_operator)
+        (paren_expr
+          (ml_binary
+            (ml_variable_ref
+              (identifier_text))
+            (op_or)
+            (ml_binary
+              (ml_variable_ref
+                (identifier_text))
+              (op_and)
+              (ml_variable_ref
+                (identifier_text)))))))
+    (location_end)))
+
+================
+Multiline grouping: looser operator after a newline closes the tighter one
+================
+# test
+x = (a * 2
+ - 1 >= b
+ and c <> d)
+--
+---
+
+(source_file
+  (location_block
+    (location_header
+      (location_name))
+    (single_line_block
+      (assignment_statement
+        (variable_list
+          (variable_ref
+            (identifier_text)))
+        (assignment_operator)
+        (paren_expr
+          (ml_binary
+            (ml_binary
+              (ml_binary
+                (ml_binary
+                  (ml_variable_ref
+                    (identifier_text))
+                  (op_arith)
+                  (number_literal))
+                (op_arith)
+                (number_literal))
+              (op_cmp)
+              (ml_variable_ref
+                (identifier_text)))
+            (op_and)
+            (ml_binary
+              (ml_variable_ref
+                (identifier_text))
+              (op_cmp)
+              (ml_variable_ref
+                (identifier_text)))))))
+    (location_end)))
+
+================
+Multiline grouping: keyword operators need a word boundary
+================
+# test
+x = (a
+ mod 2
+ or(b))
+--
+---
+
+(source_file
+  (location_block
+    (location_header
+      (location_name))
+    (single_line_block
+      (assignment_statement
+        (variable_list
+          (variable_ref
+            (identifier_text)))
+        (assignment_operator)
+        (paren_expr
+          (ml_binary
+            (ml_binary
+              (ml_variable_ref
+                (identifier_text))
+              (op_mod)
+              (number_literal))
+            (op_or)
+            (paren_expr
+              (ml_variable_ref
+                (identifier_text)))))))
+    (location_end)))
+
+================
+Multiline grouping: interpolation closer after a newline is not an operator
+================
+# test
+x = '<<a
+ or b
+>>'
+--
+---
+
+(source_file
+  (location_block
+    (location_header
+      (location_name))
+    (single_line_block
+      (assignment_statement
+        (variable_list
+          (variable_ref
+            (identifier_text)))
+        (assignment_operator)
+        (string
+          (single_quoted_string
+            (string_interpolation
+              (ml_binary
+                (ml_variable_ref
+                  (identifier_text))
+                (op_or)
+                (ml_variable_ref
+                  (identifier_text))))))))
+    (location_end)))
+
+================
+Multiline grouping: line continuations inside parentheses
+================
+# test
+x = ( a = 'D'  _
+		and b ! 'C' _
+	) or ( c ! 'D'  _
+		and d ! 'A' )
+--
+---
+
+(source_file
+  (location_block
+    (location_header
+      (location_name))
+    (single_line_block
+      (assignment_statement
+        (variable_list
+          (variable_ref
+            (identifier_text)))
+        (assignment_operator)
+        (na_binary
+          (paren_expr
+            (ml_binary
+              (ml_binary
+                (ml_variable_ref
+                  (identifier_text))
+                (op_cmp)
+                (string
+                  (single_quoted_string)))
+              (line_continuation_ext)
+              (op_and)
+              (ml_binary
+                (ml_variable_ref
+                  (identifier_text))
+                (op_cmp)
+                (string
+                  (single_quoted_string))))
+            (line_continuation_ext))
+          (op_or)
+          (paren_expr
+            (ml_binary
+              (ml_binary
+                (ml_variable_ref
+                  (identifier_text))
+                (op_cmp)
+                (string
+                  (single_quoted_string)))
+              (line_continuation_ext)
+              (op_and)
+              (ml_binary
+                (ml_variable_ref
+                  (identifier_text))
+                (op_cmp)
+                (string
+                  (single_quoted_string))))))))
     (location_end)))

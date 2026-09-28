@@ -29,6 +29,7 @@ import {
   nodeLoc,
   findStringInFirstArg,
   findDirectString,
+  getFirstArgNode,
   getNthArgNode,
   extractQuotedRefInfo,
   extractExactQuotedRefInfo,
@@ -39,6 +40,7 @@ import {
 } from './walkHelpers';
 import { lookupValidPrefixes, lookupArgConstraints, lookupDeprecated } from './builtins';
 import { parseVarStringArg } from './variableBindings';
+import { argPatternsOf, targetPatternOf } from './targetPattern';
 
 // ── Variable extraction ───────────────────────────────────────────────
 
@@ -184,6 +186,38 @@ export function extractAction(
 
 // ── Location reference extraction ─────────────────────────────────────
 
+// A jump or call whose target isn't a plain string literal (a variable,
+// an expression, an interpolated string). It has no name to be a location
+// ref under, but the jump graph still shows it as a jump to an unknown target.
+function recordDynamicLocationRef(
+  node: Parser.SyntaxNode,
+  callName: string,
+  locSymbols: LocationSymbols,
+  docUri: string,
+): void {
+  const target = getFirstArgNode(node);
+  if (!target) return;
+  const loc = nodeLoc(target, docUri);
+  loc.callType = CALL_TYPE_MAP.get(callName);
+  loc.callText = collapseNewlines(node.text);
+  loc.argCount = Math.max(0, countCallArgs(node) - 1);
+  locSymbols.dynamicLocationRefs.push({
+    loc, exprText: collapseNewlines(target.text), target: targetPatternOf(target, true), callColumn: node.startPosition.column,
+  });
+}
+
+// The arguments after the location name of `gs 'name', a, b` / `func('name', a)`.
+function setArgPatterns(loc: SymbolLocation, node: Parser.SyntaxNode): void {
+  if (!loc.argCount) return;
+  const args: Parser.SyntaxNode[] = [];
+  for (let i = 1; i <= Math.min(loc.argCount, 4); i++) {
+    const a = getNthArgNode(node, i);
+    if (a) args.push(a);
+  }
+  const patterns = argPatternsOf(args);
+  if (patterns) loc.argPatterns = patterns;
+}
+
 export function extractLocationRef(
   node: Parser.SyntaxNode,
   locSymbols: LocationSymbols,
@@ -207,7 +241,10 @@ export function extractLocationRef(
 
   if (LOCATION_REF_NAMES.has(stmtName)) {
     const firstString = findStringInFirstArg(node);
-    if (!firstString) return;
+    if (!firstString) {
+      recordDynamicLocationRef(node, stmtName, locSymbols, docUri);
+      return;
+    }
     const { name: refName, loc } = extractQuotedRefInfo(firstString, docUri);
     if (LOCALS_PROPAGATING_NAMES.has(stmtName)) {
       loc.localsInScope = locSymbols.getLocalsInScope(scopeId);
@@ -215,6 +252,7 @@ export function extractLocationRef(
     loc.callType = CALL_TYPE_MAP.get(stmtName);
     loc.callText = collapseNewlines(node.text);
     loc.argCount = Math.max(0, countCallArgs(node) - 1);
+    setArgPatterns(loc, node);
     locSymbols.addLocationRef(refName, loc);
     return;
   }
@@ -281,7 +319,10 @@ export function extractFuncCallLocationRef(
 
   if (LOCATION_REF_NAMES.has(funcName)) {
     const firstString = findStringInFirstArg(node);
-    if (!firstString) return;
+    if (!firstString) {
+      recordDynamicLocationRef(node, funcName, locSymbols, docUri);
+      return;
+    }
     const { name: refName, loc } = extractQuotedRefInfo(firstString, docUri);
     if (LOCALS_PROPAGATING_NAMES.has(funcName)) {
       loc.localsInScope = locSymbols.getLocalsInScope(scopeId);
@@ -289,6 +330,7 @@ export function extractFuncCallLocationRef(
     loc.callType = CALL_TYPE_MAP.get(funcName);
     loc.callText = collapseNewlines(node.text);
     loc.argCount = Math.max(0, countCallArgs(node) - 1);
+    setArgPatterns(loc, node);
     locSymbols.addLocationRef(refName, loc);
     return;
   }
@@ -352,7 +394,7 @@ export function checkArgCount(
   if (!info) return;
 
   const actual = countCallArgs(node);
-  const min = info.minArgs as number;
+  const min = info.minArgs;
   const max = info.maxArgs;
   if (actual >= min && (max === undefined || actual <= max)) return;
 
@@ -408,6 +450,12 @@ export function extractUserCallRef(
     callText: collapseNewlines(node.text),
     argCount,
   };
+  if (argCount > 0) {
+    const paren = node.namedChildren.find(c => c.type === 'paren_args');
+    const args = paren ? paren.namedChildren : node.namedChildren.filter(c => c.type !== 'user_name');
+    const patterns = argPatternsOf(args);
+    if (patterns) loc.argPatterns = patterns;
+  }
 
   locSymbols.addLocationRef(nameNode.text.trim(), loc);
 }

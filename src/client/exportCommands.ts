@@ -25,8 +25,13 @@ import {
   ensureGameConfig,
   readGameConfig,
   collectOrderedUris,
+  orderedProjectUris,
   resolveOutputUri,
+  effectiveBuildMode,
+  type GameConfig,
 } from './gameConfig';
+import { findOutputCollisions, perFileOutputPath } from '../common/buildPlan';
+import { joinSources, normalizeText } from '../common/projectFiles';
 import * as logger from './logger';
 
 // UTF-8 BOM — matches what txt2gam CLI emits and what the server's
@@ -73,32 +78,103 @@ export async function collectProjectUris(glob: string): Promise<vscode.Uri[]> {
 }
 
 /**
- * Combine multiple .qsps files into a single text source.
- *
- * Files are separated by a blank line so that the last `---` of one
- * file and the first `#` of the next are never on the same line.
- * Each file's content has a trailing newline guaranteed.
+ * Combine multiple .qsps files into a single text source (see
+ * `joinSources` for the separators).
  */
 export async function combineFiles(
   uris: vscode.Uri[],
   context: vscode.ExtensionContext,
 ): Promise<string> {
-  const parts: string[] = [];
-  for (const uri of uris) {
-    let text = normalizeText(await readFileAsText(uri, context));
-    // Ensure the file ends with a newline
-    if (!text.endsWith('\n')) text += '\n';
-    parts.push(text);
-  }
-  // Join with a blank line between files
-  return parts.join('\n');
+  const texts: string[] = [];
+  for (const uri of uris) texts.push(await readFileAsText(uri, context));
+  return joinSources(texts);
 }
 
-/** Strip BOM and normalise line endings to LF. */
-export function normalizeText(text: string): string {
-  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+/**
+ * Build the project's .qsp file(s) according to its build mode and write
+ * the ones whose content changed. The main file (`mainFile` pattern) is
+ * moved to the front first. Returns every output file in that order,
+ * written or already up to date, so the first one is
+ * the game the player should start; an empty array means there were no
+ * source files. Throws with a user-facing message on failure, before
+ * anything is written: every file is encoded first so one bad file can't
+ * leave a mix of fresh and stale .qsp modules behind.
+ */
+export async function buildProjectGame(
+  context: vscode.ExtensionContext,
+  gameCfg: GameConfig,
+  glob: string,
+  password: string | undefined,
+): Promise<vscode.Uri[]> {
+  const uris = await orderedProjectUris(gameCfg, glob);
+  if (uris.length === 0) return [];
+  const mode = effectiveBuildMode(gameCfg);
+  logger.log(`[Build] ${uris.length} source file(s), build mode: ${mode}, main file: ${vscode.workspace.asRelativePath(uris[0])}`);
+
+  const outputs: { uri: vscode.Uri; bytes: Uint8Array }[] = [];
+  if (mode === 'single') {
+    const text = await combineFiles(uris, context);
+    outputs.push({
+      uri: resolveOutputUri(gameCfg),
+      bytes: await encodeTextToGame(context.extensionUri, text, { password }),
+    });
+  } else {
+    const byPath = new Map(uris.map(u => [u.path, u]));
+    const collisions = findOutputCollisions([...byPath.keys()]);
+    if (collisions.length > 0) {
+      const list = collisions.map(c => {
+        const sources = c.sources.map(s => vscode.workspace.asRelativePath(byPath.get(s)!)).join(' + ');
+        const output = vscode.workspace.asRelativePath(byPath.get(c.sources[0])!.with({ path: c.output }));
+        return `${sources} → ${output}`;
+      }).join('; ');
+      throw new Error(`Several source files would be built into the same .qsp: ${list}`);
+    }
+    for (const uri of uris) {
+      const rel = vscode.workspace.asRelativePath(uri);
+      try {
+        const text = normalizeText(await readFileAsText(uri, context));
+        outputs.push({
+          uri: uri.with({ path: perFileOutputPath(uri.path) }),
+          bytes: await encodeTextToGame(context.extensionUri, text, { password }),
+        });
+      } catch (err) {
+        throw new Error(`${rel}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  // txt2gam output is deterministic for the same text and password, so a
+  // file whose bytes already match the new build is left untouched (its
+  // mtime too). Comparing bytes rather than timestamps stays correct after
+  // a password change and for unsaved editor buffers.
+  for (const { uri, bytes } of outputs) {
+    const rel = vscode.workspace.asRelativePath(uri);
+    const onDisk = await compareWithDisk(uri, bytes);
+    if (onDisk === 'same') {
+      logger.log(`[Build] Unchanged: ${rel}`);
+      continue;
+    }
+    await vscode.workspace.fs.writeFile(uri, bytes);
+    logger.log(`[Build] Written (${onDisk}): ${rel} (${Math.round(bytes.byteLength / 1024)}kb)`);
+  }
+  return outputs.map(o => o.uri);
 }
+
+async function compareWithDisk(uri: vscode.Uri, bytes: Uint8Array): Promise<'same' | 'changed' | 'new'> {
+  let existing: Uint8Array;
+  try {
+    existing = await vscode.workspace.fs.readFile(uri);
+  } catch {
+    return 'new';
+  }
+  if (existing.byteLength !== bytes.byteLength) return 'changed';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    if (existing[i] !== bytes[i]) return 'changed';
+  }
+  return 'same';
+}
+
+export { normalizeText };
 
 /** Return the workspace name or a fallback. */
 function workspaceName(): string {
@@ -170,21 +246,14 @@ export async function exportGameCommand(
     .getConfiguration('qsp')
     .get<boolean>('project.enabled', true);
 
-  let sourceText: string;
-  let saveUri: vscode.Uri;
+  // Project mode builds through buildProjectGame; single-file mode encodes the active editor.
+  let gameCfg: GameConfig | undefined;
+  let sourceText = '';
+  let saveUri: vscode.Uri | undefined;
 
   if (projectEnabled) {
-    const glob = qspGlob(context);
-    const gameCfg = await ensureGameConfig(glob);
+    gameCfg = await ensureGameConfig(qspGlob(context));
     if (!gameCfg) return; // user cancelled setup
-    const uris = await collectOrderedUris(gameCfg, glob);
-    if (uris.length === 0) {
-      vscode.window.showWarningMessage('No QSP source files found in the workspace.');
-      return;
-    }
-    logger.log(`[Export] Found ${uris.length} source file(s)`);
-    sourceText = await combineFiles(uris, context);
-    saveUri = resolveOutputUri(gameCfg);
   } else {
     const editor = getActiveQspEditor();
     if (!editor) return;
@@ -221,13 +290,22 @@ export async function exportGameCommand(
     { location: vscode.ProgressLocation.Notification, title: 'Exporting game…' },
     async () => {
       try {
-        const gameBytes = await encodeTextToGame(context.extensionUri, sourceText, { password });
-        await vscode.workspace.fs.writeFile(saveUri, gameBytes);
-        const sizeKb = Math.round(gameBytes.byteLength / 1024);
-        logger.log(`[Export] Written: ${vscode.workspace.asRelativePath(saveUri)} (${sizeKb}kb)`);
-        vscode.window.showInformationMessage(
-          `Exported to ${vscode.workspace.asRelativePath(saveUri)}`,
-        );
+        let written: vscode.Uri[];
+        if (gameCfg) {
+          written = await buildProjectGame(context, gameCfg, qspGlob(context), password);
+          if (written.length === 0) {
+            vscode.window.showWarningMessage('No QSP source files found in the workspace.');
+            return;
+          }
+        } else {
+          const gameBytes = await encodeTextToGame(context.extensionUri, sourceText, { password });
+          await vscode.workspace.fs.writeFile(saveUri!, gameBytes);
+          logger.log(`[Export] Written: ${vscode.workspace.asRelativePath(saveUri!)} (${Math.round(gameBytes.byteLength / 1024)}kb)`);
+          written = [saveUri!];
+        }
+        vscode.window.showInformationMessage(written.length === 1
+          ? `Exported to ${vscode.workspace.asRelativePath(written[0])}`
+          : `Exported ${written.length} files`);
       } catch (err) {
         logger.log(`[Export] Failed: ${err instanceof Error ? err.message : String(err)}`);
         vscode.window.showErrorMessage(

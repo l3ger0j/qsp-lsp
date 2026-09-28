@@ -46,8 +46,9 @@ import type {
 } from './aggregation';
 import { buildFileAggregates } from './aggregation';
 import { buildSemanticTokens } from './semanticTokens';
-import { formatLines, inferIndentLevel, uriBasename as basename } from './helpers';
+import { formatLines, getWordInfo, inferIndentLevel, startsWithKeyword, uriBasename as basename } from './helpers';
 import { locationNameCol } from './regexFallback';
+import { perLocationCacheKeys } from './serverUtils';
 import {
   detectEol,
   buildExtractToLocationEdit,
@@ -78,6 +79,7 @@ import type {
   PerLocationParseResult,
 } from './featureTypes';
 import type { ProjectVariableItem } from './featureTypes';
+import { buildJumpGraph, formatDynamicJumpStats, newDynamicJumpStats, type JumpGraphSource } from './jumpGraph';
 
 // Re-export types that consumers need
 export type {
@@ -188,50 +190,6 @@ export function buildOutlineSymbols(
     });
   }
   return symbols;
-}
-
-// Spaced QSP statement forms for word detection
-const SPACED_STATEMENTS_RE = /(?:add obj|del obj|del act|mod obj|close all)/gi;
-
-function getWordInfo(doc: TextDocument, pos: import('vscode-languageserver').Position):
-  { word: string; hasTypePrefix: boolean; range: Range } | null {
-  const line = doc.getText({
-    start: { line: pos.line, character: 0 },
-    end: { line: pos.line, character: Number.MAX_SAFE_INTEGER },
-  });
-
-  // `matchAll` returns a fresh iterator each call, so the early
-  // `return` inside the loop cannot leak `lastIndex` state into the
-  // next invocation — unlike a stateful `re.exec()` loop.
-  for (const m of line.matchAll(SPACED_STATEMENTS_RE)) {
-    const idx = m.index ?? 0;
-    if (pos.character >= idx && pos.character <= idx + m[0].length) {
-      return {
-        word: m[0].toLowerCase(),
-        hasTypePrefix: false,
-        range: {
-          start: { line: pos.line, character: idx },
-          end: { line: pos.line, character: idx + m[0].length },
-        },
-      };
-    }
-  }
-
-  const re = /[*$#%]?[\p{L}_][\p{L}\p{N}_.]*/gu;
-  for (const match of line.matchAll(re)) {
-    const start = match.index ?? 0;
-    const end = start + match[0].length;
-    if (pos.character >= start && pos.character <= end) {
-      const raw = match[0];
-      const range: Range = {
-        start: { line: pos.line, character: start },
-        end: { line: pos.line, character: end },
-      };
-      if (/^[$#%]/.test(raw)) return { word: raw.slice(1), hasTypePrefix: true, range };
-      return { word: raw, hasTypePrefix: false, range };
-    }
-  }
-  return null;
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -656,14 +614,18 @@ export function registerLspFeatures(ctx: ServerContext): void {
               let lineOffset = 0;
               let tempTree = false;
               if (!tree && state.perLocationCache) {
-                const cached = state.perLocationCache.get(currentLoc.nameLower);
+                // Keyed like the cache's writers (see perLocationCacheKeys'
+                // doc comment) — plain nameLower would only ever find the
+                // FIRST of two same-named locations' cached tree.
+                const cacheKey = perLocationCacheKeys(state.locationIndex)[state.locationIndex.indexOf(currentLoc)];
+                const cached = state.perLocationCache.get(cacheKey);
                 if (cached?.tree) { tree = cached.tree; lineOffset = currentLoc.startLine; }
                 else {
                   const locText = state.rawText?.slice(currentLoc.startOffset, currentLoc.endOffset);
                   if (locText) { tree = ctx.tsParser.parseOnce(locText); lineOffset = currentLoc.startLine; tempTree = true; }
                 }
               }
-              if (tree) {
+              if (tree) try {
                 const key = varSym.nameLower;
                 const projectDocs: DocumentSymbols[] = [];
                 for (const [otherUri, st] of documentStates) {
@@ -683,6 +645,7 @@ export function registerLspFeatures(ctx: ServerContext): void {
                 for (const ln of buildPossibleValuesLines(entries, uri, { expandVarRef, maxItems: ctx.settings.hover.maxItemsPerCategory })) {
                   lines.push(ln);
                 }
+              } finally {
                 if (tempTree) tree.delete();
               }
             }
@@ -816,7 +779,7 @@ export function registerLspFeatures(ctx: ServerContext): void {
     const locEndLine = cursorLoc?.endLine ?? doc.lineCount - 1;
 
     if (!isBlockKeywordLine(doc, range.start.line, locEndLine)) {
-      const kw = /^if\b/i.test(lower) ? 'if' : /^\s*act\b/i.test(lower) ? 'act' : /^\s*loop\b/i.test(lower) ? 'loop' : null;
+      const kw = (['if', 'act', 'loop'] as const).find(k => startsWithKeyword(lower, k)) ?? null;
       if (kw) {
         const edit = buildInlineToBlockEdit(doc, range.start.line, line);
         if (edit) actions.push({ title: `Convert to block ${kw}...end`, kind: CodeActionKind.Refactor, edit });
@@ -875,28 +838,32 @@ export function registerLspFeatures(ctx: ServerContext): void {
       const FOLDABLE_TYPES = new Set(['act_block', 'if_block', 'loop_block']);
       const cursor = tree.rootNode.walk();
       let reachedRoot = false;
-      do {
-        const node = cursor.currentNode;
-        if (FOLDABLE_TYPES.has(node.type)) {
-          const startLine = node.startPosition.row;
-          const endLine = node.endPosition.row;
-          if (endLine > startLine) ranges.push({ startLine, endLine, kind: FoldingRangeKind.Region });
-        }
-        if (cursor.gotoFirstChild()) continue;
-        if (cursor.gotoNextSibling()) continue;
-        while (!reachedRoot) {
-          if (!cursor.gotoParent()) { reachedRoot = true; break; }
-          if (cursor.gotoNextSibling()) break;
-        }
-      } while (!reachedRoot);
+      try {
+        do {
+          const node = cursor.currentNode;
+          if (FOLDABLE_TYPES.has(node.type)) {
+            const startLine = node.startPosition.row;
+            const endLine = node.endPosition.row;
+            if (endLine > startLine) ranges.push({ startLine, endLine, kind: FoldingRangeKind.Region });
+          }
+          if (cursor.gotoFirstChild()) continue;
+          if (cursor.gotoNextSibling()) continue;
+          while (!reachedRoot) {
+            if (!cursor.gotoParent()) { reachedRoot = true; break; }
+            if (cursor.gotoNextSibling()) break;
+          }
+        } while (!reachedRoot);
+      } finally {
+        cursor.delete();
+      }
     } else {
       const blockStack: { keyword: string; line: number }[] = [];
       for (let i = 0; i < lines.length; i++) {
         const trimmed = lines[i].trimStart();
         const lower = trimmed.toLowerCase();
-        if (/^(act|if|loop)\b/i.test(lower) && lower.includes(':')) {
+        if (startsWithKeyword(lower, 'act', 'if', 'loop') && lower.includes(':')) {
           blockStack.push({ keyword: lower.split(/\s/)[0], line: i });
-        } else if (/^end\b/i.test(lower) && blockStack.length > 0) {
+        } else if (startsWithKeyword(lower, 'end') && blockStack.length > 0) {
           const open = blockStack.pop()!;
           if (i > open.line) ranges.push({ startLine: open.line, endLine: i, kind: FoldingRangeKind.Region });
         }
@@ -938,7 +905,11 @@ export function registerLspFeatures(ctx: ServerContext): void {
     if (!tree && state?.perLocationCache) {
       const loc = findLocationAtLine(state.locationIndex, params.position.line);
       if (loc) {
-        const cached = state.perLocationCache.get(loc.nameLower);
+        // Keyed like the cache's writers — see perLocationCacheKeys' doc
+        // comment (plain nameLower would only find the first of two
+        // same-named locations' cached tree).
+        const cacheKey = perLocationCacheKeys(state.locationIndex)[state.locationIndex.indexOf(loc)];
+        const cached = state.perLocationCache.get(cacheKey);
         if (cached?.tree) { tree = cached.tree; lineOffset = loc.startLine; }
         else {
           const locText = state.rawText?.slice(loc.startOffset, loc.endOffset);
@@ -1056,5 +1027,27 @@ export function registerLspFeatures(ctx: ServerContext): void {
       if (st) states.push(st.symbols);
     }
     return collectProjectVariables(states);
+  });
+
+  // Who jumps to or calls whom; see jumpGraph.ts. Same scope as the lists above.
+  // How its dynamic jumps resolved goes to the log (counts and reasons,
+  // no names), once per change: it tells which idioms of a game the
+  // resolver misses without anyone having to share the game.
+  let loggedStats: string | undefined;
+  connection.onRequest('qsp/jumpGraph', (params: { uri: string }) => {
+    const uris = ctx.settings.project.enabled ? ctx.projectFileUris : [params.uri];
+    const sources: JumpGraphSource[] = [];
+    for (const uri of uris) {
+      const st = documentStates.get(uri);
+      if (st) sources.push({ uri, symbols: st.symbols, locationIndex: st.locationIndex });
+    }
+    const stats = newDynamicJumpStats();
+    const graph = buildJumpGraph(sources, stats);
+    const line = formatDynamicJumpStats(stats);
+    if (line && line !== loggedStats) {
+      loggedStats = line;
+      connection.console.log(line);
+    }
+    return graph;
   });
 }

@@ -111,8 +111,14 @@ export const EXEC_PROBE_RE = /exec:/i;
 
 /**
  * Match `<a ...href="exec:CODE"...>` (or single-quoted attribute).
- * `(?:[^>]*?\s)?` requires whitespace before `href` so that custom
+ * The attribute run before `href` must end in whitespace so that custom
  * attributes like `data-href` aren't misidentified.
+ *
+ * Every repeated part is bounded so a match attempt can't rescan the
+ * rest of the string; unbounded, a few hundred unclosed links take seconds:
+ * attribute runs stop at `>` or the next `<a ` tag (a bare `<` is still
+ * allowed), and the body can't contain its own quote, so it never grows
+ * past the first closing quote on backtracking.
  *
  * The `d` flag exposes per-group `indices`, letting callers locate
  * the body's exact offset within the match without a second regex.
@@ -123,7 +129,7 @@ export const EXEC_PROBE_RE = /exec:/i;
  *         host string uses the same quote).
  */
 export const EXEC_LINK_RE =
-  /<a\s(?:[^>]*?\s)?href\s*=\s*(["'])\s*exec:([\s\S]*?)\1[^>]*>/gid;
+  /<a\s(?:(?:(?!<a\s)[^>])*?\s)?href\s*=\s*(["'])\s*exec:((?:(?!\1)[\s\S])*)\1(?:(?!<a\s)[^>])*>/gid;
 
 /** Wrap an exec body so it parses as the body of a location. */
 const WRAPPER_PREFIX = '# __exec__\n';

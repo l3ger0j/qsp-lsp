@@ -5,6 +5,8 @@
  * separate module so both can import it without circular dependencies.
  */
 
+import type { TargetPattern } from './targetPattern';
+
 export interface SymbolLocation {
   /** URI of the document */
   uri: string;
@@ -44,6 +46,12 @@ export interface SymbolLocation {
    * `undefined` for non-call references.
    */
   argCount?: number;
+  /**
+   * For a call of a location, what is known of its first arguments (see
+   * targetPattern.ts), so the jump graph can resolve `gt $args[0]` in the
+   * callee. Absent when none of them says anything.
+   */
+  argPatterns?: ReadonlyArray<TargetPattern | undefined>;
   /**
    * Full source text of the call site (statement, function call, or
    * `@`/`@@` user call) — used by hover renderers to display "Called
@@ -192,7 +200,16 @@ export type BindingValue =
       /** Lowercased base name of the RHS variable (no prefix). */
       varBaseName: string;
     }
-  | { kind: 'expr' };
+  | {
+      kind: 'expr';
+      /**
+       * What is known of the value when it is a literal, or a string built
+       * from literals and variables (see targetPattern.ts). Set for writes
+       * to `$` variables and for single literals; the jump graph resolves
+       * `gt $next` through it.
+       */
+      pattern?: TargetPattern;
+    };
 
 /**
  * A single `<var> = <rhs>` or `local <var> = <rhs>` binding site.

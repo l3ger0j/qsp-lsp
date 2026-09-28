@@ -278,12 +278,16 @@ export function parseLocationBlocks(text: string): LocationBlock[] {
       }
     }
 
-    const headerMatch = line.match(/^#\s*(.+?)\s*$/);
+    // Same result as /^#\s*(.+?)\s*$/ without its quadratic backtracking on a
+    // long space run inside the name. A whitespace-only header keeps its last
+    // whitespace character as the name, as that regex did.
+    const afterHash = line.startsWith('#') ? line.slice(1) : '';
+    const headerName = afterHash.trim() || afterHash.slice(-1);
 
-    if (headerMatch && blockStartLine < 0) {
+    if (headerName && blockStartLine < 0) {
       blockStartLine = lineIdx - 1;
       blockStartOffset = lineStartOffset;
-      blockName = headerMatch[1];
+      blockName = headerName;
       qspScanReset(scan);
     } else if (/^--/.test(line) && blockStartLine >= 0) {
       const end = lineStartOffset + lineLen;

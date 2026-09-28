@@ -36,6 +36,7 @@ import type {
   SymbolLocation,
 } from '../parser';
 import { buildFileAggregates } from './aggregation';
+import { getWordInfo } from './helpers';
 import type {
   ServerContext,
   DocumentState,
@@ -63,52 +64,6 @@ function symToRange(loc: SymbolLocation): Range {
 
 function symToLocation(loc: SymbolLocation): Location {
   return { uri: loc.uri, range: symToRange(loc) };
-}
-
-// ──────────────────────────────────────────────────────────────────────
-// Word-at-cursor
-// ──────────────────────────────────────────────────────────────────────
-
-const SPACED_STATEMENTS_RE = /(?:add obj|del obj|del act|mod obj|close all)/gi;
-
-function getWordInfo(doc: TextDocument, pos: Position): { word: string; hasTypePrefix: boolean; range: Range } | null {
-  const line = doc.getText({
-    start: { line: pos.line, character: 0 },
-    end: { line: pos.line, character: Number.MAX_SAFE_INTEGER },
-  });
-
-  // `matchAll` returns a fresh iterator each call, so the early
-  // `return` inside the loop cannot leak `lastIndex` state into the
-  // next invocation — unlike a stateful `re.exec()` loop.
-  for (const m of line.matchAll(SPACED_STATEMENTS_RE)) {
-    const idx = m.index ?? 0;
-    if (pos.character >= idx && pos.character <= idx + m[0].length) {
-      return {
-        word: m[0].toLowerCase(),
-        hasTypePrefix: false,
-        range: {
-          start: { line: pos.line, character: idx },
-          end: { line: pos.line, character: idx + m[0].length },
-        },
-      };
-    }
-  }
-
-  const re = /[*$#%]?[\p{L}_][\p{L}\p{N}_.]*/gu;
-  for (const match of line.matchAll(re)) {
-    const start = match.index ?? 0;
-    const end = start + match[0].length;
-    if (pos.character >= start && pos.character <= end) {
-      const raw = match[0];
-      const range: Range = {
-        start: { line: pos.line, character: start },
-        end: { line: pos.line, character: end },
-      };
-      if (/^[$#%]/.test(raw)) return { word: raw.slice(1), hasTypePrefix: true, range };
-      return { word: raw, hasTypePrefix: false, range };
-    }
-  }
-  return null;
 }
 
 // ──────────────────────────────────────────────────────────────────────

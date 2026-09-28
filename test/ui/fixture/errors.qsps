@@ -1,0 +1,5 @@
+# broken
+if x = 1
+  *pl 1
+end
+--- broken ---

@@ -7,12 +7,14 @@ import * as fs from 'fs';
 import { QspTreeSitterParser, extractSymbols } from '../src/parser/treeSitter';
 import type { LocationSymbols } from '../src/parser/symbolTable';
 import {
+  buildFileAggregates,
   buildPropagatedLocals,
   collectAggregates,
   emptyAggregates,
+  MAX_DISPATCH_CANDIDATES,
   type SymbolAggregates,
 } from '../src/server/aggregation';
-import { WASM_PATH } from './testHelpers';
+import { WASM_PATH, initParser, parseAndExtract } from './testHelpers';
 
 describe('buildPropagatedLocals', () => {
   const parser = new QspTreeSitterParser();
@@ -30,7 +32,7 @@ describe('buildPropagatedLocals', () => {
     for (const [, ls] of symbols.locations) {
       allLocs.push({ locName: ls.locationName, locSyms: ls, uri: 'test://agg' });
     }
-    buildPropagatedLocals(allLocs, agg, [symbols]);
+    buildPropagatedLocals(allLocs, agg);
     return agg;
   }
 
@@ -305,7 +307,7 @@ describe('externalLocalBindings (call-graph-sensitive dataflow, fix #6)', () => 
     for (const [, ls] of symbols.locations) {
       allLocs.push({ locName: ls.locationName, locSyms: ls, uri: 'test://agg' });
     }
-    buildPropagatedLocals(allLocs, agg, [symbols]);
+    buildPropagatedLocals(allLocs, agg);
     return { symbols, agg };
   }
 
@@ -337,7 +339,7 @@ x = 2
     expect(ext![0].sourceLoc).toBe('b');
     expect(ext![0].varNameLower).toBe('x');
     expect(ext![0].binding.isLocal).toBe(false);
-    expect(ext![0].binding.value).toEqual({ kind: 'expr' });
+    expect(ext![0].binding.value).toMatchObject({ kind: 'expr' });
   });
 
   it('records callee non-local string write via func', () => {
@@ -495,7 +497,7 @@ describe('externalLocalBindings: side-effect writes propagate back to caller loc
     for (const [, ls] of symbols.locations) {
       allLocs.push({ locName: ls.locationName, locSyms: ls, uri: 'test://se' });
     }
-    buildPropagatedLocals(allLocs, agg, [symbols]);
+    buildPropagatedLocals(allLocs, agg);
     return { symbols, agg };
   }
 
@@ -676,7 +678,7 @@ describe('externalLocalBindings: every call channel carries mutations back', () 
     for (const [, ls] of symbols.locations) {
       allLocs.push({ locName: ls.locationName, locSyms: ls, uri: 'test://ch' });
     }
-    buildPropagatedLocals(allLocs, agg, [symbols]);
+    buildPropagatedLocals(allLocs, agg);
     return { symbols, agg };
   }
 
@@ -751,7 +753,7 @@ describe('externalLocalBindings: dynamic / dyneval writes propagate', () => {
     for (const [, ls] of symbols.locations) {
       allLocs.push({ locName: ls.locationName, locSyms: ls, uri: 'test://dyn' });
     }
-    buildPropagatedLocals(allLocs, agg, [symbols]);
+    buildPropagatedLocals(allLocs, agg);
     return { symbols, agg };
   }
 
@@ -1411,5 +1413,28 @@ pl '<a href="exec:act ''go'': res = dyneval($code)">click</a>'
     expect(sites).toHaveLength(1);
     expect(sites[0].candidates).toHaveLength(1);
     expect(sites[0].candidates[0].providerLoc).toBe('init');
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Dispatch candidates are capped
+// ──────────────────────────────────────────────────────────────────────
+//
+// A block kept under the same name in many locations (a `$menu` in every
+// room) made every unresolved `dynamic $menu` list all of them: call sites
+// × blocks, hundreds of megabytes on large games. A dispatch lists the
+// first MAX_DISPATCH_CANDIDATES and says it was cut, and the checks that
+// must hold for every candidate then stay quiet.
+describe('cross-location dispatch candidates', () => {
+  it('lists at most MAX_DISPATCH_CANDIDATES and marks the list cut', async () => {
+    const parser = new QspTreeSitterParser();
+    await initParser(parser);
+    const rooms = Array.from({ length: 20 }, (_, i) => `# room${i}\n$m = {\n\tx = ${i}\n}\n--- room${i} ---\n`).join('');
+    const code = `${rooms}# caller\nr = dyneval($m)\n--- caller ---\n`;
+    const { symbols } = parseAndExtract(parser, code);
+    const agg = buildFileAggregates(symbols, 'file:///g.qsps');
+    const dispatch = agg.crossLocationDispatches.get('caller')?.[0];
+    expect(dispatch?.candidates).toHaveLength(MAX_DISPATCH_CANDIDATES);
+    expect(dispatch?.truncated).toBe(true);
   });
 });

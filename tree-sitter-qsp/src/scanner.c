@@ -1,7 +1,7 @@
 /**
  * External scanner for tree-sitter-qsp.
  *
- * Handles six external token types:
+ * Handles these external token types:
  *
  * 1. LINE_CONTINUATION_EXT (" _\n")
  * 2. LOCATION_END_MARK_EXT ("--" at column 0)
@@ -9,6 +9,8 @@
  * 4. NEWLINE_OR_RBRACE_EXT
  * 5. INTP_RAW_BODY_SQ (raw `<<…>>` body with `''` inside a '-quoted string)
  * 6. INTP_RAW_BODY_DQ (raw `<<…>>` body with `""` inside a "-quoted string)
+ * 7. ML_NL_OR … ML_NL_MUL (newlines before a binary operator in a
+ *    multiline expression, one token per precedence level)
  */
 
 #include "tree_sitter/parser.h"
@@ -20,7 +22,94 @@ enum {
   NEWLINE_OR_RBRACE,
   INTP_RAW_BODY_SQ,
   INTP_RAW_BODY_DQ,
+  ML_NL_OR,
+  ML_NL_AND,
+  ML_NL_CMP,
+  ML_NL_AMP,
+  ML_NL_ADD,
+  ML_NL_MOD,
+  ML_NL_MUL,
 };
+
+static bool is_hspace(int32_t c) { return c == ' ' || c == '\t'; }
+
+// Characters that cannot continue an identifier (mirrors identifier_text in
+// grammar.js), so `or(` is the operator but `orange` is a name.
+static bool ends_word(int32_t c) {
+  switch (c) {
+    case 0: case ' ': case '\t': case '\r': case '\n': case '\f': case '\v':
+    case '&': case '\'': case '"': case '(': case ')': case '[': case ']':
+    case '=': case '!': case '<': case '>': case '+': case '-': case '/':
+    case '*': case ':': case ',': case '{': case '}':
+      return true;
+    default:
+      return false;
+  }
+}
+
+static int32_t lower_ascii(int32_t c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
+
+// Consume `word` case-insensitively and require a word boundary after it.
+static bool match_keyword(TSLexer *lexer, const char *word) {
+  for (const char *p = word; *p; p++) {
+    if (lower_ascii(lexer->lookahead) != *p) return false;
+    lexer->advance(lexer, false);
+  }
+  return ends_word(lexer->lookahead);
+}
+
+/**
+ * Newlines inside a multiline expression, when a binary operator follows.
+ * The token covers only the newlines (and the blanks between them); the
+ * operator is peeked, not consumed, and picks which of the ML_NL_* tokens
+ * is emitted. Returns false when no operator follows or its token is not
+ * valid here, and the internal lexer then produces a plain `_newline`.
+ */
+static bool scan_ml_newline(TSLexer *lexer, const bool *valid_symbols) {
+  bool saw_newline = false;
+  for (;;) {
+    if (lexer->lookahead == '\r') lexer->advance(lexer, false);
+    if (lexer->lookahead != '\n') break;
+    lexer->advance(lexer, false);
+    lexer->mark_end(lexer);
+    saw_newline = true;
+    while (is_hspace(lexer->lookahead)) lexer->advance(lexer, false);
+  }
+  if (!saw_newline) return false;
+
+  int symbol;
+  switch (lower_ascii(lexer->lookahead)) {
+    case '&': symbol = ML_NL_AMP; break;
+    case '+': case '-': symbol = ML_NL_ADD; break;
+    case '*': case '/': symbol = ML_NL_MUL; break;
+    case '=': case '!': symbol = ML_NL_CMP; break;
+    case '<': case '>': {
+      // `>>` closes an interpolation and `<<` opens one; neither is an operator.
+      int32_t first = lexer->lookahead;
+      lexer->advance(lexer, false);
+      if (lexer->lookahead == first) return false;
+      symbol = ML_NL_CMP;
+      break;
+    }
+    case 'o':
+      if (!match_keyword(lexer, "or")) return false;
+      symbol = ML_NL_OR;
+      break;
+    case 'a':
+      if (!match_keyword(lexer, "and")) return false;
+      symbol = ML_NL_AND;
+      break;
+    case 'm':
+      if (!match_keyword(lexer, "mod")) return false;
+      symbol = ML_NL_MOD;
+      break;
+    default:
+      return false;
+  }
+  if (!valid_symbols[symbol]) return false;
+  lexer->result_symbol = symbol;
+  return true;
+}
 
 /**
  * Scan a raw `<<…>>` interpolation body whose host string is quoted with
@@ -233,6 +322,20 @@ bool tree_sitter_qsp_external_scanner_scan(void *payload, TSLexer *lexer, const 
       return true;
     }
     return false;
+  }
+
+  // Only states right after a multiline operand accept these tokens, and
+  // any of them being valid means the lookahead is examined here first.
+  if (!in_recovery &&
+      (valid_symbols[ML_NL_OR] || valid_symbols[ML_NL_AND] || valid_symbols[ML_NL_CMP] ||
+       valid_symbols[ML_NL_AMP] || valid_symbols[ML_NL_ADD] || valid_symbols[ML_NL_MOD] ||
+       valid_symbols[ML_NL_MUL]) &&
+      (lexer->lookahead == '\r' || lexer->lookahead == '\n')) {
+    // Only on the newline itself: blanks before it arrive earlier as their
+    // own extra token, and a ` _` line continuation starts with a blank, so
+    // it must reach the LINE_CONTINUATION scan below instead. On false the
+    // lexer rewinds and lexes a plain `_newline`.
+    return scan_ml_newline(lexer, valid_symbols);
   }
 
   if (valid_symbols[NEWLINE_OR_RBRACE]) {

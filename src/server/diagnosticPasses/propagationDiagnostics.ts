@@ -117,11 +117,17 @@ export function checkInconsistentLocalPropagation(
   }
 }
 
+// A message lists this many callers, and this many lines of each, before
+// "and N more". Listing them all made messages of hundreds of kilobytes
+// in large games, repeated at every reference to the variable.
+const MAX_LISTED_CALLERS = 5;
+const MAX_LISTED_LINES = 5;
+
 /**
  * Render a list of call sites as `caller line N` / `caller lines A, B`,
- * grouped by caller name and sorted by first line.
+ * grouped by caller name and sorted by first line, the first few only.
  */
-function formatCallSiteGroups(
+export function formatCallSiteGroups(
   sites: ReadonlyArray<{ callerName: string; ref: SymbolLocation }>,
 ): string {
   const byCaller = new Map<string, Set<number>>();
@@ -133,13 +139,14 @@ function formatCallSiteGroups(
   const parts: { firstLine: number; text: string }[] = [];
   for (const [name, lineSet] of byCaller) {
     const lines = [...lineSet].sort((a, b) => a - b);
-    const text = lines.length === 1
-      ? `${name} line ${lines[0]}`
-      : `${name} lines ${lines.join(', ')}`;
+    const shown = lines.slice(0, MAX_LISTED_LINES).join(', ') + (lines.length > MAX_LISTED_LINES ? ` and ${lines.length - MAX_LISTED_LINES} more` : '');
+    const text = lines.length === 1 ? `${name} line ${lines[0]}` : `${name} lines ${shown}`;
     parts.push({ firstLine: lines[0], text });
   }
   parts.sort((a, b) => a.firstLine - b.firstLine);
-  return parts.map(p => p.text).join(', ');
+  const listed = parts.slice(0, MAX_LISTED_CALLERS).map(p => p.text).join(', ');
+  const rest = parts.length - MAX_LISTED_CALLERS;
+  return rest > 0 ? `${listed} and ${rest} more location${rest === 1 ? '' : 's'}` : listed;
 }
 
 // ── Unused locations ──────────────────────────────────────────────────
@@ -263,7 +270,7 @@ export function checkMissingResultInDyneval(
     const crossSites = agg.crossLocationDispatches.get(locKey);
     if (crossSites) {
       for (const dispatch of crossSites) {
-        if (dispatch.kind !== 'dyneval') continue;
+        if (dispatch.kind !== 'dyneval' || dispatch.truncated) continue;
         if (dispatch.candidates.some(c => c.writesResult)) continue;
         ctx.push(
           DiagnosticSeverity.Warning,
@@ -380,7 +387,7 @@ export function checkExtraArgsToTargetWithoutArgs(
     const crossSites = agg.crossLocationDispatches.get(locKey);
     if (crossSites) {
       for (const dispatch of crossSites) {
-        if (dispatch.argCount === 0) continue;
+        if (dispatch.argCount === 0 || dispatch.truncated) continue;
         let mostInformative: ArgsVerdict | undefined;
         let allHaveVerdict = true;
         for (const cand of dispatch.candidates) {
@@ -488,7 +495,7 @@ export function checkPropagation(
     checkExtraArgsToTargetWithoutArgs(ctx, symbols, agg, allLocationDefs);
   }
 
-  if (ctx.settings.unusedLocations) {
+  if (ctx.settings.unusedLocations && !agg.hasRegexOnlyLocations) {
     checkUnusedLocations(
       ctx, symbols, locationIndex, referencedLocations,
       firstLocationKey,

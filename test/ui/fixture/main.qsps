@@ -1,0 +1,4 @@
+# start
+x = len('abc')
+gt 'data'
+--- start ---

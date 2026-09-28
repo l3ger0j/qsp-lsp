@@ -1,5 +1,6 @@
 .vscode/**
 .venv/**
+.claude/**
 .github/**
 scripts/**
 node_modules/**
@@ -7,11 +8,22 @@ src/**
 tree-sitter-qsp/**
 test/**
 examples/**
+CLAUDE.md
+TODO.md
+# The grammar's reference spec; the build uses tree-sitter-qsp/grammar.js.
+qsp_grammar.peg
+# txt2gam is bundled into out/client and its WASM copied there by the build.
+vendor/**
 tsconfig.json
 tsconfig.eslint.json
-vitest.config.ts
+tsconfig.webview.json
+vitest.config.mts
 eslint.config.mjs
 **/*.ts
 **/*.map
 .gitignore
 *.vsix
+.nvmrc
+.vscode-test/**
+.vscode-test.mjs
+out/test/**

@@ -852,3 +852,52 @@ describe('syntax error threshold collapsing (real computeDiagnostics)', () => {
 // Mixed location call types diagnostics
 // ──────────────────────────────────────────────────────────────────────
 
+
+// The loosest operator in a multi-line expression (`or`) must be able to
+// end right before a newline; otherwise a closer on the next line shows up
+// as "Unexpected syntax" on the last operand. The QSP engine treats
+// newlines inside brackets as whitespace, so these are all valid.
+describe('extractErrors — multi-line `or` before a closer on the next line', () => {
+  const parser = new QspTreeSitterParser();
+  beforeAll(async () => {
+    await parser.init(async () => fs.readFileSync(WASM_PATH));
+  });
+
+  const errorsIn = (body: string) => {
+    const tree = parser.parseOnce(`# test\n${body}\n---\n`)!;
+    try {
+      return extractErrors(tree).map(e => `${e.startRow}:${e.startCol} ${e.message}`);
+    } finally {
+      tree.delete();
+    }
+  };
+
+  it('accepts the reported if-condition with or/and spread over lines', () => {
+    expect(errorsIn(`if $people['<<args[{i}]>>_<<$num[0]>>'] <> 'Неизвестно'  _
+	and (relat['<<$rab>>_<<args[{i}]>>_<<$num[0]>>'] >= -25
+		or relat['<<$rab>>_<<args[{i}]>>_<<$num[9]>>'] = 1
+	):
+		set args['teacher_<<args[{teachers}]>>'] = args[{i}]
+		set args[{teachers}] += 1
+	end`)).toEqual([]);
+  });
+
+  it('accepts line continuations before operators inside parentheses', () => {
+    expect(errorsIn(`set args[{ORM}] = ( $people['<<$tempArg>>_<<$num[3]>>'] = 'Д'  _
+		and $people['<<$tempArg>>_<<$num[4]>>'] ! 'С' _
+	) or ( $people['<<$rab>>_<<$num[3]>>'] ! 'Д'  _
+		and $people['<<$tempArg>>_<<$num[4]>>'] ! 'А' )`)).toEqual([]);
+  });
+
+  it.each([
+    ['paren', `x = (a or b\n)`],
+    ['function args', `x = max(a or b\n)`],
+    ['args before a comma', `x = max(a or b\n, 1)`],
+    ['array index', `x = arr[a or b\n]`],
+    ['tuple', `x = [1, a or b\n]`],
+    ['interpolation', `pl '<<a or b\n>>'`],
+    ['or chain with newlines before each or', `x = (a\n or b\n or c\n)`],
+  ])('accepts %s', (_name, body) => {
+    expect(errorsIn(body)).toEqual([]);
+  });
+});

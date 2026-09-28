@@ -66,7 +66,8 @@ export function walkLocationBody(
    */
   inDeferredExecution = false,
 ): void {
-  let cursor = locBlock.walk();
+  // Assigned right before each walk so a throw can't leak it (see the finally blocks below).
+  let cursor: Parser.TreeCursor;
 
   // ── Pre-scan: collect variable bindings + resolve call sites ────
   const callSiteTargets = new Map<number, Parser.SyntaxNode[]>();
@@ -102,11 +103,14 @@ export function walkLocationBody(
         c2.gotoParent();
       }
     };
-    if (c2.gotoFirstChild()) {
-      do { find(); } while (c2.gotoNextSibling());
-      c2.gotoParent();
+    try {
+      if (c2.gotoFirstChild()) {
+        do { find(); } while (c2.gotoNextSibling());
+        c2.gotoParent();
+      }
+    } finally {
+      c2.delete();
     }
-    c2.delete();
   }
   collectDeferredBlocks(
     callSiteTargets, callSiteNodes,
@@ -338,16 +342,20 @@ export function walkLocationBody(
   }
 
   // ── Start the main walk ─────────────────────────────────────────
-  if (cursor.gotoFirstChild()) {
-    do {
-      if (cursor.currentNode.type !== 'location_header'
-        && cursor.currentNode.type !== 'location_end') {
-        visit();
-      }
-    } while (cursor.gotoNextSibling());
-    cursor.gotoParent();
+  cursor = locBlock.walk();
+  try {
+    if (cursor.gotoFirstChild()) {
+      do {
+        if (cursor.currentNode.type !== 'location_header'
+          && cursor.currentNode.type !== 'location_end') {
+          visit();
+        }
+      } while (cursor.gotoNextSibling());
+      cursor.gotoParent();
+    }
+  } finally {
+    cursor.delete();
   }
-  cursor.delete();
 
   // ── Deferred walk: blocks targeted by var-mediated dynamic/dyneval
   //
@@ -373,13 +381,16 @@ export function walkLocationBody(
     scopeId = inner;
     // Stored code-block ⇒ fresh label namespace, isolated from callers.
     labelNamespace = outer;
-    if (blockCursor.gotoFirstChild()) {
-      do { visit(); } while (blockCursor.gotoNextSibling());
-      blockCursor.gotoParent();
+    try {
+      if (blockCursor.gotoFirstChild()) {
+        do { visit(); } while (blockCursor.gotoNextSibling());
+        blockCursor.gotoParent();
+      }
+    } finally {
+      scopeId = savedScope;
+      labelNamespace = savedLabelNs;
+      blockCursor.delete();
     }
-    scopeId = savedScope;
-    labelNamespace = savedLabelNs;
-    blockCursor.delete();
   };
 
   const walked = new Set<number>();

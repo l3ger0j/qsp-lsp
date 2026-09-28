@@ -9,6 +9,7 @@ import * as vscode from 'vscode';
 import {
   parseLocationBlocks,
   reorderLocations,
+  type LocationBlock,
 } from '../common/locations';
 import {
   getActiveQspEditor,
@@ -16,6 +17,64 @@ import {
   fullDocRange,
   getCurrentLocationBlock,
 } from './shared';
+
+// ── Target location ──────────────────────────────────────────────────
+
+/** A location passed to a command by the QSP Locations view. `line` is the 0-based header line. */
+export interface LocationArg {
+  uri: string;
+  name: string;
+  line: number;
+}
+
+// Editor context menus pass the document's Uri as the first argument, so a
+// LocationArg is told apart by its shape, not by being present.
+function isLocationArg(value: unknown): value is LocationArg {
+  const v = value as Partial<LocationArg> | undefined;
+  return typeof v?.uri === 'string' && typeof v.name === 'string' && typeof v.line === 'number';
+}
+
+/**
+ * The location a command acts on, with the editor showing it: the one in
+ * `arg` when the Locations view passed it (its file is opened), otherwise
+ * the one under the cursor.
+ */
+async function resolveTargetLocation(
+  arg: unknown,
+): Promise<{ editor: vscode.TextEditor; current: LocationBlock } | undefined> {
+  if (isLocationArg(arg)) {
+    const editor = await vscode.window.showTextDocument(vscode.Uri.parse(arg.uri), { preview: false });
+    const blocks = parseLocationBlocks(editor.document.getText());
+    const lower = arg.name.toLowerCase();
+    // The header line identifies duplicates; the name covers a line that
+    // moved since the view was refreshed.
+    const current = blocks.find(b => b.startLine === arg.line && b.name.toLowerCase() === lower)
+      ?? blocks.find(b => b.name.toLowerCase() === lower);
+    if (!current) {
+      vscode.window.showWarningMessage(`Location '${arg.name}' is no longer in ${vscode.workspace.asRelativePath(editor.document.uri)}`);
+      return undefined;
+    }
+    // The cursor would otherwise stay wherever it was in that file (line 0,
+    // the start location, for a file just opened), and the command's result
+    // and the Locations view's selection would follow it there.
+    placeCursor(editor, current.startLine);
+    return { editor, current };
+  }
+  const editor = getActiveQspEditor();
+  if (!editor) return undefined;
+  const { current } = getCurrentLocationBlock(editor.document, editor.selection.active.line);
+  if (!current) {
+    vscode.window.showWarningMessage('Cursor is not inside a location');
+    return undefined;
+  }
+  return { editor, current };
+}
+
+function placeCursor(editor: vscode.TextEditor, line: number): void {
+  const position = new vscode.Position(Math.max(0, Math.min(line, editor.document.lineCount - 1)), 0);
+  editor.selection = new vscode.Selection(position, position);
+  editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+}
 
 // ──────────────────────────────────────────────────────────────────────
 // Insert separator
@@ -82,16 +141,11 @@ export async function sortLocationsCommand(direction: 'asc' | 'desc' = 'asc'): P
 // Duplicate Location
 // ──────────────────────────────────────────────────────────────────────
 
-export async function duplicateLocationCommand(): Promise<void> {
-  const editor = getActiveQspEditor();
-  if (!editor) return;
-
+export async function duplicateLocationCommand(arg?: unknown): Promise<void> {
+  const target = await resolveTargetLocation(arg);
+  if (!target) return;
+  const { editor, current } = target;
   const doc = editor.document;
-  const { current } = getCurrentLocationBlock(doc, editor.selection.active.line);
-  if (!current) {
-    vscode.window.showWarningMessage('Cursor is not inside a location');
-    return;
-  }
 
   const newName = await vscode.window.showInputBox({
     prompt: 'Name for the duplicate location',
@@ -110,25 +164,21 @@ export async function duplicateLocationCommand(): Promise<void> {
   const eol = getEol(doc);
   const insertPos = new vscode.Position(current.endLine, doc.lineAt(current.endLine).text.length);
 
-  await editor.edit((editBuilder) => {
+  const inserted = await editor.edit((editBuilder) => {
     editBuilder.insert(insertPos, eol + newContent);
   });
+  if (inserted) placeCursor(editor, current.endLine + 1);
 }
 
 // ──────────────────────────────────────────────────────────────────────
 // Delete Location
 // ──────────────────────────────────────────────────────────────────────
 
-export async function deleteLocationCommand(): Promise<void> {
-  const editor = getActiveQspEditor();
-  if (!editor) return;
-
+export async function deleteLocationCommand(arg?: unknown): Promise<void> {
+  const target = await resolveTargetLocation(arg);
+  if (!target) return;
+  const { editor, current } = target;
   const doc = editor.document;
-  const { current } = getCurrentLocationBlock(doc, editor.selection.active.line);
-  if (!current) {
-    vscode.window.showWarningMessage('Cursor is not inside a location');
-    return;
-  }
 
   const confirm = await vscode.window.showWarningMessage(
     `Delete location '${current.name}'?`,
@@ -144,25 +194,21 @@ export async function deleteLocationCommand(): Promise<void> {
     ? new vscode.Position(endLine, 0)
     : doc.lineAt(doc.lineCount - 1).range.end;
 
-  await editor.edit((editBuilder) => {
+  const deleted = await editor.edit((editBuilder) => {
     editBuilder.delete(new vscode.Range(startPos, endPos));
   });
+  if (deleted) placeCursor(editor, current.startLine);
 }
 
 // ──────────────────────────────────────────────────────────────────────
 // Rename Location (delegates to LSP rename provider)
 // ──────────────────────────────────────────────────────────────────────
 
-export async function renameLocationCommand(): Promise<void> {
-  const editor = getActiveQspEditor();
-  if (!editor) return;
-
+export async function renameLocationCommand(arg?: unknown): Promise<void> {
+  const target = await resolveTargetLocation(arg);
+  if (!target) return;
+  const { editor, current } = target;
   const doc = editor.document;
-  const { current } = getCurrentLocationBlock(doc, editor.selection.active.line);
-  if (!current) {
-    vscode.window.showWarningMessage('Cursor is not inside a location');
-    return;
-  }
 
   const newName = await vscode.window.showInputBox({
     prompt: `Rename location '${current.name}' to:`,

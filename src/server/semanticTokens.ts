@@ -113,7 +113,8 @@ function emitSemanticTokens(
   gotoTargets?: ReadonlySet<string>,
   parseFn?: SemanticParseFn,
 ): boolean {
-  let cursor = tree.walk();
+  // Assigned right before the walk so a throw can't leak it (see the finally blocks below).
+  let cursor: Parser.TreeCursor;
   let emittedExecBody = false;
 
   function push(
@@ -368,10 +369,13 @@ function emitSemanticTokens(
     // parent-chain / depth tracking (cursor.reset() loses that context).
     const outer = cursor;
     cursor = tree.walk();
-    cursor.reset(node);
-    visit();
-    cursor.delete();
-    cursor = outer;
+    try {
+      cursor.reset(node);
+      visit();
+    } finally {
+      cursor.delete();
+      cursor = outer;
+    }
   }
 
   /** Emit a semantic token for a gap between two positions (single-line). */
@@ -390,8 +394,12 @@ function emitSemanticTokens(
     // Multi-line gap: skip (TextMate handles as fallback)
   }
 
-  visit();
-  cursor.delete();
+  cursor = tree.walk();
+  try {
+    visit();
+  } finally {
+    cursor.delete();
+  }
   return emittedExecBody;
 }
 
