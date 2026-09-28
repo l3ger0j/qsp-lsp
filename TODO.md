@@ -74,3 +74,14 @@ below the 5000-arrow on-demand threshold) panning and hovering feel slow:
 every frame redraws all arrows, and hovering fades every element. Options:
 lower `EDGE_BUDGET` in `src/webview/graph.ts` to ~1500, or skip the fade on
 large graphs.
+
+## Second player for Run, and Open VSX
+
+The game-author workspace template (`qsp-game-template`) installs two
+players: the classic qspgui, which **Run QSP Game** (F5) uses through
+`playerExecutable` in `txt2gam.json`, and qSpider, reached only through a
+task in the template's `game/.vscode/tasks.json`. A second, optional
+player in `txt2gam.json` (and a command to run the game in it) would
+replace that task. Publishing to Open VSX would let the template install
+and update the extension like any other, instead of from a `.vsix` on
+GitHub Releases pinned in its `setup/versions.env`.
