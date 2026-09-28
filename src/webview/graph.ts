@@ -407,17 +407,32 @@ function render(fit: boolean): void {
   }
 }
 
+// The next task, without the clamping Chromium puts on timers in a
+// hidden panel (one a second): with setTimeout, a layout started while
+// the panel was in the background took 46 s instead of 2.5 s.
+const nextTask = (() => {
+  const channel = new MessageChannel();
+  const queue: Array<() => void> = [];
+  channel.port1.onmessage = () => queue.shift()?.();
+  return (fn: () => void) => {
+    queue.push(fn);
+    channel.port2.postMessage(undefined);
+  };
+})();
+
 // Runs the simulation in short slices so the panel keeps responding.
 function runForce(layout: ForceLayout, run: number, done: () => void): void {
   const slice = () => {
     if (run !== layoutRun) return;
     if (layout.step(40)) {
       status.textContent = 'Drawing…';
-      // A timeout, not requestAnimationFrame: that one doesn't fire while the panel is hidden.
-      setTimeout(() => { if (run === layoutRun) done(); }, 20);
+      const draw = () => { if (run === layoutRun) done(); };
+      // A short timeout lets the status paint first; requestAnimationFrame
+      // would never fire while the panel is hidden, and then nothing paints anyway.
+      if (document.hidden) nextTask(draw); else setTimeout(draw, 20);
     } else {
       status.textContent = `Laying out… ${Math.round(layout.progress * 100)}%`;
-      setTimeout(slice, 0);
+      nextTask(slice);
     }
   };
   slice();
