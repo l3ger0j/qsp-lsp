@@ -79,7 +79,7 @@ import type {
   PerLocationParseResult,
 } from './featureTypes';
 import type { ProjectVariableItem } from './featureTypes';
-import { buildJumpGraph, type JumpGraphSource } from './jumpGraph';
+import { buildJumpGraph, formatDynamicJumpStats, newDynamicJumpStats, type JumpGraphSource } from './jumpGraph';
 
 // Re-export types that consumers need
 export type {
@@ -1030,6 +1030,10 @@ export function registerLspFeatures(ctx: ServerContext): void {
   });
 
   // Who jumps to or calls whom; see jumpGraph.ts. Same scope as the lists above.
+  // How its dynamic jumps resolved goes to the log (counts and reasons,
+  // no names), once per change: it tells which idioms of a game the
+  // resolver misses without anyone having to share the game.
+  let loggedStats: string | undefined;
   connection.onRequest('qsp/jumpGraph', (params: { uri: string }) => {
     const uris = ctx.settings.project.enabled ? ctx.projectFileUris : [params.uri];
     const sources: JumpGraphSource[] = [];
@@ -1037,6 +1041,13 @@ export function registerLspFeatures(ctx: ServerContext): void {
       const st = documentStates.get(uri);
       if (st) sources.push({ uri, symbols: st.symbols, locationIndex: st.locationIndex });
     }
-    return buildJumpGraph(sources);
+    const stats = newDynamicJumpStats();
+    const graph = buildJumpGraph(sources, stats);
+    const line = formatDynamicJumpStats(stats);
+    if (line && line !== loggedStats) {
+      loggedStats = line;
+      connection.console.log(line);
+    }
+    return graph;
   });
 }
