@@ -29,7 +29,7 @@ In every tool, names of locations, variables and objects are case-insensitive, a
 
 | Tool | What it does |
 |---|---|
-| `qsp_build` | Builds the `.qsp` game with txt2gam the same way **Export QSP Game** does: file order, main file and output come from `txt2gam.json` and the `qsp.game.*` settings. In `single` mode the whole project becomes one game file; in `perFile` mode each source file becomes its own `.qsp`. Output files whose content wouldn't change are not rewritten. |
+| `qsp_build` | Builds the `.qsp` game with txt2gam the same way **Export QSP Game** does: file order, main file and output come from `txt2gam.json` and the `qsp.game.*` settings. In `single` mode the whole project becomes one game file; in `perFile` mode each source file becomes its own `.qsp`. Libraries listed in `txt2gam.json` are always built into `.qsp` files of their own. Output files whose content wouldn't change are not rewritten. Nothing is written when two locations share a name; the error lists every place. |
 | `qsp_rename` | Renames a location, variable or object across the whole project, like the editor's **Rename**. |
 | `qsp_format_location` | Re-indents one location, like the editor's **Format**. |
 

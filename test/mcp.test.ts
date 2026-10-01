@@ -179,6 +179,43 @@ describe('qsp_build', () => {
     expect(fs.existsSync(path.join(mcp.dir, 'data', 'data.qsp'))).toBe(true);
   });
 
+  it('builds an installed library into its own .qsp, outside the game', async () => {
+    const withLib = await startMcp({
+      'main.qsps': "# start\ninclib 'libs/dialogs.qsp'\ngs 'диалог_init'\n--- start ---\n",
+      'libs/dialogs.qsps': "# диалог_init\n*pl 'Диалог'\n--- диалог_init ---\n",
+      'libs/mine.qsps': '# mine\n--- mine ---\n',
+      'txt2gam.json': JSON.stringify({
+        outputFile: 'game.qsp',
+        files: ['*.qsps', 'libs/*.qsps'],
+        libraries: { installed: { dialogs: { version: '1.0.0', sha256: '', catalog: '' } } },
+      }),
+    });
+    try {
+      const result = (await withLib.call('qsp_build')).json();
+      expect(result.sources).toEqual(['main.qsps', 'libs/mine.qsps']);
+      expect(result.libraries).toEqual(['libs/dialogs.qsps']);
+      expect(result.outputs.map((o: { file: string }) => o.file)).toEqual(['game.qsp', 'libs/dialogs.qsp']);
+      const t2g = await loadTxt2gam();
+      const game = decodeWith(t2g, new Uint8Array(fs.readFileSync(path.join(withLib.dir, 'game.qsp'))));
+      expect(game).toContain('# mine');
+      expect(game).not.toContain('# диалог_init');
+      const lib = decodeWith(t2g, new Uint8Array(fs.readFileSync(path.join(withLib.dir, 'libs', 'dialogs.qsp'))));
+      expect(lib).toContain('# диалог_init');
+
+      fs.appendFileSync(path.join(withLib.dir, 'main.qsps'), '\n# Диалог_INIT\n--- Диалог_INIT ---\n');
+      const clash = await withLib.call('qsp_build');
+      expect(clash.isError).toBe(true);
+      expect(clash.text).toContain('"Диалог_INIT" (main.qsps:6, libs/dialogs.qsps:1)');
+
+      fs.rmSync(path.join(withLib.dir, 'libs', 'dialogs.qsps'));
+      const missing = await withLib.call('qsp_build');
+      expect(missing.isError).toBe(true);
+      expect(missing.text).toContain('"dialogs" is listed in txt2gam.json, but libs/dialogs.qsps is missing');
+    } finally {
+      await withLib.dispose();
+    }
+  }, 30_000);
+
   it('writes nothing when two files define the same location', async () => {
     const clash = await startMcp({
       'main.qsps': "# start\ngs 'меню'\n--- start ---\n\n# Меню\n*pl 0\n--- Меню ---\n",

@@ -71,6 +71,15 @@ Requires VS Code 1.85 or later. On [vscode.dev](https://vscode.dev) the extensio
   }
   ```
 - **Separate module builds** — set `"buildMode": "perFile"` in `txt2gam.json` (or the `qsp.game.buildMode` setting) to build each source file into its own `.qsp` next to it instead of one combined game: `main.qsps` → `main.qsp`, `data.qsps` → `data.qsp`. `outputFile` is not used in this mode. **Run QSP Game** starts the main file's `.qsp` (see above), and the game loads the other modules itself with `INCLIB 'data.qsp'`. When it creates `txt2gam.json` in this mode, the setup wizard writes `buildMode` instead of `outputFile`. A `.qsp` whose content hasn't changed is not rewritten. The `txt2gam.json` value overrides the setting. Two sources that would produce the same `.qsp` (e.g. `a.qsps` and `a.qsrc` in one folder) are reported as an error, and nothing is written if any file fails to build.
+- **Libraries** — a library is one `.qsps` file that the game loads with `INCLIB` and drops with `FREELIB`. The ones listed under `"libraries"` in `txt2gam.json` live in `libs/` and are always built into a `.qsp` of their own next to their source, in either build mode, and never into the game's: `libs/dialogs.qsps` → `libs/dialogs.qsp`, loaded with `INCLIB 'libs/dialogs.qsp'`.
+  ```json
+  "libraries": {
+    "installed": {
+      "dialogs": { "version": "1.0.0", "sha256": "…", "catalog": "https://…/libraries.json" }
+    }
+  }
+  ```
+- **Same-named locations stop the build** — the player reaches only one location of each name (`INCLIB` skips a library location the game already has), so **Run**, **Export** and the MCP `qsp_build` write nothing and list every place a name is defined, across the game and its libraries.
 
 ### QSP Locations view
 A **QSP Locations** section in the Explorer side bar lists every location of the project (in project mode) or of the active file:

@@ -4,6 +4,7 @@
 
 ### New
 - A build (**Run**, **Export**, MCP `qsp_build`) stops when two locations share a name and lists every place: a player would reach only one of them.
+- Libraries listed under `libraries` in `txt2gam.json` (sources in `libs/`) are built into `.qsp` files of their own for `inclib`, never into the game's.
 
 ## 0.3.0
 

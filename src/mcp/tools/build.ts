@@ -21,6 +21,7 @@ import {
   resolveMainFilePattern,
   type BuildMode,
 } from '../../common/buildPlan';
+import { installedLibraries, withoutLibraries, type LibrariesConfig } from '../../common/libraryConfig';
 import { findLocationConflicts, locationConflictMessage } from '../../common/locationConflicts';
 import { joinSources, normalizeText, orderSourceFiles } from '../../common/projectFiles';
 import { encodeWith, type T2gModule } from '../../common/txt2gamCore';
@@ -34,6 +35,7 @@ interface GameConfig {
   files?: string[];
   buildMode?: string;
   mainFile?: string;
+  libraries?: LibrariesConfig;
 }
 
 interface Source { abs: string; relPath: string; sortKey: string }
@@ -83,6 +85,7 @@ export function registerBuildTool(
     description: 'Encode the project into .qsp game file(s) with txt2gam, like the extension\'s Export command: '
       + 'file order, main file and output come from txt2gam.json and the qsp.game.* settings. In "single" mode '
       + 'all sources become one .qsp; in "perFile" mode each source becomes its own .qsp next to it. '
+      + 'Libraries installed in txt2gam.json ("libraries") always become .qsp files of their own, for inclib. '
       + 'Files whose content would not change are not rewritten. Nothing is written if any file fails to encode, '
       + 'or if two locations share a name (the error lists every place).',
     inputSchema: {
@@ -96,7 +99,10 @@ export function registerBuildTool(
     const mode: BuildMode = buildMode ?? resolveBuildMode(cfg?.buildMode, setting(s, 'qsp.game.buildMode'));
     const password = (setting(s, 'qsp.game.password') as string | undefined) || undefined;
 
-    let sources = await projectSources(host);
+    // Installed libraries are built into .qsp files of their own, whatever
+    // the `files` list says: the game loads them with `inclib`.
+    const libraries = installedLibraries(cfg?.libraries);
+    let sources = withoutLibraries(await projectSources(host), f => f.relPath, libraries);
     if (cfg?.files && cfg.files.length > 0) {
       const matchers = new Map(cfg.files.map(p => [p, picomatch(p, { dot: true })]));
       sources = orderSourceFiles(sources, cfg.files, (pattern, rel) => matchers.get(pattern)!(rel));
@@ -115,8 +121,17 @@ export function registerBuildTool(
     }
 
     const texts = new Map(sources.map(f => [f.abs, host.readText(f.abs)]));
-    const conflicts = locationConflictMessage(findLocationConflicts(
-      sources.map(f => ({ relPath: f.relPath, text: normalizeText(texts.get(f.abs)!) }))));
+    const libraryFiles = libraries.map(lib => ({ lib, abs: path.join(host.workspaceDir, ...lib.sourcePath.split('/')) }));
+    for (const { lib, abs } of libraryFiles) {
+      if (!fs.existsSync(abs)) {
+        throw new Error(`The library "${lib.id}" is listed in txt2gam.json, but ${lib.sourcePath} is missing`);
+      }
+      texts.set(abs, host.readText(abs));
+    }
+    const conflicts = locationConflictMessage(findLocationConflicts([
+      ...sources.map(f => ({ relPath: f.relPath, text: normalizeText(texts.get(f.abs)!) })),
+      ...libraryFiles.map(({ lib, abs }) => ({ relPath: lib.sourcePath, text: normalizeText(texts.get(abs)!) })),
+    ]));
     if (conflicts) throw new Error(conflicts);
 
     const mod = await loadTxt2gam();
@@ -126,7 +141,7 @@ export function registerBuildTool(
       const file = path.isAbsolute(configured) ? configured : path.join(host.workspaceDir, configured);
       outputs.push({ file, bytes: encodeWith(mod, joinSources(sources.map(f => texts.get(f.abs)!)), { password }) });
     } else {
-      const collisions = findOutputCollisions(sources.map(f => f.abs));
+      const collisions = findOutputCollisions([...sources.map(f => f.abs), ...libraryFiles.map(l => l.abs)]);
       if (collisions.length > 0) {
         const list = collisions.map(c => c.sources.map(p => path.relative(host.workspaceDir, p)).join(' + ')).join('; ');
         throw new Error(`Several source files would be built into the same .qsp: ${list}`);
@@ -137,6 +152,13 @@ export function registerBuildTool(
         } catch (err) {
           throw new Error(`${f.relPath}: ${err instanceof Error ? err.message : String(err)}`);
         }
+      }
+    }
+    for (const { lib, abs } of libraryFiles) {
+      try {
+        outputs.push({ file: perFileOutputPath(abs), bytes: encodeWith(mod, normalizeText(texts.get(abs)!), { password }) });
+      } catch (err) {
+        throw new Error(`${lib.sourcePath}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
@@ -157,6 +179,7 @@ export function registerBuildTool(
       config: cfg ? 'txt2gam.json' : 'none (all sources, root files first)',
       mainFile: sources[0].relPath,
       sources: sources.map(f => f.relPath),
+      libraries: libraries.map(l => l.sourcePath),
       outputs: written,
     });
   }));

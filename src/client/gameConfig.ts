@@ -52,6 +52,7 @@ import {
   resolveMainFileStrategy,
   type BuildMode,
 } from '../common/buildPlan';
+import type { LibrariesConfig } from '../common/libraryConfig';
 import * as logger from './logger';
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -76,6 +77,8 @@ export interface GameConfig {
    * Overrides the `qsp.game.playerExecutable` setting.
    */
   playerExecutable?: string | Partial<Record<'win32' | 'darwin' | 'linux', string>>;
+  /** Installed libraries, each built into a .qsp of its own (see libraryConfig.ts). */
+  libraries?: LibrariesConfig;
 }
 
 /** Main-file regexp for this project: txt2gam.json, then the `qsp.game.mainFile` setting. */

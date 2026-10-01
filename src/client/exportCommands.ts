@@ -28,9 +28,11 @@ import {
   orderedProjectUris,
   resolveOutputUri,
   effectiveBuildMode,
+  workspaceRoot,
   type GameConfig,
 } from './gameConfig';
 import { findOutputCollisions, perFileOutputPath } from '../common/buildPlan';
+import { installedLibraries, withoutLibraries } from '../common/libraryConfig';
 import { findLocationConflicts, locationConflictMessage } from '../common/locationConflicts';
 import { joinSources, normalizeText } from '../common/projectFiles';
 import * as logger from './logger';
@@ -107,15 +109,31 @@ export async function buildProjectGame(
   glob: string,
   password: string | undefined,
 ): Promise<vscode.Uri[]> {
-  const uris = await orderedProjectUris(gameCfg, glob);
+  // Installed libraries are built into .qsp files of their own, whatever
+  // the `files` list says: the game loads them with `inclib`.
+  const libraries = installedLibraries(gameCfg.libraries);
+  const uris = withoutLibraries(
+    await orderedProjectUris(gameCfg, glob), u => vscode.workspace.asRelativePath(u, false), libraries);
   if (uris.length === 0) return [];
   const mode = effectiveBuildMode(gameCfg);
-  logger.log(`[Build] ${uris.length} source file(s), build mode: ${mode}, main file: ${vscode.workspace.asRelativePath(uris[0])}`);
+  logger.log(`[Build] ${uris.length} source file(s), ${libraries.length} librar${libraries.length === 1 ? 'y' : 'ies'}, build mode: ${mode}, main file: ${vscode.workspace.asRelativePath(uris[0])}`);
 
   const texts: string[] = [];
   for (const uri of uris) texts.push(await readFileAsText(uri, context));
-  const conflicts = locationConflictMessage(findLocationConflicts(
-    uris.map((uri, i) => ({ relPath: vscode.workspace.asRelativePath(uri), text: normalizeText(texts[i]) }))));
+  const root = workspaceRoot();
+  const libraryTexts: string[] = [];
+  for (const lib of libraries) {
+    try {
+      libraryTexts.push(await readFileAsText(vscode.Uri.joinPath(root!, lib.sourcePath), context));
+    } catch {
+      throw new Error(`The library "${lib.id}" is listed in txt2gam.json, but ${lib.sourcePath} can't be read. `
+        + 'Install it again from the QSP Libraries view, or remove it there.');
+    }
+  }
+  const conflicts = locationConflictMessage(findLocationConflicts([
+    ...uris.map((uri, i) => ({ relPath: vscode.workspace.asRelativePath(uri), text: normalizeText(texts[i]) })),
+    ...libraries.map((lib, i) => ({ relPath: lib.sourcePath, text: normalizeText(libraryTexts[i]) })),
+  ]));
   if (conflicts) throw new Error(conflicts);
 
   const outputs: { uri: vscode.Uri; bytes: Uint8Array }[] = [];
@@ -126,6 +144,10 @@ export async function buildProjectGame(
     });
   } else {
     const byPath = new Map(uris.map(u => [u.path, u]));
+    for (const lib of libraries) {
+      const uri = vscode.Uri.joinPath(root!, lib.sourcePath);
+      byPath.set(uri.path, uri);
+    }
     const collisions = findOutputCollisions([...byPath.keys()]);
     if (collisions.length > 0) {
       const list = collisions.map(c => {
@@ -146,6 +168,16 @@ export async function buildProjectGame(
       } catch (err) {
         throw new Error(`${rel}: ${err instanceof Error ? err.message : String(err)}`);
       }
+    }
+  }
+  for (const [i, lib] of libraries.entries()) {
+    try {
+      outputs.push({
+        uri: vscode.Uri.joinPath(root!, lib.outputPath),
+        bytes: await encodeTextToGame(context.extensionUri, normalizeText(libraryTexts[i]), { password }),
+      });
+    } catch (err) {
+      throw new Error(`${lib.sourcePath}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
