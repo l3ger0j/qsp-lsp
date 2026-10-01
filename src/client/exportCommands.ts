@@ -31,6 +31,7 @@ import {
   type GameConfig,
 } from './gameConfig';
 import { findOutputCollisions, perFileOutputPath } from '../common/buildPlan';
+import { findLocationConflicts, locationConflictMessage } from '../common/locationConflicts';
 import { joinSources, normalizeText } from '../common/projectFiles';
 import * as logger from './logger';
 
@@ -111,12 +112,17 @@ export async function buildProjectGame(
   const mode = effectiveBuildMode(gameCfg);
   logger.log(`[Build] ${uris.length} source file(s), build mode: ${mode}, main file: ${vscode.workspace.asRelativePath(uris[0])}`);
 
+  const texts: string[] = [];
+  for (const uri of uris) texts.push(await readFileAsText(uri, context));
+  const conflicts = locationConflictMessage(findLocationConflicts(
+    uris.map((uri, i) => ({ relPath: vscode.workspace.asRelativePath(uri), text: normalizeText(texts[i]) }))));
+  if (conflicts) throw new Error(conflicts);
+
   const outputs: { uri: vscode.Uri; bytes: Uint8Array }[] = [];
   if (mode === 'single') {
-    const text = await combineFiles(uris, context);
     outputs.push({
       uri: resolveOutputUri(gameCfg),
-      bytes: await encodeTextToGame(context.extensionUri, text, { password }),
+      bytes: await encodeTextToGame(context.extensionUri, joinSources(texts), { password }),
     });
   } else {
     const byPath = new Map(uris.map(u => [u.path, u]));
@@ -129,10 +135,10 @@ export async function buildProjectGame(
       }).join('; ');
       throw new Error(`Several source files would be built into the same .qsp: ${list}`);
     }
-    for (const uri of uris) {
+    for (const [i, uri] of uris.entries()) {
       const rel = vscode.workspace.asRelativePath(uri);
       try {
-        const text = normalizeText(await readFileAsText(uri, context));
+        const text = normalizeText(texts[i]);
         outputs.push({
           uri: uri.with({ path: perFileOutputPath(uri.path) }),
           bytes: await encodeTextToGame(context.extensionUri, text, { password }),

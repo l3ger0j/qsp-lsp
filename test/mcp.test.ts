@@ -178,6 +178,25 @@ describe('qsp_build', () => {
     expect(result.outputs.map((o: { file: string }) => o.file)).toEqual(['main.qsp', 'aaa.qsp', 'data/data.qsp']);
     expect(fs.existsSync(path.join(mcp.dir, 'data', 'data.qsp'))).toBe(true);
   });
+
+  it('writes nothing when two files define the same location', async () => {
+    const clash = await startMcp({
+      'main.qsps': "# start\ngs 'меню'\n--- start ---\n\n# Меню\n*pl 0\n--- Меню ---\n",
+      'libs/dialogs.qsps': '﻿# меню\n*pl 1\n--- меню ---\n',
+      'txt2gam.json': JSON.stringify({ outputFile: 'game.qsp', mainFile: '^main\\.qsps$' }),
+    });
+    try {
+      for (const buildMode of ['single', 'perFile']) {
+        const result = await clash.call('qsp_build', { buildMode });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain('"Меню" (main.qsps:5, libs/dialogs.qsps:1)');
+      }
+      expect(fs.readdirSync(clash.dir).filter(f => f.endsWith('.qsp'))).toEqual([]);
+      expect(fs.existsSync(path.join(clash.dir, 'libs', 'dialogs.qsp'))).toBe(false);
+    } finally {
+      await clash.dispose();
+    }
+  }, 30_000);
 });
 
 describe('edit tools', () => {

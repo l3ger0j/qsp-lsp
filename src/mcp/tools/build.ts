@@ -21,6 +21,7 @@ import {
   resolveMainFilePattern,
   type BuildMode,
 } from '../../common/buildPlan';
+import { findLocationConflicts, locationConflictMessage } from '../../common/locationConflicts';
 import { joinSources, normalizeText, orderSourceFiles } from '../../common/projectFiles';
 import { encodeWith, type T2gModule } from '../../common/txt2gamCore';
 import { fsProvider } from '../../server/nodeHost';
@@ -82,7 +83,8 @@ export function registerBuildTool(
     description: 'Encode the project into .qsp game file(s) with txt2gam, like the extension\'s Export command: '
       + 'file order, main file and output come from txt2gam.json and the qsp.game.* settings. In "single" mode '
       + 'all sources become one .qsp; in "perFile" mode each source becomes its own .qsp next to it. '
-      + 'Files whose content would not change are not rewritten. Nothing is written if any file fails to encode.',
+      + 'Files whose content would not change are not rewritten. Nothing is written if any file fails to encode, '
+      + 'or if two locations share a name (the error lists every place).',
     inputSchema: {
       buildMode: z.enum(['single', 'perFile']).optional()
         .describe('Override the build mode from txt2gam.json and settings'),
@@ -112,12 +114,17 @@ export function registerBuildTool(
       sources = moveToFront(sources, findMainFile(sources.map(f => f.relPath), mainPattern).index);
     }
 
+    const texts = new Map(sources.map(f => [f.abs, host.readText(f.abs)]));
+    const conflicts = locationConflictMessage(findLocationConflicts(
+      sources.map(f => ({ relPath: f.relPath, text: normalizeText(texts.get(f.abs)!) }))));
+    if (conflicts) throw new Error(conflicts);
+
     const mod = await loadTxt2gam();
     const outputs: Array<{ file: string; bytes: Uint8Array }> = [];
     if (mode === 'single') {
       const configured = cfg?.outputFile ?? `${path.basename(host.workspaceDir)}.qsp`;
       const file = path.isAbsolute(configured) ? configured : path.join(host.workspaceDir, configured);
-      outputs.push({ file, bytes: encodeWith(mod, joinSources(sources.map(f => host.readText(f.abs))), { password }) });
+      outputs.push({ file, bytes: encodeWith(mod, joinSources(sources.map(f => texts.get(f.abs)!)), { password }) });
     } else {
       const collisions = findOutputCollisions(sources.map(f => f.abs));
       if (collisions.length > 0) {
@@ -126,7 +133,7 @@ export function registerBuildTool(
       }
       for (const f of sources) {
         try {
-          outputs.push({ file: perFileOutputPath(f.abs), bytes: encodeWith(mod, normalizeText(host.readText(f.abs)), { password }) });
+          outputs.push({ file: perFileOutputPath(f.abs), bytes: encodeWith(mod, normalizeText(texts.get(f.abs)!), { password }) });
         } catch (err) {
           throw new Error(`${f.relPath}: ${err instanceof Error ? err.message : String(err)}`);
         }

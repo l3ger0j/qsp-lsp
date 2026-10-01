@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### New
+- A build (**Run**, **Export**, MCP `qsp_build`) stops when two locations share a name and lists every place: a player would reach only one of them.
+
 ## 0.3.0
 
 ### New
