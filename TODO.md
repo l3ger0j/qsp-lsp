@@ -85,3 +85,22 @@ player in `txt2gam.json` (and a command to run the game in it) would
 replace that task. Publishing to Open VSX would let the template install
 and update the extension like any other, instead of from a `.vsix` on
 GitHub Releases pinned in its `setup/versions.env`.
+
+## Default library catalog
+
+**Why.** The **QSP Libraries** view finds libraries only through the
+catalogs in `qsp.libraries.sources`, which is empty by default, so an
+author first has to find and paste a catalog URL. The maintainer will keep
+the libraries in a GitHub repository of their own; it doesn't exist yet
+(organizational questions first).
+
+**When it exists:**
+- Make its `libraries.json` (e.g.
+  `https://raw.githubusercontent.com/<owner>/<repo>/main/libraries.json`)
+  the default of `qsp.libraries.sources` in `package.json`, and mention it
+  in README.md and LIBRARIES.md.
+- Put the same URL into the template's `game/.vscode/settings.json`
+  (`qsp-game-template`), so older extension versions see it too.
+- Set the repository up as LIBRARIES.md suggests: location names prefixed
+  with the library id, and CI that recomputes each `sha256` and checks that
+  no two libraries share a location name.
