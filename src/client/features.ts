@@ -28,6 +28,7 @@ import {
 } from './locationCommands';
 
 import { registerAnalysisStatus } from './analysisStatus';
+import { registerLibrariesView } from './librariesView';
 import { registerLocationsView } from './locationsView';
 import { registerJumpGraph } from './jumpGraph';
 import {
@@ -51,6 +52,7 @@ export function registerExtensionFeatures(
   lspClient = client;
   registerAnalysisStatus(context, client);
   registerLocationsView(context, client);
+  registerLibrariesView(context);
   registerJumpGraph(context, client);
 
   // ── Status bar: current location ────────────────────────────────────

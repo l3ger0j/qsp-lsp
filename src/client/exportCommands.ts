@@ -51,7 +51,7 @@ const UTF8_BOM = '\uFEFF';
  * Decoding of the raw bytes is done via txt2gam's BOM-aware parseText
  * so that UTF-16 and CP1251 files are handled correctly.
  */
-async function readFileAsText(
+export async function readFileAsText(
   uri: vscode.Uri,
   context: vscode.ExtensionContext,
 ): Promise<string> {

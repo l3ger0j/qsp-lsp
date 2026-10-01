@@ -4,6 +4,9 @@
 
 import * as assert from 'node:assert';
 import * as cp from 'node:child_process';
+import { createHash } from 'node:crypto';
+import * as http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import * as vscode from 'vscode';
 
 const EXTENSION_ID = 'qsp.qsp-lsp';
@@ -186,5 +189,63 @@ suite('QSP extension', () => {
     assert.strictEqual(graphTabs.length, 1, 'a second call must reuse the panel');
     assert.notStrictEqual(graphTabs[0].group.viewColumn, editor.viewColumn, 'the graph opens beside the editor');
     await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+  });
+
+  test('QSP Libraries installs a library, refuses a clashing one, and the build keeps it separate', async () => {
+    const files: Record<string, string> = {
+      '/dialogs/dialogs.qsps': "# dialogs_init\n*pl 'Диалог'\n--- dialogs_init ---\n",
+      // main.qsps already has a location named start.
+      '/clash/clash.qsps': '# START\n--- START ---\n',
+    };
+    const entry = (id: string) => ({
+      id, version: '1.0.0', file: `${id}/${id}.qsps`,
+      sha256: createHash('sha256').update(files[`/${id}/${id}.qsps`]).digest('hex'),
+    });
+    files['/libraries.json'] = JSON.stringify({ schema: 1, libraries: [entry('dialogs'), entry('clash')] });
+    const server = http.createServer((req, res) => {
+      const body = files[req.url ?? ''];
+      res.writeHead(body === undefined ? 404 : 200);
+      res.end(body);
+    });
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+    const { port } = server.address() as AddressInfo;
+    const settings = vscode.workspace.getConfiguration('qsp');
+    try {
+      await settings.update('libraries.sources', [`http://127.0.0.1:${port}/libraries.json`], vscode.ConfigurationTarget.Workspace);
+      await settings.update('game.promptPassword', false, vscode.ConfigurationTarget.Workspace);
+      const readConfig = async () => JSON.parse(new TextDecoder().decode(await vscode.workspace.fs.readFile(fixtureUri('txt2gam.json'))));
+      await vscode.commands.executeCommand('qsp.exportGame');
+      const gameBefore = await vscode.workspace.fs.readFile(fixtureUri('fixture.qsp'));
+      await vscode.workspace.fs.delete(fixtureUri('fixture.qsp'));
+
+      await vscode.commands.executeCommand('qsp.libraries.install', { kind: 'available', id: 'dialogs' });
+      assert.ok(await exists(fixtureUri('libs/dialogs.qsps')), 'the library file is installed');
+      const installed = (await readConfig()).libraries?.installed;
+      assert.deepStrictEqual(Object.keys(installed ?? {}), ['dialogs']);
+      assert.strictEqual(installed.dialogs.sha256, entry('dialogs').sha256);
+      assert.strictEqual((await readConfig()).outputFile, 'fixture.qsp', 'the rest of txt2gam.json is kept');
+
+      await vscode.commands.executeCommand('qsp.libraries.install', { kind: 'available', id: 'clash' });
+      assert.strictEqual(await exists(fixtureUri('libs/clash.qsps')), false, 'a clashing library is not written');
+      assert.deepStrictEqual(Object.keys((await readConfig()).libraries.installed), ['dialogs']);
+
+      await vscode.commands.executeCommand('qsp.exportGame');
+      assert.ok(await exists(fixtureUri('fixture.qsp')), 'the game is built');
+      assert.ok(await exists(fixtureUri('libs/dialogs.qsp')), 'the library is built into its own .qsp');
+      // .qsp text is enciphered, so compare with the build from before the install.
+      assert.deepStrictEqual(await vscode.workspace.fs.readFile(fixtureUri('fixture.qsp')), gameBefore,
+        'the library is not folded into the game');
+
+      // A game location named like the library's stops the build.
+      await vscode.workspace.fs.delete(fixtureUri('fixture.qsp'));
+      await vscode.workspace.fs.writeFile(fixtureUri('data/clash.qsps'), new TextEncoder().encode('# Dialogs_Init\n--- Dialogs_Init ---\n'));
+      await vscode.commands.executeCommand('qsp.exportGame');
+      assert.strictEqual(await exists(fixtureUri('fixture.qsp')), false, 'nothing is built while two locations share a name');
+      await vscode.workspace.fs.delete(fixtureUri('data/clash.qsps'));
+    } finally {
+      server.close();
+      await settings.update('libraries.sources', undefined, vscode.ConfigurationTarget.Workspace);
+      await settings.update('game.promptPassword', undefined, vscode.ConfigurationTarget.Workspace);
+    }
   });
 });

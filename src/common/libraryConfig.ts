@@ -104,3 +104,23 @@ export function libraryIdOfUri(uri: string, prefixes: readonly string[]): string
   }
   return undefined;
 }
+
+/**
+ * Lines of the game that load `lib` (`inclib`, or the old `addqst`, naming
+ * its .qsp), 1-based, so removing a library can say where the game still
+ * needs it. A path built at run time can't be seen here.
+ */
+export function findLibraryUses(
+  sources: ReadonlyArray<{ relPath: string; text: string }>,
+  lib: Pick<LibraryFiles, 'id'>,
+): Array<{ relPath: string; line: number }> {
+  const file = `${lib.id}.qsp`.toLowerCase();
+  const uses: Array<{ relPath: string; line: number }> = [];
+  for (const { relPath, text } of sources) {
+    text.split(/\r\n|\r|\n/).forEach((line, i) => {
+      const lower = line.toLowerCase();
+      if (/\b(inclib|addqst)\b/.test(lower) && lower.includes(file)) uses.push({ relPath, line: i + 1 });
+    });
+  }
+  return uses;
+}

@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### New
+- **QSP Libraries** view: install, update and remove libraries from `libraries.json` catalogs (`qsp.libraries.sources`), with checksums, requirements, and a check against the game's location names before anything is written ([LIBRARIES.md](LIBRARIES.md)).
 - A build (**Run**, **Export**, MCP `qsp_build`) stops when two locations share a name and lists every place: a player would reach only one of them.
 - Libraries listed under `libraries` in `txt2gam.json` (sources in `libs/`) are built into `.qsp` files of their own for `inclib`, never into the game's.
 - Files in `libs/` show errors only (no warnings about a library's unused locations or variables), and a duplicate location names the library it clashes with.

@@ -99,6 +99,11 @@ A **QSP Locations** section in the Explorer side bar lists every location of the
 - Click a location to open it, double-click to centre on it, double-click empty space to zoom in there, click an arrow to open where the jump is written. Hover shows files, lines and the calls.
 - Large graphs: up to about 80 locations the graph is drawn in layers; above that a force layout places the nodes, a slice at a time, so the panel stays usable (about 2 s for 1000 locations). Past 5000 arrows only the arrows of the location under the pointer, or the selected one, are drawn: tens of thousands at once are an unreadable tangle and made the panel crawl. Locations keep their places when the graph is redrawn after an edit, and a dragged location stays where you put it. The layout and drawing times are written to **QSP: Show Language Server Log**.
 
+### Libraries
+- **QSP Libraries** view in the Explorer: install, update and remove libraries — `.qsps` files a game loads with `INCLIB` — from `libraries.json` catalogs listed in `qsp.libraries.sources`. A library goes to `libs/<id>.qsps` and into `txt2gam.json`. Each one is checked against its catalog's checksum and against the game's location names before anything is written. Afterwards the view offers the `INCLIB` line to insert.
+- Each build encodes every installed library into its own `libs/<id>.qsp`; a location name used twice across the game and its libraries stops the build. Files in `libs/` show errors only.
+- The catalog format and the marks in the view: [LIBRARIES.md](LIBRARIES.md).
+
 ### Multi-File Operations
 - **List All Locations** — browse all locations across the file or project
 - **List All Objects** — browse all objects (addobj) with their definition location
@@ -223,6 +228,7 @@ The server reads the files on disk: save files open in the editor before asking 
 | `qsp.game.mainFile` | — | Regular expression for the main file, searched in workspace-relative paths (e.g. `^main\.qsps$`). Overridden by `mainFile` in `txt2gam.json` |
 | `qsp.game.mainFileStrategy` | `ask` | How the setup wizard picks the main file when none is configured: `ask` shows a list (dismiss → root files first), `root` puts root files first without asking |
 | `qsp.game.buildMode` | `single` | `single` builds one combined `.qsp`; `perFile` builds each source into its own `.qsp` next to it. Overridden by `buildMode` in `txt2gam.json` |
+| `qsp.libraries.sources` | `[]` | URLs of `libraries.json` catalogs for the **QSP Libraries** view; the first catalog wins when two offer the same library. |
 | `qsp.game.password` | — | Default game password for export/import (leave blank for no password) |
 | `qsp.game.promptPassword` | `true` | Prompt for a password before each export |
 

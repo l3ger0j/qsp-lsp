@@ -11,7 +11,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  installedLibraries, isValidLibraryId, libraryFolderPrefixes, libraryIdOfUri, withoutLibraries,
+  findLibraryUses, installedLibraries, isValidLibraryId, libraryFolderPrefixes, libraryIdOfUri, withoutLibraries,
 } from '../src/common/libraryConfig';
 
 const entry = { version: '1.0.0', sha256: 'ab', catalog: 'https://example.org/libraries.json' };
@@ -64,5 +64,19 @@ describe('libraryIdOfUri', () => {
     ]) {
       expect(libraryIdOfUri(uri, prefixes)).toBeUndefined();
     }
+  });
+});
+
+describe('findLibraryUses', () => {
+  it('finds the inclib and addqst lines that load the library', () => {
+    const sources = [
+      { relPath: 'main.qsps', text: "# start\nINCLIB 'libs/Dialogs.qsp'\ngs 'dialogs_init'\n--- start ---\n" },
+      { relPath: 'старое.qsps', text: "# старое\naddqst 'libs/dialogs.qsp' & inclib 'libs/ui.qsp'\n*pl 'dialogs.qsp'\n--- старое ---\n" },
+    ];
+    expect(findLibraryUses(sources, { id: 'dialogs' })).toEqual([
+      { relPath: 'main.qsps', line: 2 },
+      { relPath: 'старое.qsps', line: 2 },
+    ]);
+    expect(findLibraryUses(sources, { id: 'menus' })).toEqual([]);
   });
 });

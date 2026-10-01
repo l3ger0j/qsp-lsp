@@ -204,6 +204,46 @@
         "category": "QSP"
       },
       {
+        "command": "qsp.libraries.refresh",
+        "title": "Reload Catalogs",
+        "category": "QSP Libraries",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "qsp.libraries.install",
+        "title": "Add Library",
+        "category": "QSP",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "qsp.libraries.update",
+        "title": "Update Library",
+        "category": "QSP Libraries",
+        "icon": "$(arrow-circle-up)"
+      },
+      {
+        "command": "qsp.libraries.remove",
+        "title": "Remove Library",
+        "category": "QSP Libraries",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "qsp.libraries.copyUsage",
+        "title": "Copy Usage",
+        "category": "QSP Libraries",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "qsp.libraries.insertUsage",
+        "title": "Insert Usage at Cursor",
+        "category": "QSP Libraries"
+      },
+      {
+        "command": "qsp.libraries.open",
+        "title": "Open Library",
+        "category": "QSP Libraries"
+      },
+      {
         "command": "qsp.locations.refresh",
         "title": "Refresh",
         "category": "QSP Locations",
@@ -443,6 +483,26 @@
         {
           "command": "qsp.locations.groupFlat",
           "when": "false"
+        },
+        {
+          "command": "qsp.libraries.update",
+          "when": "false"
+        },
+        {
+          "command": "qsp.libraries.remove",
+          "when": "false"
+        },
+        {
+          "command": "qsp.libraries.copyUsage",
+          "when": "false"
+        },
+        {
+          "command": "qsp.libraries.insertUsage",
+          "when": "false"
+        },
+        {
+          "command": "qsp.libraries.open",
+          "when": "false"
         }
       ],
       "view/title": [
@@ -460,9 +520,59 @@
           "command": "qsp.locations.refresh",
           "when": "view == qsp.locations",
           "group": "navigation@2"
+        },
+        {
+          "command": "qsp.libraries.install",
+          "when": "view == qsp.libraries",
+          "group": "navigation@1"
+        },
+        {
+          "command": "qsp.libraries.refresh",
+          "when": "view == qsp.libraries",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
+        {
+          "command": "qsp.libraries.install",
+          "when": "view == qsp.libraries && viewItem == qspLibraryAvailable",
+          "group": "inline"
+        },
+        {
+          "command": "qsp.libraries.update",
+          "when": "view == qsp.libraries && viewItem == qspLibraryInstalledUpdatable",
+          "group": "inline@1"
+        },
+        {
+          "command": "qsp.libraries.copyUsage",
+          "when": "view == qsp.libraries && viewItem =~ /^qspLibraryInstalled/",
+          "group": "inline@2"
+        },
+        {
+          "command": "qsp.libraries.open",
+          "when": "view == qsp.libraries && viewItem =~ /^qspLibraryInstalled/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "qsp.libraries.copyUsage",
+          "when": "view == qsp.libraries && viewItem =~ /^qspLibraryInstalled/",
+          "group": "2_use@1"
+        },
+        {
+          "command": "qsp.libraries.insertUsage",
+          "when": "view == qsp.libraries && viewItem =~ /^qspLibraryInstalled/",
+          "group": "2_use@2"
+        },
+        {
+          "command": "qsp.libraries.update",
+          "when": "view == qsp.libraries && viewItem =~ /^qspLibraryInstalled/",
+          "group": "3_manage@1"
+        },
+        {
+          "command": "qsp.libraries.remove",
+          "when": "view == qsp.libraries && viewItem =~ /^qspLibraryInstalled/",
+          "group": "3_manage@2"
+        },
         {
           "command": "qsp.locations.open",
           "when": "view == qsp.locations && viewItem == qspLocation",
@@ -801,6 +911,15 @@
           "type": "boolean",
           "default": true,
           "description": "Select the location under the cursor in the QSP Locations view."
+        },
+        "qsp.libraries.sources": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          },
+          "default": [],
+          "markdownDescription": "URLs of `libraries.json` catalogs for the **QSP Libraries** view, e.g. `https://raw.githubusercontent.com/<user>/<repo>/main/libraries.json`. When two catalogs offer the same library, the first one wins."
         }
       }
     },
@@ -880,6 +999,12 @@
           "id": "qsp.locations",
           "name": "QSP Locations",
           "icon": "$(symbol-namespace)",
+          "when": "qsp.hasSources"
+        },
+        {
+          "id": "qsp.libraries",
+          "name": "QSP Libraries",
+          "icon": "$(library)",
           "when": "qsp.hasSources"
         }
       ]
