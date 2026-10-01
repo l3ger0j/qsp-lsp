@@ -25,12 +25,17 @@ export class DiagnosticCtx {
   readonly settings: import('../diagnostics').DiagnosticSettings;
   private readonly _diagnostics: Diagnostic[];
 
+  /** Keep errors only: a library's warnings are not the author's to fix. */
+  private readonly errorsOnly: boolean;
+
   constructor(
     doc: TextDocument | null,
     settings: import('../diagnostics').DiagnosticSettings,
+    errorsOnly = false,
   ) {
     this.doc = doc;
     this.settings = settings;
+    this.errorsOnly = errorsOnly;
     this._diagnostics = [];
   }
 
@@ -93,6 +98,7 @@ export class DiagnosticCtx {
     unnecessary = false,
     deprecated = false,
   ): void {
+    if (this.errorsOnly && severity !== DiagnosticSeverity.Error) return;
     const d: Diagnostic = { severity, range, message, source: 'qsp' };
     const tags: DiagnosticTag[] = [];
     if (unnecessary) tags.push(DiagnosticTag.Unnecessary);

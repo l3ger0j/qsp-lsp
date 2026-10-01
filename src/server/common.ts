@@ -37,6 +37,7 @@ import { stripBom, shiftErrors, makeLocSymLoc, perLocationCacheKeys, safeSendDia
 import { ProjectModeService } from './projectMode';
 import { AnalysisStatusReporter } from './analysisStatus';
 import { ANALYSIS_STATUS_MIN_BYTES } from '../common/analysisStatus';
+import { libraryFolderPrefixes } from '../common/libraryConfig';
 import { PerfLog, formatChars, type ServerHost } from './perfLog';
 import { buildPerformanceReport } from './performanceReport';
 import { Pseudonyms } from './pseudonyms';
@@ -303,6 +304,7 @@ export function createQspServer(
     diagnostics.maxErrorsPerLocation = pickInt(d?.maxErrorsPerLocation, dd.maxErrorsPerLocation, 1);
     diagnostics.maxLocationLines = pickInt(d?.maxLocationLines, dd.maxLocationLines, 0);
     diagnostics.maxPerFile = pickInt(d?.maxPerFile, dd.maxPerFile, 0);
+    diagnostics.libraryFolders = libraryFolderPrefixes(workspaceFolderUris);
     return {
       project: { enabled: pick(proj?.enabled, defaultSettings.project.enabled) },
       embeddedExec: { enabled: pick(emb?.enabled, defaultSettings.embeddedExec.enabled) },
@@ -324,6 +326,8 @@ export function createQspServer(
     // (src/client/crashReports.ts). Start before anything is parsed: the
     // initial load is where large games crash.
     workspaceFolderUris = params.workspaceFolders?.map(f => f.uri) ?? [];
+    // Until the client's configuration arrives (parseSettingsFromConfig sets it too).
+    settings = { ...settings, diagnostics: { ...settings.diagnostics, libraryFolders: libraryFolderPrefixes(workspaceFolderUris) } };
     const crashDir = (params.initializationOptions as { crashDir?: unknown } | undefined)?.crashDir;
     if (typeof crashDir === 'string' && host.recorder) {
       const recorder = host.recorder;

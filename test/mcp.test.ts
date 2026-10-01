@@ -139,6 +139,32 @@ describe('read tools', () => {
   });
 });
 
+describe('library files', () => {
+  it('get errors only, and a duplicate names the library', async () => {
+    const mcp = await startMcp({
+      'main.qsps': "# start\ngs 'диалог_init'\n--- start ---\n\n# Диалог_вопрос\n--- Диалог_вопрос ---\n",
+      'libs/dialogs.qsps': "# диалог_init\nnever_read = 1\n--- диалог_init ---\n\n# диалог_unused\n--- диалог_unused ---\n"
+        + "\n# диалог_вопрос\n--- диалог_вопрос ---\n",
+      'mine/helpers.qsps': '# helper_unused\nunused_var = 1\n--- helper_unused ---\n',
+    });
+    try {
+      const diags: Array<{ file: string; severity: string; message: string }> = (await mcp.call('qsp_diagnostics', { minSeverity: 'hint' })).json();
+      const libDiags = diags.filter(d => d.file === 'libs/dialogs.qsps');
+      expect(libDiags.length).toBeGreaterThan(0);
+      expect(libDiags.every(d => d.severity === 'error')).toBe(true);
+      // The same unused location and variable outside libs/ are still reported.
+      expect(diags.some(d => d.file === 'mine/helpers.qsps' && d.severity !== 'error')).toBe(true);
+      expect(diags).toEqual(expect.arrayContaining([expect.objectContaining({
+        file: 'main.qsps',
+        severity: 'error',
+        message: expect.stringMatching(/'Диалог_вопрос' \(also defined in library 'dialogs'\); INCLIB keeps only the first one/),
+      })]));
+    } finally {
+      await mcp.dispose();
+    }
+  }, 30_000);
+});
+
 describe('qsp_build', () => {
   const project = {
     'main.qsps': "# start\n*pl 'main'\n--- start ---\n",

@@ -10,7 +10,9 @@
  *   outside the libs folder.
  */
 import { describe, it, expect } from 'vitest';
-import { installedLibraries, isValidLibraryId, withoutLibraries } from '../src/common/libraryConfig';
+import {
+  installedLibraries, isValidLibraryId, libraryFolderPrefixes, libraryIdOfUri, withoutLibraries,
+} from '../src/common/libraryConfig';
 
 const entry = { version: '1.0.0', sha256: 'ab', catalog: 'https://example.org/libraries.json' };
 
@@ -40,5 +42,27 @@ describe('withoutLibraries', () => {
     const libs = installedLibraries({ installed: { dialogs: entry } });
     const paths = ['main.qsps', 'Libs/Dialogs.qsps', 'libs\\dialogs.qsps', 'libs/mine.qsps'];
     expect(withoutLibraries(paths, p => p, libs)).toEqual(['main.qsps', 'libs/mine.qsps']);
+  });
+});
+
+describe('libraryIdOfUri', () => {
+  const prefixes = libraryFolderPrefixes(['file:///home/me/Game', 'file:///c%3A/Мои%20игры/']);
+
+  it('names a .qsps right in a workspace folder\'s libs', () => {
+    expect(libraryIdOfUri('file:///home/me/Game/libs/dialogs.qsps', prefixes)).toBe('dialogs');
+    expect(libraryIdOfUri('file:///home/me/game/LIBS/Dialogs.QSPS', prefixes)).toBe('Dialogs');
+    expect(libraryIdOfUri('file:///c%3A/Мои%20игры/libs/my%20lib.qsps', prefixes)).toBe('my lib');
+  });
+
+  it('ignores the game\'s own files, nested folders and other workspaces', () => {
+    for (const uri of [
+      'file:///home/me/Game/main.qsps',
+      'file:///home/me/Game/libs/sub/x.qsps',
+      'file:///home/me/Game/libs/x.qsp',
+      'file:///home/me/Game/src/libs/x.qsps',
+      'file:///home/other/libs/x.qsps',
+    ]) {
+      expect(libraryIdOfUri(uri, prefixes)).toBeUndefined();
+    }
   });
 });

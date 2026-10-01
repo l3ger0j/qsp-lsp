@@ -79,3 +79,28 @@ export function withoutLibraries<T>(sources: readonly T[], relPath: (s: T) => st
   const libraryPaths = new Set(libraries.map(l => l.sourcePath.toLowerCase()));
   return sources.filter(s => !libraryPaths.has(relPath(s).replace(/\\/g, '/').toLowerCase()));
 }
+
+/** URI prefixes of the libraries folder in each workspace folder, for `libraryIdOfUri`. */
+export function libraryFolderPrefixes(workspaceFolderUris: readonly string[]): string[] {
+  return workspaceFolderUris.map(u => `${u.replace(/\/+$/, '')}/${LIBRARY_FOLDER}/`.toLowerCase());
+}
+
+/**
+ * The library a document is, by its place: `<workspace>/libs/<id>.qsps`
+ * gives `id`; anything else, undefined. Every .qsps right in `libs/`
+ * counts, installed or not: the language server doesn't read txt2gam.json.
+ */
+export function libraryIdOfUri(uri: string, prefixes: readonly string[]): string | undefined {
+  const lower = uri.toLowerCase();
+  for (const prefix of prefixes) {
+    if (!lower.startsWith(prefix)) continue;
+    const match = /^([^/]+)\.qsps$/i.exec(uri.slice(prefix.length));
+    if (!match) continue;
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      return match[1];
+    }
+  }
+  return undefined;
+}

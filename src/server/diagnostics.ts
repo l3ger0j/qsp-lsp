@@ -26,6 +26,7 @@ import {
 
 // ── Diagnostic passes ─────────────────────────────────────────────────
 
+import { libraryIdOfUri } from '../common/libraryConfig';
 import { DiagnosticCtx } from './diagnosticPasses/diagnosticHelpers';
 import { checkSyntaxErrors, checkDuplicateLocations, checkLocationBounds } from './diagnosticPasses/structureDiagnostics';
 import { checkLocationSymbols } from './diagnosticPasses/symbolDiagnostics';
@@ -66,6 +67,12 @@ export interface DiagnosticSettings {
   maxLocationLines: number;
   /** At most this many diagnostics per file, the most severe first; 0 = all. */
   maxPerFile: number;
+  /**
+   * Not a user setting: lower-case URI prefixes of each workspace folder's
+   * `libs/` (`libraryFolderPrefixes`), set by the server from its workspace
+   * folders. Files there get errors only, and duplicates name the library.
+   */
+  libraryFolders?: readonly string[];
 }
 
 // ── Main entry point ──────────────────────────────────────────────────
@@ -84,12 +91,14 @@ export function computeDiagnostics(
   cachedFileAgg?: SymbolAggregates,
   projectDocs: DocumentSymbols[] = [],
 ): import('vscode-languageserver').Diagnostic[] {
-  const ctx = new DiagnosticCtx(doc, diagnosticSettings);
+  const libraryFolders = diagnosticSettings.libraryFolders ?? [];
+  const libraryOf = (uri: string) => libraryIdOfUri(uri, libraryFolders);
+  const ctx = new DiagnosticCtx(doc, diagnosticSettings, libraryOf(docUri) !== undefined);
 
   // ── Document-structure diagnostics ──────────────────────────────
   checkSyntaxErrors(ctx, docUri, locationIndex, tsParser, preExtractedErrors, symbols);
   if (diagnosticSettings.duplicateLocations) {
-    checkDuplicateLocations(ctx, locationIndex, docUri, projectAgg);
+    checkDuplicateLocations(ctx, locationIndex, docUri, projectAgg, libraryOf);
   }
   if (diagnosticSettings.unclosedLocations || diagnosticSettings.maxLocationLines > 0) {
     checkLocationBounds(ctx, locationIndex);

@@ -100,6 +100,7 @@ export function checkDuplicateLocations(
   locationIndex: LocationEntry[],
   docUri: string,
   projectAgg?: ProjectAggregates | null,
+  libraryOf: (uri: string) => string | undefined = () => undefined,
 ): void {
   // Within this file
   const locGroups = new Map<string, LocationEntry[]>();
@@ -122,15 +123,22 @@ export function checkDuplicateLocations(
     for (const loc of locationIndex) {
       const key = loc.nameLower;
       const otherFiles: string[] = [];
+      let withLibrary = libraryOf(docUri) !== undefined;
       for (const [fileUri, names] of projectAgg.perFileLocNames) {
         if (fileUri === docUri) continue;
-        if (names.has(key)) otherFiles.push(uriBasename(fileUri));
+        if (!names.has(key)) continue;
+        const library = libraryOf(fileUri);
+        if (library !== undefined) withLibrary = true;
+        otherFiles.push(library !== undefined ? `library '${library}'` : uriBasename(fileUri));
       }
       if (otherFiles.length > 0) {
+        // INCLIB skips a library location whose name the game already has,
+        // and nothing at run time says so.
+        const consequence = withLibrary ? '; INCLIB keeps only the first one loaded, and the game will not build' : '';
         ctx.push(
           DiagnosticSeverity.Error,
           ctx.headerRange(loc.startLine),
-          `Duplicate location name '${loc.name}' (also defined in ${otherFiles.join(', ')})`,
+          `Duplicate location name '${loc.name}' (also defined in ${otherFiles.join(', ')})${consequence}`,
         );
       }
     }
