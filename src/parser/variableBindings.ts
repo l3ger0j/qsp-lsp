@@ -582,11 +582,17 @@ export function getPossibleValuesInScope(
   const path = at.path;
 
   const out: CursorValueEntry[] = [];
-  const seen = new Set<string>();
+  // Seen statements by document, location and position; no string built
+  // per entry: the variable checks run this for every variable of a file.
+  const seen = new Map<string, Map<string, Set<number>>>();
   const push = (e: CursorValueEntry) => {
-    const k = `${e.uri}\0${e.locationName}\0${e.binding.stmtLoc.line}:${e.binding.stmtLoc.column}`;
-    if (seen.has(k)) return;
-    seen.add(k);
+    let byLoc = seen.get(e.uri);
+    if (!byLoc) seen.set(e.uri, byLoc = new Map());
+    let positions = byLoc.get(e.locationName);
+    if (!positions) byLoc.set(e.locationName, positions = new Set());
+    const at = e.binding.stmtLoc.line * 2 ** 21 + e.binding.stmtLoc.column;
+    if (positions.has(at)) return;
+    positions.add(at);
     out.push(e);
   };
 

@@ -183,6 +183,20 @@ export function checkMixedVariablePrefixes(
   const { globalPrefixes, propagatedLocals } = agg;
   // Hoist the projectDocs normalisation: same value for every loc/sym.
   const projectDocsArg = projectDocs && projectDocs.length > 0 ? projectDocs : undefined;
+  // Once per name: a common global has thousands of writes in a large
+  // file, and every variable of that name would scan them all.
+  const writePrefixesByName = new Map<string, Set<string>>();
+  const globalWritePrefixes = (nameLower: string): Set<string> => {
+    let prefixes = writePrefixesByName.get(nameLower);
+    if (!prefixes) {
+      prefixes = new Set();
+      for (const g of symbols.globalBindings.get(nameLower) ?? []) {
+        if (g.binding.writePrefix !== undefined) prefixes.add(g.binding.writePrefix);
+      }
+      writePrefixesByName.set(nameLower, prefixes);
+    }
+    return prefixes;
+  };
 
   for (const [, locSyms] of symbols.locations) {
     if (locSyms.hasErrors) continue;
@@ -222,12 +236,7 @@ export function checkMixedVariablePrefixes(
         }
 
         // Cross-location globals: direct lookup by base name, no chain.
-        const globalEntries = symbols.globalBindings.get(sym.nameLower);
-        if (globalEntries) {
-          for (const g of globalEntries) {
-            if (g.binding.writePrefix !== undefined) merged.add(g.binding.writePrefix);
-          }
-        }
+        for (const px of globalWritePrefixes(sym.nameLower)) merged.add(px);
       } else {
         // Tree unavailable (regex fallback) — flat file-wide prefix union.
         const gp = globalPrefixes.get(sym.nameLower);
