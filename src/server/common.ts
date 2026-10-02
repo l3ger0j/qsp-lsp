@@ -330,6 +330,15 @@ export function createQspServer(
     workspaceFolderUris = params.workspaceFolders?.map(f => f.uri) ?? [];
     // Until the client's configuration arrives (parseSettingsFromConfig sets it too).
     settings = { ...settings, diagnostics: { ...settings.diagnostics, libraryFolders: libraryFolderPrefixes(workspaceFolderUris) } };
+    // The client passes a per-workspace directory when qsp.cache.enabled is on.
+    const cacheDir = (params.initializationOptions as { cacheDir?: unknown } | undefined)?.cacheDir;
+    if (typeof cacheDir === 'string' && host.analysisCache) {
+      try {
+        project.analysisCache = host.analysisCache.open(cacheDir, (message) => log.warn(message));
+      } catch (err) {
+        log.warn(`[QSP] Analysis cache unavailable, analysing from scratch: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     const crashDir = (params.initializationOptions as { crashDir?: unknown } | undefined)?.crashDir;
     if (typeof crashDir === 'string' && host.recorder) {
       const recorder = host.recorder;

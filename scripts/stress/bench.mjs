@@ -18,6 +18,8 @@
 // --heap-mb  the server's heap limit (Node's default otherwise)
 // --crash    directory for the always-on crash recorder, as the extension
 //            passes it (breadcrumbs, memory, trail, report)
+// --cache    directory for the analysis cache, as the extension passes it;
+//            run twice with the same one to compare a cold and a warm start
 // --max-seconds / --max-heap-mb  exit with code 1 when exceeded (budgets)
 
 import { spawn, execFileSync } from 'node:child_process';
@@ -40,7 +42,7 @@ function parseArgs(argv) {
 const args = parseArgs(process.argv.slice(2));
 const project = args._[0] && path.resolve(args._[0]);
 if (!project || !fs.existsSync(project)) {
-  console.error('usage: bench.mjs <project dir> [--open <file>|none] [--graph] [--edits N] [--heap-mb N] [--crash <dir>] [--timeout S] [--json out.json] [--max-seconds S] [--max-heap-mb N]');
+  console.error('usage: bench.mjs <project dir> [--open <file>|none] [--graph] [--edits N] [--heap-mb N] [--crash <dir>] [--cache <dir>] [--timeout S] [--json out.json] [--max-seconds S] [--max-heap-mb N]');
   process.exit(2);
 }
 const server = path.join(root, 'out', 'server', 'nodeMain.js');
@@ -189,7 +191,10 @@ await request('initialize', {
   rootUri: projectUri,
   workspaceFolders: [{ uri: projectUri, name: path.basename(project) }],
   capabilities: { workspace: { configuration: true, workspaceFolders: true } },
-  initializationOptions: args.crash ? { crashDir: path.resolve(args.crash) } : undefined,
+  initializationOptions: {
+    crashDir: args.crash ? path.resolve(args.crash) : undefined,
+    cacheDir: args.cache ? path.resolve(args.cache) : undefined,
+  },
 });
 send({ method: 'initialized', params: {} });
 

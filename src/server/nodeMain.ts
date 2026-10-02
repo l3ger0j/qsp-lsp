@@ -11,6 +11,7 @@ import {
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { createQspServer } from './common';
+import { nodeAnalysisCacheStore } from './nodeCache';
 import { fsProvider, wasmFromOutDir } from './nodeHost';
 import { NodeRecorder, nodeMemory } from './nodeRecorder';
 
@@ -20,4 +21,6 @@ const documents = new TextDocuments(TextDocument);
 // This bundle is out/server/nodeMain.js.
 const { wasmLoader, wasmDir } = wasmFromOutDir(path.join(__dirname, '..'));
 
-createQspServer(connection, documents, wasmLoader, wasmDir, fsProvider, { memory: nodeMemory, recorder: new NodeRecorder() });
+createQspServer(connection, documents, wasmLoader, wasmDir, fsProvider, {
+  memory: nodeMemory, recorder: new NodeRecorder(), analysisCache: nodeAnalysisCacheStore(),
+});

@@ -26,6 +26,8 @@ const KEEP_REPORTS = 5;
 export interface ServerLaunch {
   /** Where the crash recorder writes; undefined when it's off. */
   crashDir?: string;
+  /** Where the analysis cache lives; undefined when it's off or no folder is open. */
+  cacheDir?: string;
 }
 
 type IncludeCode = 'ask' | 'always' | 'never';

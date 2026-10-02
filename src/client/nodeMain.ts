@@ -15,6 +15,7 @@ import { runGameCommand } from './runGame';
 import { registerMcpServer } from './mcp';
 import { registerQspDebugAdapter } from './qspDebugAdapter';
 import * as logger from './logger';
+import { registerAnalysisCache } from './analysisCache';
 import { registerCrashReports, type ServerLaunch } from './crashReports';
 
 let client: LanguageClient;
@@ -46,7 +47,7 @@ export function activate(context: ExtensionContext): void {
       { scheme: 'untitled', language: 'qsp' },
     ],
     traceOutputChannel: window.createOutputChannel('QSP Language Server'),
-    initializationOptions: () => (launch.crashDir ? { crashDir: launch.crashDir } : undefined),
+    initializationOptions: () => ({ crashDir: launch.crashDir, cacheDir: launch.cacheDir }),
   };
 
   client = new LanguageClient(
@@ -61,6 +62,7 @@ export function activate(context: ExtensionContext): void {
   registerQspDebugAdapter(context);
   registerMcpServer(context);
   registerCrashReports(context, client, launch);
+  registerAnalysisCache(context, launch);
   context.subscriptions.push({ dispose: logger.dispose });
 
   client.start();

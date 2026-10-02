@@ -36,6 +36,27 @@ export interface FsProvider {
 }
 
 /**
+ * Analysis results kept on disk between runs, so a project that hasn't
+ * changed opens without being analysed again. Keys are content hashes of
+ * everything a result depends on, so a stale entry is never found. Node
+ * only (nodeCache.ts); the browser and the MCP server run without it.
+ */
+export interface AnalysisCache {
+  /** A key for a result that depends on exactly these parts (hex SHA-256). */
+  key(...parts: string[]): string;
+  /** The value stored under `key`, or undefined when there is none or it can't be read. */
+  get(key: string): unknown;
+  /** Store `value` (plain data: objects, arrays, Maps, Sets) in the background. */
+  put(key: string, value: unknown): void;
+}
+
+/** Opens the analysis cache in a directory the client chose. */
+export interface AnalysisCacheStore {
+  /** Throws when the directory can't be used; `warn` gets problems worth a log line. */
+  open(dir: string, warn: (message: string) => void): AnalysisCache;
+}
+
+/**
  * File extensions recognised as QSP source files.
  * Must stay in sync with contributes.languages[].extensions in package.json.
  */

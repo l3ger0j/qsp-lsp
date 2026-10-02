@@ -46,7 +46,7 @@ import type { DocumentState } from './lspFeatures';
 import { computeDiagnostics } from './diagnostics';
 import { parseSuppressions } from '../common/suppressions';
 import { PerfLog, formatChars } from './perfLog';
-import { stripBom, makeLocSymLoc, shiftErrors, QSP_FILE_EXTENSIONS, safeSendDiagnostics, safeConsole, type FsProvider } from './serverUtils';
+import { stripBom, makeLocSymLoc, shiftErrors, QSP_FILE_EXTENSIONS, safeSendDiagnostics, safeConsole, type AnalysisCache, type FsProvider } from './serverUtils';
 
 /**
  * Files at or above this size are parsed per-location instead of as one
@@ -73,6 +73,8 @@ function yieldToEventLoop(): Promise<void> {
 export class ProjectModeService {
   /** Workspace root folders (populated on initialize). */
   workspaceFolders: string[] = [];
+  /** Disk cache of per-file analysis results, when the client gave a directory for it. */
+  analysisCache: AnalysisCache | undefined;
 
   /** Cached project aggregates (null when project mode is off). */
   projectAggregates: ProjectAggregates | null = null;

@@ -54,6 +54,8 @@ export interface Recorder extends Tracker {
 export interface ServerHost {
   memory?: MemoryReader;
   recorder?: Recorder;
+  /** Disk cache of analysis results; absent where there is no file system. */
+  analysisCache?: import('./serverUtils').AnalysisCacheStore;
 }
 
 /** A phase at least this long is logged even without `qsp.debug.performanceLog`. */

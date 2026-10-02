@@ -204,6 +204,11 @@
         "category": "QSP"
       },
       {
+        "command": "qsp.clearAnalysisCache",
+        "title": "Clear Analysis Cache",
+        "category": "QSP"
+      },
+      {
         "command": "qsp.diagnostics.turnOff",
         "title": "Turn Off a Diagnostic Check",
         "category": "QSP"
@@ -925,6 +930,11 @@
           "type": "boolean",
           "default": true,
           "description": "Select the location under the cursor in the QSP Locations view."
+        },
+        "qsp.cache.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Keep analysis results on disk (in VS Code's storage for this workspace, not in the project) so a project that hasn't changed opens without being analysed again. Takes effect at the next start of the language server. **QSP: Clear Analysis Cache** deletes it."
         },
         "qsp.libraries.sources": {
           "type": "array",
