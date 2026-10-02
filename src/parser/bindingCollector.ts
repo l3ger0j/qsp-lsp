@@ -13,7 +13,7 @@ import type Parser from 'web-tree-sitter';
 import type { VariableBinding, SymbolLocation, TypePrefix, CompoundOp, BindingValue } from './symbolTypes';
 import type { LocationSymbols } from './locationSymbols';
 import { type QspSymbol } from './symbolTypes';
-import { isBindingVisibleFrom, findScopeAncestor, findIsolationAncestor, scopeKeyOf } from './scopeUtils';
+import { isBindingVisible, findScopeAncestor, findIsolationAncestor, scopeKeyOf, scopePathOf } from './scopeUtils';
 import {
   SIDE_EFFECT_WRITE_STMTS,
   VAR_DEF_STMT_NAMES,
@@ -609,15 +609,13 @@ export function collectVariableBindings(
 
       for (const b of bindings) {
         if (b.isLocal) continue;
+        let path: number[] | undefined;
         for (const cand of bindings) {
           if (cand === b) continue;
           if (!cand.isLocal || cand.fromSideEffect) continue;
           if (cand.stmtNode.startIndex > b.stmtNode.startIndex) continue;
-          if (!isBindingVisibleFrom(
-            b.stmtNode, locBlock,
-            cand.scopeKey, cand.isolationKey,
-            /*bindIsLocal*/ true, isConsumed,
-          )) continue;
+          path ??= scopePathOf(b.stmtNode, locBlock);
+          if (!isBindingVisible(path, cand.scopeKey, cand.isolationKey, /*bindIsLocal*/ true)) continue;
           b.isLocal = true;
           b.scopeKey = cand.scopeKey;
           b.isolationKey = cand.isolationKey;
@@ -630,6 +628,7 @@ export function collectVariableBindings(
 
   // ── Per-call-site resolution ───────────────────────────────────
   for (const cs of callSites) {
+    const path = scopePathOf(cs.stmtNode, locBlock);
     const visited = new Set<string>([cs.varLower]);
     const queue: string[] = [cs.varLower];
     const blocks: Array<{ block: Parser.SyntaxNode; isLocal: boolean; initialScopeKey: number }> = [];
@@ -639,10 +638,7 @@ export function collectVariableBindings(
       const bindings = bindingsByName.get(name);
       if (!bindings) continue;
       for (const b of bindings) {
-        if (!isBindingVisibleFrom(
-          cs.stmtNode, locBlock,
-          b.scopeKey, b.isolationKey, b.isLocal, isConsumed,
-        )) continue;
+        if (!isBindingVisible(path, b.scopeKey, b.isolationKey, b.isLocal)) continue;
         if (b.value.kind === 'code-block' && b.blockNode) {
           blocks.push({ block: b.blockNode, isLocal: b.isLocal, initialScopeKey: b.initialScopeKey });
         } else if (b.value.kind === 'var-ref') {

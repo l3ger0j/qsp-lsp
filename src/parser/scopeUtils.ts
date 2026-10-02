@@ -81,7 +81,7 @@ export function isScopeForming(nodeType: string): boolean {
 }
 
 /**
- * Returns true for else/elseif branch nodes.  When `isBindingVisibleFrom`
+ * Returns true for else/elseif branch nodes.  When `isBindingVisible`
  * walks up and crosses one of these, bindings whose `bindScopeKey` is the
  * enclosing if_block (i.e. bindings in the *if-body*, not the else/elseif)
  * are NOT visible — they belong to a sibling branch, not the current one.
@@ -213,29 +213,58 @@ export function scopeKeyOf(node: Parser.SyntaxNode, locBlock: Parser.SyntaxNode)
 }
 
 /**
- * Determine whether a binding with scope-ancestor `bindScopeKey`,
- * isolation-ancestor `bindIsolKey` (see {@link scopeKeyOf}), and
- * `bindIsLocal` flag is visible from a consumer at `consumerNode`, in a
- * tree of the binding's location (`stopAt`). Walks from the consumer upward.
+ * The scopes around a point of a location, innermost first, as
+ * {@link isBindingVisible} needs them: for each scope-forming ancestor,
+ * its key ({@link scopeKeyOf}), its flags, and for an else/elseif branch
+ * the key of its if_block. Plain numbers, no nodes: symbols keep it for
+ * the reads the variable checks start from, so those need no tree.
+ */
+export type ScopePath = readonly number[];
+
+const ISOLATING = 1;
+const BRANCH = 2;
+const STEP = 3;
+
+/** The scope path of `node`, inside `locBlock` (its location_block). */
+export function scopePathOf(node: Parser.SyntaxNode, locBlock: Parser.SyntaxNode): number[] {
+  const path: number[] = [];
+  for (let a = node.parent; a && a.id !== locBlock.id; a = a.parent) {
+    if (!isScopeForming(a.type)) continue;
+    let flags = 0;
+    let branchOf = 0;
+    if (isBranchNode(a.type) && a.parent) {
+      flags |= BRANCH;
+      branchOf = scopeKeyOf(a.parent, locBlock);
+    }
+    // A code block that is `dynamic`'s or `dyneval`'s own argument runs
+    // in the caller's scope.
+    if (isIsolatingScope(a.type) && !isDynamicArgCodeBlock(a)) flags |= ISOLATING;
+    path.push(scopeKeyOf(a, locBlock), flags, branchOf);
+  }
+  return path;
+}
+
+/**
+ * Whether a binding with scope `bindScopeKey`, isolation scope
+ * `bindIsolKey` (see {@link scopeKeyOf}) and `bindIsLocal` is visible
+ * at the point `path` describes.
  *
  * Visibility rules:
  *   • Global (non-local) bindings are visible EVERYWHERE — QSP stores
  *     them in a single flat namespace; isolation boundaries only
  *     affect `local` bindings.
- *   • For local bindings:
- *     – If we reach `bindScopeKey` along the way, visible.
- *     – If we pass through an isolating scope (≠ bindScopeKey and
- *       ≠ bindIsolKey), blocked.
- *     – At the top level (reached `stopAt`), visible iff
- *       `bindScopeKey === 0`.
+ *   • For local bindings, going outward from the point:
+ *     – reaching `bindScopeKey` makes it visible, unless that is the
+ *       if_block whose if-body we may not see from an else/elseif branch;
+ *     – passing an isolating scope (≠ bindScopeKey and ≠ bindIsolKey)
+ *       blocks it;
+ *     – at the location's top level, it is visible iff `bindScopeKey === 0`.
  */
-export function isBindingVisibleFrom(
-  consumerNode: Parser.SyntaxNode,
-  stopAt: Parser.SyntaxNode,
+export function isBindingVisible(
+  path: ScopePath,
   bindScopeKey: number,
   bindIsolKey: number,
   bindIsLocal: boolean,
-  isConsumed: (id: number) => boolean,
 ): boolean {
   // Globals: always visible.  (Shadowing by nested locals is handled
   // by the consumer picking the innermost visible binding — which in
@@ -243,42 +272,18 @@ export function isBindingVisibleFrom(
   // collected; the ambiguity rule disambiguates at the end.)
   if (!bindIsLocal) return true;
 
-  // When the walk passes through an else/elseif branch node, any
-  // binding whose scopeKey equals the DIRECTLY-CONTAINING if_block
-  // (i.e. the if-body — a sibling branch) must be treated as not
-  // visible.  We record the id of that specific if_block so that only
-  // that scope is blocked; bindings in ENCLOSING scopes (a loop body
-  // that wraps the whole if/else, for example) are still visible.
+  // Crossing an else/elseif branch blocks the bindings of its own
+  // if_block (the if-body, a sibling branch), and only those: bindings
+  // in enclosing scopes (a loop body around the whole if/else) stay
+  // visible. A branch further out replaces it, which is right: only the
+  // innermost branch's if_block ever needs blocking.
   let blockedScopeKey = 0;  // 0 = nothing blocked
-
-  let a: Parser.SyntaxNode | null = consumerNode.parent;
-  while (a && a.id !== stopAt.id) {
-    const key = scopeKeyOf(a, stopAt);
-    if (key === bindScopeKey) {
-      // Found the binding's scope anchor.  Block only when this is the
-      // exact if_block whose if-body we must not reach from a sibling
-      // branch.
-      return key !== blockedScopeKey;
-    }
-    if (isBranchNode(a.type) && a.parent) {
-      // Record this else/elseif's direct parent (the if_block) as the
-      // scope to block.  A later branch node at a different nesting
-      // level will overwrite this with its own parent — which is the
-      // correct thing to do (we only ever need to block the innermost
-      // branch's direct parent at any point in the walk).
-      blockedScopeKey = scopeKeyOf(a.parent, stopAt);
-    }
-    if (isScopeForming(a.type)) {
-      if (a.type === 'code_block' && (isConsumed(a.id) || isDynamicArgCodeBlock(a))) {
-        a = a.parent;
-        continue;
-      }
-      if (isIsolatingScope(a.type) && key !== bindScopeKey && key !== bindIsolKey) {
-        return false;
-      }
-    }
-    a = a.parent;
+  for (let i = 0; i < path.length; i += STEP) {
+    const key = path[i];
+    if (key === bindScopeKey) return key !== blockedScopeKey;
+    const flags = path[i + 1];
+    if (flags & BRANCH) blockedScopeKey = path[i + 2];
+    if ((flags & ISOLATING) && key !== bindIsolKey) return false;
   }
-  // Reached stopAt (location body) — visible iff binding is also top-level.
   return bindScopeKey === 0;
 }

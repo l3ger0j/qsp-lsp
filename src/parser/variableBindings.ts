@@ -41,16 +41,19 @@
  * ── Public surface ─────────────────────────────────────────────────
  *
  * Per-binding (one entry per write):
- *   resolveBindingsAt(locSyms, locBlock, atNode, baseName, opts)
+ *   resolveBindingsAt(locSyms, path, baseName, opts)
  *   resolvePossibleValuesInDocument(docSyms, baseName)
  *   resolvePossibleValuesAcrossProject(docs, baseName)
- *   collectUnresolvedChainTails(locSyms, locBlock, atNode, base, opts)
+ *   collectUnresolvedChainTails(locSyms, path, base, opts)
  *
  * Cross-call merging (a caller-local seen through gs/func/@/@@):
  *   getMergedLocalBindings(callGraph, sym, ownLocSyms, ownUri)
  *
  * Composite "values at cursor" (the entry point hover/completion use):
  *   getPossibleValuesAtCursor(docSyms, callGraph, tree, line, col, base, opts)
+ *   getPossibleValuesInScope(docSyms, callGraph, at, line, col, base, opts)
+ *     — the same at a point given by its scopes (`cursorScopeAt`, or a
+ *       path symbols keep), for callers without a tree
  *
  * String-arg helpers (used by extractors, not consumers):
  *   parseVarStringArg(raw)              — strip $/#/% and [index]
@@ -64,7 +67,7 @@ import {
   type QspSymbol,
   type TypePrefix,
 } from './symbolTable';
-import { isBindingVisibleFrom } from './scopeUtils';
+import { isBindingVisible, scopePathOf, type ScopePath } from './scopeUtils';
 
 // ----------------------------------------------------------------------
 // Call-graph contract — boundary with the propagation subsystem
@@ -167,8 +170,6 @@ export function findLocationBlock(node: Parser.SyntaxNode): Parser.SyntaxNode | 
 export interface ResolveOptions {
   /** Follow `{kind:'var-ref'}` edges transitively.  Default: true. */
   followChain?: boolean;
-  /** Predicate identifying code_blocks that should not count as scopes. */
-  isConsumed?: (nodeId: number) => boolean;
 }
 
 /**
@@ -185,14 +186,12 @@ export interface ResolveOptions {
  */
 export function collectUnresolvedChainTails(
   locSyms: LocationSymbols,
-  locBlock: Parser.SyntaxNode,
-  atNode: Parser.SyntaxNode,
+  path: ScopePath,
   canonicalKey: string,
   options: ResolveOptions = {},
 ): string[] {
   const followChain = options.followChain ?? true;
   if (!followChain) return [];
-  const isConsumed = options.isConsumed ?? (() => false);
 
   const visited = new Set<string>([canonicalKey]);
   const queue: string[] = [canonicalKey];
@@ -204,10 +203,7 @@ export function collectUnresolvedChainTails(
     let hasVisibleTerminal = false;
     if (bindings) {
       for (const b of bindings) {
-        if (!isBindingVisibleFrom(
-          atNode, locBlock,
-          b.scopeKey, b.isolationKey, b.isLocal, isConsumed,
-        )) continue;
+        if (!isBindingVisible(path, b.scopeKey, b.isolationKey, b.isLocal)) continue;
         if (b.value.kind === 'var-ref') {
           const next = b.value.varBaseName;
           if (!visited.has(next)) { visited.add(next); queue.push(next); }
@@ -241,24 +237,22 @@ export function bindingsOfLocal(bindings: readonly VariableBinding[] | undefined
 }
 
 /**
- * All bindings of `canonicalKey` visible from `atNode`, with `var-ref`
- * chains followed to their terminal (non-var-ref) values.
+ * All bindings of `canonicalKey` visible at the point `path` describes,
+ * with `var-ref` chains followed to their terminal (non-var-ref) values.
  *
  * - Globals are always visible (flat namespace).
- * - Locals are visible only when `atNode` is inside their scope-island
+ * - Locals are visible only when the point is inside their scope-island
  *   (no intervening isolating ancestor).
  * - Var-ref cycles terminate cleanly.
  * - Duplicate terminal bindings (same `stmtLoc`) are deduped.
  */
 export function resolveBindingsAt(
   locSyms: LocationSymbols,
-  locBlock: Parser.SyntaxNode,
-  atNode: Parser.SyntaxNode,
+  path: ScopePath,
   canonicalKey: string,
   options: ResolveOptions = {},
 ): VariableBinding[] {
   const followChain = options.followChain ?? true;
-  const isConsumed = options.isConsumed ?? (() => false);
 
   const out: VariableBinding[] = [];
   const seenStmt = new Set<string>();
@@ -270,10 +264,7 @@ export function resolveBindingsAt(
     const bindings = locSyms.variableBindings.get(key);
     if (!bindings) continue;
     for (const b of bindings) {
-      if (!isBindingVisibleFrom(
-        atNode, locBlock,
-        b.scopeKey, b.isolationKey, b.isLocal, isConsumed,
-      )) continue;
+      if (!isBindingVisible(path, b.scopeKey, b.isolationKey, b.isLocal)) continue;
       if (followChain && b.value.kind === 'var-ref') {
         const next = b.value.varBaseName;
         if (!visited.has(next)) { visited.add(next); queue.push(next); }
@@ -477,8 +468,6 @@ export interface CursorValueOptions {
   projectDocs?: Iterable<DocumentSymbols>;
   /** Follow `var-ref` chains.  Default: true. */
   followChain?: boolean;
-  /** Predicate for code_blocks that should NOT count as scopes. Default: none. */
-  isConsumed?: (nodeId: number) => boolean;
   /**
    * Enable hover-only enrichment paths:
    *   • 2a+ self-shadow caller-propagation (`local x = x`)
@@ -521,24 +510,29 @@ export function getPossibleValuesAtCursor(
   canonicalKey: string,
   options: CursorValueOptions = {},
 ): CursorValueEntry[] {
-  if (!canonicalKey) return [];
-  const {
-    includeDocumentGlobals = true,
-    projectDocs,
-    followChain = true,
-    isConsumed = () => false,
-    hoverMode = false,
-  } = options;
+  const at = cursorScopeAt(docSyms, tree, line, column);
+  return at ? getPossibleValuesInScope(docSyms, agg, at, line, column, canonicalKey, options) : [];
+}
 
-  // Normalise to lowercase and strip any legacy type-prefix
-  // (`$`/`#`/`%`) so the lookup matches the base-keyed storage.
-  const key = splitVarKey(canonicalKey.toLowerCase()).base;
+/** A point in a location, as the value resolvers need it: no tree. */
+export interface CursorScope {
+  /** The location's symbols. */
+  location: LocationSymbols;
+  /** The scopes around the point (see `scopePathOf`). */
+  path: ScopePath;
+}
 
+/** The location and scopes at `(line, column)` of `tree`; undefined outside any location. */
+export function cursorScopeAt(
+  docSyms: DocumentSymbols,
+  tree: Parser.Tree,
+  line: number,
+  column: number,
+): CursorScope | undefined {
   const atNode = tree.rootNode.descendantForPosition({ row: line, column });
-  if (!atNode) return [];
-
+  if (!atNode) return undefined;
   const locBlock = findLocationBlock(atNode);
-  if (!locBlock) return [];
+  if (!locBlock) return undefined;
 
   // Find the LocationSymbols owning the enclosing location_block.
   // The header holds the `location_name` node (no tree-sitter field;
@@ -552,12 +546,40 @@ export function getPossibleValuesAtCursor(
     return undefined;
   };
   const header = findNamed(locBlock, 'location_header');
-  if (!header) return [];
+  if (!header) return undefined;
   const nameNode = findNamed(header, 'location_name');
-  if (!nameNode) return [];
-  const locKey = nameNode.text.trim().toLowerCase();
-  const ownLocSyms = docSyms.locations.get(locKey);
-  if (!ownLocSyms) return [];
+  if (!nameNode) return undefined;
+  const location = docSyms.locations.get(nameNode.text.trim().toLowerCase());
+  if (!location) return undefined;
+  return { location, path: scopePathOf(atNode, locBlock) };
+}
+
+/**
+ * {@link getPossibleValuesAtCursor} at a point given by its scopes
+ * instead of a tree: `(line, column)` only finds the variable's symbol.
+ */
+export function getPossibleValuesInScope(
+  docSyms: DocumentSymbols,
+  agg: VarResolverCallGraph,
+  at: CursorScope,
+  line: number,
+  column: number,
+  canonicalKey: string,
+  options: CursorValueOptions = {},
+): CursorValueEntry[] {
+  if (!canonicalKey) return [];
+  const {
+    includeDocumentGlobals = true,
+    projectDocs,
+    followChain = true,
+    hoverMode = false,
+  } = options;
+
+  // Normalise to lowercase and strip any legacy type-prefix
+  // (`$`/`#`/`%`) so the lookup matches the base-keyed storage.
+  const key = splitVarKey(canonicalKey.toLowerCase()).base;
+  const ownLocSyms = at.location;
+  const path = at.path;
 
   const out: CursorValueEntry[] = [];
   const seen = new Set<string>();
@@ -570,8 +592,8 @@ export function getPossibleValuesAtCursor(
 
   // 1. Scope-visible bindings in the own location (locals + globals).
   const scoped = resolveBindingsAt(
-    ownLocSyms, locBlock, atNode, key,
-    { followChain, isConsumed },
+    ownLocSyms, path, key,
+    { followChain },
   );
   for (const b of scoped) {
     push({
@@ -641,10 +663,7 @@ export function getPossibleValuesAtCursor(
       for (const b of ownBindings) {
         if (b.value.kind !== 'var-ref') continue;
         if (b.value.varBaseName !== key) continue;
-        if (!isBindingVisibleFrom(
-          atNode, locBlock,
-          b.scopeKey, b.isolationKey, b.isLocal, isConsumed,
-        )) continue;
+        if (!isBindingVisible(path, b.scopeKey, b.isolationKey, b.isLocal)) continue;
         hasSelfShadow = true;
         break;
       }
@@ -703,7 +722,7 @@ export function getPossibleValuesAtCursor(
   //     $c and invoked via `dynamic $code` or `dyneval($c, …)`).  The
   //     deferred walker injects the caller's `QspSymbol` into a
   //     synthetic scope, but the binding's `scopeKey` still refers
-  //     to the caller's AST scope — which `isBindingVisibleFrom`
+  //     to the caller's AST scope — which `isBindingVisible`
   //     (step 1) blocks from inside the isolating code_block.
   //
   //     When `findVariableAtPosition` resolves to a local symbol whose
@@ -790,8 +809,8 @@ export function getPossibleValuesAtCursor(
     //         `*(unresolved)*` line.  Showing the dangling reference
     //         is more informative than silent empty output.
     const tails = collectUnresolvedChainTails(
-      ownLocSyms, locBlock, atNode, key,
-      { followChain, isConsumed },
+      ownLocSyms, path, key,
+      { followChain },
     );
     /** Find a scope-visible var-ref binding for the cursor key whose
      *  chain leads to `tail`.  Used to surface the chain edge as a
@@ -801,10 +820,7 @@ export function getPossibleValuesAtCursor(
       if (!bs) return undefined;
       for (const b of bs) {
         if (b.value.kind !== 'var-ref') continue;
-        if (!isBindingVisibleFrom(
-          atNode, locBlock,
-          b.scopeKey, b.isolationKey, b.isLocal, isConsumed,
-        )) continue;
+        if (!isBindingVisible(path, b.scopeKey, b.isolationKey, b.isLocal)) continue;
         return b;
       }
       return undefined;

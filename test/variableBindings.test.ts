@@ -1824,36 +1824,6 @@ $g = 'g_in_b'
     expect(gVals.find(v => v.binding.value.kind === 'expr'
       && v.binding.stmtText.includes('g_in_b'))?.origin).toBe('document');
   });
-
-  it('isConsumed predicate hides code-block scope boundaries as expected', () => {
-    // With a dynamic code-block that's inlined at the call site, the
-    // caller passes `isConsumed` to treat the block as consumed —
-    // writes inside become part of the enclosing scope.
-    const src = `# a
-local x = 1
-local $code = { x = 2 }
-dynamic $code
-pl x
----
-`;
-    const { symbols, tree } = parseAndExtract(parser, src, 'test://pv-consumed');
-    const agg = aggFor(symbols, 'test://pv-consumed');
-    const { line, column } = locate(src, 'pl x', 3);
-
-    // Default: scope sees the outer binding.
-    const defaults = getPossibleValuesAtCursor(symbols, agg, tree!, line, column, 'x');
-    expect(defaults.some(v => v.origin === 'scope'
-      && v.binding.value.kind === 'expr'
-      && /\b1\b/.test(v.binding.stmtText))).toBe(true);
-
-    // With an `isConsumed` that marks ALL nodes as consumed, the
-    // query must still not throw and returns a well-typed result.
-    const vals = getPossibleValuesAtCursor(
-      symbols, agg, tree!, line, column, 'x',
-      { isConsumed: () => true },
-    );
-    expect(Array.isArray(vals)).toBe(true);
-  });
 });
 
 // ──────────────────────────────────────────────────────────────────────
