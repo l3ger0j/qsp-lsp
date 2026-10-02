@@ -42,10 +42,10 @@ export interface PerLocationParseResult {
   /**
    * Semantic token tuples [line, char, length, type, modifiers, …],
    * packed: a large file holds millions of them, and a plain array of
-   * numbers takes twice the memory.
+   * numbers takes twice the memory. Undefined until asked for when the
+   * location came from a stored analysis: opening the file parses nothing.
    */
-  tokens: Uint32Array;
-  hasErrors: boolean;
+  tokens?: Uint32Array;
   tree?: Parser.Tree;
 }
 
@@ -111,11 +111,22 @@ export interface ServerContext {
   projectFileUris: Set<string>;
   tsParser: QspTreeSitterParser;
   collectCallTypesPerTarget(): Map<string, { name: string; types: Set<string> }>;
+  /**
+   * Semantic tokens of a file parsed location by location, made for the
+   * locations that have none yet; with `lines`, only of the locations
+   * those lines touch.
+   */
   buildTokensFromCache(
     locationIndex: LocationEntry[],
     cache: Map<string, PerLocationParseResult>,
     gotoTargets?: ReadonlySet<string>,
+    lines?: { start: number; end: number },
   ): SemanticTokens;
+  /**
+   * Make the missing location tokens of `uri` a slice at a time, so other
+   * requests are answered meanwhile; stops when `cancel` is requested.
+   */
+  prepareLocationTokens(uri: string, cancel: import('vscode-languageserver').CancellationToken): Promise<void>;
 }
 
 // ──────────────────────────────────────────────────────────────────────

@@ -21,7 +21,10 @@ import {
   Range,
   RenameParams,
   SemanticTokensParams,
+  SemanticTokensRangeParams,
+  type SemanticTokens,
   SemanticTokensRequest,
+  SemanticTokensRangeRequest,
   SymbolKind,
   TextDocumentPositionParams,
   TextEdit,
@@ -722,30 +725,56 @@ export function registerLspFeatures(ctx: ServerContext): void {
 
   // ==================== SEMANTIC TOKENS ====================
 
-  connection.onRequest(SemanticTokensRequest.type, (params: SemanticTokensParams) => {
-    if (!ctx.settings.semanticHighlighting.enabled) return { data: [] };
-    const state = documentStates.get(params.textDocument.uri);
-    if (state?.cachedSemanticTokens) return state.cachedSemanticTokens;
-
+  function gotoTargetsNow(): Set<string> {
     const callTypes = ctx.projectAggregates?.callTypesPerTarget ?? ctx.collectCallTypesPerTarget();
     const gotoTargets = new Set<string>();
     for (const [key, entry] of callTypes) {
       if (entry.types.has('goto')) gotoTargets.add(key);
     }
+    return gotoTargets;
+  }
+
+  connection.onRequest(SemanticTokensRequest.type, async (params: SemanticTokensParams, cancel) => {
+    if (!ctx.settings.semanticHighlighting.enabled) return { data: [] };
+    const uri = params.textDocument.uri;
+    const before = documentStates.get(uri);
+    if (before?.perLocationCache && !before.cachedSemanticTokens) {
+      await ctx.prepareLocationTokens(uri, cancel);
+      if (cancel.isCancellationRequested) return null;
+    }
+    const state = documentStates.get(uri);
+    if (state?.cachedSemanticTokens) return state.cachedSemanticTokens;
+
     if (state?.perLocationCache && state.locationIndex) {
-      const tokens = ctx.buildTokensFromCache(state.locationIndex, state.perLocationCache, gotoTargets);
+      const tokens = ctx.buildTokensFromCache(state.locationIndex, state.perLocationCache, gotoTargetsNow());
       state.cachedSemanticTokens = tokens;
       return tokens;
     }
+    return wholeFileTokens(uri, state);
+  });
+
+  function wholeFileTokens(uri: string, state: DocumentState | undefined): SemanticTokens {
     if (!tsParser.isReady) return { data: [] };
-    const tree = tsParser.getTree(params.textDocument.uri);
+    const tree = tsParser.getTree(uri);
     if (!tree) return { data: [] };
     const embedParseFn = ctx.settings.embeddedExec.enabled
       ? (t: string) => tsParser.parseOnce(t)
       : undefined;
-    const tokens = buildSemanticTokens(tree, gotoTargets, embedParseFn);
+    const tokens = buildSemanticTokens(tree, gotoTargetsNow(), embedParseFn);
     if (state) state.cachedSemanticTokens = tokens;
     return tokens;
+  }
+
+  connection.onRequest(SemanticTokensRangeRequest.type, (params: SemanticTokensRangeParams) => {
+    if (!ctx.settings.semanticHighlighting.enabled) return { data: [] };
+    const state = documentStates.get(params.textDocument.uri);
+    if (state?.cachedSemanticTokens) return state.cachedSemanticTokens;
+    if (state?.perLocationCache && state.locationIndex) {
+      const lines = { start: params.range.start.line, end: params.range.end.line };
+      return ctx.buildTokensFromCache(state.locationIndex, state.perLocationCache, gotoTargetsNow(), lines);
+    }
+    // A small file's whole tokens: the protocol lets a range get more.
+    return wholeFileTokens(params.textDocument.uri, state);
   });
 
   // ==================== CODE ACTIONS ====================

@@ -1,4 +1,5 @@
 import {
+  CancellationToken,
   CodeActionKind,
   Connection,
   DidChangeWatchedFilesNotification,
@@ -121,11 +122,13 @@ function collectPeerDocs(
   return out;
 }
 
-/** Build merged semantic tokens from per-location caches. */
+/** Build merged semantic tokens from per-location caches; `tokensOf` makes those a location lacks. */
 function buildTokensFromCache(
   locationIndex: LocationEntry[],
   cache: Map<string, PerLocationParseResult>,
+  tokensOf: (entry: PerLocationParseResult) => Uint32Array,
   gotoTargets?: ReadonlySet<string>,
+  lines?: { start: number; end: number },
 ) {
   const builder = new SemanticTokensBuilder();
   // Same key scheme as perLocationCache's writers (analyzeDocumentPerLocation /
@@ -135,9 +138,10 @@ function buildTokensFromCache(
   // semantic tokens at all.
   const cacheKeys = perLocationCacheKeys(locationIndex);
   for (const [i, loc] of locationIndex.entries()) {
+    if (lines && (loc.endLine < lines.start || loc.startLine > lines.end)) continue;
     const cached = cache.get(cacheKeys[i]);
     if (!cached) continue;
-    const tuples = cached.tokens;
+    const tuples = tokensOf(cached);
     const isGoto = gotoTargets?.has(loc.nameLower) ?? false;
     for (let j = 0; j < tuples.length; j += 5) {
       let mod = tuples[j + 4];
@@ -416,6 +420,9 @@ export function createQspServer(
         semanticTokensProvider: {
           legend: SEMANTIC_TOKENS_LEGEND,
           full: true,
+          // VS Code colours the visible lines from a range request while a
+          // large file's full request is still making tokens.
+          range: true,
         },
         codeActionProvider: {
           codeActionKinds: [
@@ -922,6 +929,44 @@ export function createQspServer(
     return { symbols: state.symbols, syntaxErrors };
   }
 
+  // A location's semantic tokens, from a parse of its text the first time
+  // they are asked for. The tree isn't kept: the entry may already belong
+  // to a replaced state, whose trees nothing would free.
+  function locationTokens(entry: PerLocationParseResult): Uint32Array {
+    if (entry.tokens) return entry.tokens;
+    // Short of memory, or a parse that fails: none, and no retrying.
+    const tree = tightOnMemory() ? null : perf.step('parse', () => tsParser.parseOnce(entry.text));
+    if (!tree) return (entry.tokens = new Uint32Array(0));
+    try {
+      const embedParseFn = settings.embeddedExec.enabled ? (t: string) => tsParser.parseOnce(t) : undefined;
+      entry.tokens = perf.step('semantic tokens', () => Uint32Array.from(collectSemanticTokenTuples(tree, undefined, embedParseFn)));
+    } finally {
+      tree.delete();
+    }
+    return entry.tokens;
+  }
+
+  const TOKEN_SLICE_MS = 20;
+
+  async function prepareLocationTokens(uri: string, cancel: CancellationToken): Promise<void> {
+    const cache = documentStates.get(uri)?.perLocationCache;
+    if (!cache) return;
+    let made = 0;
+    const started = Date.now();
+    let sliceStarted = started;
+    for (const entry of [...cache.values()]) {
+      if (cancel.isCancellationRequested || shuttingDown) return;
+      if (entry.tokens) continue;
+      locationTokens(entry);
+      made++;
+      if (Date.now() - sliceStarted >= TOKEN_SLICE_MS) {
+        await new Promise<void>((resolve) => afterPendingWrites(resolve));
+        sliceStarted = Date.now();
+      }
+    }
+    if (made > 0) perf.note(`location tokens made · ${made} locations, ${Date.now() - started} ms`);
+  }
+
   function releasePerLocationTrees(state: DocumentState | undefined): void {
     if (!state?.perLocationCache) return;
     for (const entry of state.perLocationCache.values()) {
@@ -1125,15 +1170,12 @@ export function createQspServer(
    *
    * @param prev Optional previous parse result — if provided and the
    *   location has a retained tree, uses incremental parsing.
-   * @param known The location's symbols and errors from a stored analysis
-   *   of the same text: only the tree and the tokens are made.
    */
   function parseLocationBlock(
     locText: string,
     docUri: string,
     locationName: string,
     prev?: PerLocationParseResult,
-    known?: StoredLocation,
   ): PerLocationParseResult | null {
     let tree;
 
@@ -1170,8 +1212,8 @@ export function createQspServer(
         ? (t: string) => tsParser.parseOnce(t)
         : undefined;
       const parsed = tree;
-      const locSymbols = known?.symbols ?? perf.step('symbols', () => extractLocationSymbols(parsed, docUri, locationName, embedParseFn));
-      const errors = known?.errors ?? perf.step('errors', () => extractErrors(parsed));
+      const locSymbols = perf.step('symbols', () => extractLocationSymbols(parsed, docUri, locationName, embedParseFn));
+      const errors = perf.step('errors', () => extractErrors(parsed));
       // Short of memory, large files go without semantic highlighting
       // (TextMate still colours them).
       const tokens = tightOnMemory() ? new Uint32Array(0)
@@ -1182,10 +1224,9 @@ export function createQspServer(
       return {
         text: locText,
         symbols: locSymbols,
-        symbolsLine: known?.symbolsLine ?? 0,
+        symbolsLine: 0,
         errors,
         tokens,
-        hasErrors: tree.rootNode.hasError,
         tree: keepTree ? tree : undefined,
       };
     } finally {
@@ -1393,14 +1434,19 @@ export function createQspServer(
       const prev = prevCache?.get(cacheKey);
       const canReuse = prev !== undefined && prev.text === locText;
 
-      if (canReuse && prev) {
+      const known = stored?.[i];
+      if (known) {
+        // Taken as stored: no parse until a feature needs the tree or tokens.
+        newCache.set(cacheKey, perf.step('copy into file', () => placeLocation(symbols, loc, locLoc, { text: locText, ...known })));
+        shiftErrors(known.errors, loc.startLine, allErrors);
+      } else if (canReuse && prev) {
         // Reuse cached result
         newCache.set(cacheKey, perf.step('copy into file', () => placeLocation(symbols, loc, locLoc, prev)));
 
         shiftErrors(prev.errors, loc.startLine, allErrors);
       } else {
         // Parse this location (incrementally if prev has a retained tree)
-        const result = parseLocationBlock(locText, doc.uri, loc.name, prev, stored?.[i]);
+        const result = parseLocationBlock(locText, doc.uri, loc.name, prev);
         if (result) {
           newCache.set(cacheKey, perf.step('copy into file', () => placeLocation(symbols, loc, locLoc, result)));
 
@@ -1488,8 +1534,12 @@ export function createQspServer(
     projectFileUris: project.projectFileUris,
     tsParser,
     collectCallTypesPerTarget: () => collectCallTypesPerTarget(documentStates),
-    buildTokensFromCache: (...args: Parameters<typeof buildTokensFromCache>) =>
-      perf.phase('semantic tokens', () => buildTokensFromCache(...args), () => `${args[0].length} locations`),
+    buildTokensFromCache: (locationIndex, cache, gotoTargets, lines) => perf.phase(
+      'semantic tokens',
+      () => buildTokensFromCache(locationIndex, cache, locationTokens, gotoTargets, lines),
+      () => `${locationIndex.length} locations${lines ? `, lines ${lines.end - lines.start + 1}` : ''}`,
+    ),
+    prepareLocationTokens,
   });
 
   // ── Performance diagnostics ───────────────────────────────────────

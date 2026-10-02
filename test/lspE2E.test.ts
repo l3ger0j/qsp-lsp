@@ -44,6 +44,7 @@ import {
 import {
   CodeActionRequest,
   ConfigurationRequest,
+  DidChangeTextDocumentNotification,
   DidCloseTextDocumentNotification,
   DidOpenTextDocumentNotification,
   HoverRequest,
@@ -51,6 +52,7 @@ import {
   InitializedNotification,
   PublishDiagnosticsNotification,
   RegistrationRequest,
+  SemanticTokensRangeRequest,
   SemanticTokensRequest,
   type CodeAction,
   type Hover,
@@ -714,6 +716,7 @@ describe('LSP e2e: opening a large file with a stored analysis', () => {
     }
   }
   const extracted = (perf: string) => /[·,] symbols /.test(perf);
+  const parsed = (perf: string) => /[·,] parse /.test(perf);
 
   it('takes the project scan\'s analysis, then the stored one, and gives the same result', async () => {
     const cache = path.join(root, 'cache-project');
@@ -725,6 +728,7 @@ describe('LSP e2e: opening a large file with a stored analysis', () => {
     expect(fromMemory.perf).toContain('stored analysis');
     expect(fromMemory.perf).not.toContain('cache read');
     expect(extracted(fromMemory.perf)).toBe(false);
+    expect(parsed(fromMemory.perf)).toBe(false);
     expect(fromMemory.diagnostics).toEqual(fresh.diagnostics);
     expect(fromMemory.tokens).toEqual(fresh.tokens);
 
@@ -732,6 +736,7 @@ describe('LSP e2e: opening a large file with a stored analysis', () => {
     const fromDisk = await openBig(false, cache);
     expect(fromDisk.perf).toContain('cache read');
     expect(extracted(fromDisk.perf)).toBe(false);
+    expect(parsed(fromDisk.perf)).toBe(false);
     expect(fromDisk.diagnostics).toEqual(alone.diagnostics);
     expect(fromDisk.tokens).toEqual(alone.tokens);
   }, 120_000);
@@ -765,5 +770,61 @@ describe('LSP e2e: opening a large file with a stored analysis', () => {
     const again = await openBig(false, cache, twice);
     expect(extracted(again.perf)).toBe(true);
     expect(again.diagnostics).toEqual(first.diagnostics);
+  }, 120_000);
+
+  it('makes tokens for the lines asked, and lets an edit re-analyse a location taken as stored', async () => {
+    const cache = path.join(root, 'cache-lazy');
+    await openBig(false, cache);
+    const h = await startServer({ debug: { performanceLog: true } }, undefined, cache);
+    try {
+      while (!h.logs.some(l => l.includes('Server ready'))) await new Promise(r => setTimeout(r, 10));
+      const opened = (async () => {
+        for (;;) {
+          const p = await h.nextDiagnosticsFor(uri);
+          if (p.diagnostics.some(d => d.code === 'syntax')) return p;
+        }
+      })();
+      h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text: big } });
+      const before = (await opened).diagnostics;
+      const unresolved = before.find(d => d.code === 'unresolvedLocationRefs' && d.message.includes('нет_такой'))!;
+      expect(unresolved).toBeDefined();
+      expect(parsed(h.logs.find(l => l.includes('[perf] per-location analysis'))!)).toBe(false);
+
+      // Absolute [line, char, length, type, modifiers] from LSP's relative encoding.
+      const decode = (data: number[]) => {
+        const out: number[][] = [];
+        let line = 0, char = 0;
+        for (let i = 0; i < data.length; i += 5) {
+          line += data[i];
+          char = data[i] === 0 ? char + data[i + 1] : data[i + 1];
+          out.push([line, char, data[i + 2], data[i + 3], data[i + 4]]);
+        }
+        return out;
+      };
+      const lines = big.split('\n');
+      const start = lines.indexOf('# Ссылка');
+      const end = lines.indexOf('--- Ссылка ---');
+      const range = await h.client.sendRequest(SemanticTokensRangeRequest.type, {
+        textDocument: { uri }, range: { start: { line: start, character: 0 }, end: { line: end, character: 0 } },
+      });
+      expect(h.logs.some(l => /\[perf\] semantic tokens .*lines/.test(l))).toBe(true);
+      const full = await h.client.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } });
+      const inRange = decode(full!.data).filter(([line]) => line >= start && line <= end);
+      expect(inRange.length).toBeGreaterThan(0);
+      expect(decode(range!.data)).toEqual(inRange);
+
+      // An edit in a location taken from the stored analysis.
+      const edited = big.replace("gt 'нет_такой'", "gt 'init'");
+      const changed = h.nextDiagnosticsFor(uri);
+      h.client.sendNotification(DidChangeTextDocumentNotification.type, {
+        textDocument: { uri, version: 2 }, contentChanges: [{ text: edited }],
+      });
+      let after = (await changed).diagnostics;
+      // The quick pass clears diagnostics before the parse publishes them.
+      while (!after.some(d => d.code === 'syntax')) after = (await h.nextDiagnosticsFor(uri)).diagnostics;
+      expect(after).toEqual(before.filter(d => d !== unresolved));
+    } finally {
+      h.shutdown();
+    }
   }, 120_000);
 });

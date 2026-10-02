@@ -113,8 +113,11 @@ On a 20 MB game of 600 locations in 10 files, 22.6 s of file analysis
 became 1.8 s, and the stored diagnostics appear after 5.4 s instead of
 36 s (fully checked at 16.7 s). Closing an unchanged file keeps the
 editor's analysis; opening a large one (past 500 KB) reuses a stored
-analysis and only parses it for trees and tokens (a 12.8 M-character file:
-8.3 s instead of 23.2 s).
+analysis and parses nothing: a location is parsed when its semantic tokens
+are asked for, the visible lines through a range request, the rest by the
+full request a slice at a time. A 12.8 M-character file shows diagnostics
+after 3.1 s instead of 23 s; its full tokens take 6.9 s in slices after
+the project load.
 
 Still, a file is analysed one of three ways: the project scan (closed
 files), the editor's whole-file parse (open, under 500 KB) and the editor's
@@ -127,9 +130,9 @@ order:
   (`internStrings` in `nodeCache.ts`) brings it to 274 MB, for 0.8 s more
   on a 2.5 s read. The rest is object layout: read-back objects and arrays
   take more room than the ones the analysis built.
-- **Lazy trees and tokens.** Parse a location only when a feature needs its
-  tree (hover, highlighting, an edit in it), so opening an analysed file
-  costs almost nothing; drop trees of locations nobody looked at for a while.
+- **Drop trees nobody looked at.** Locations of 50 KB and more keep their
+  tree after a parse for incremental edits, for as long as the file is
+  open; drop those not edited for a while.
 - **One path.** The project scan and the editor share one analysis per
   file; small open files use it too, with the whole-file tree made on demand.
 - **A second hash: a file's interface.** What other files can see of a file
@@ -142,8 +145,9 @@ order:
   **Incremental project aggregates**).
 - **Yield during the aggregates and diagnostics.** On first open the server
   answers nothing for their ~10 s (hover, navigation, status updates all
-  wait); doing them in slices, as the jump graph layout does, would keep it
-  responsive.
+  wait; on the 12.8 M-character file, the 26 ms range request for the
+  visible lines' tokens is answered after 8 s); doing them in slices, as
+  the jump graph layout does, would keep it responsive.
 - **The first analysis in worker threads,** like clangd's background index:
   files analysed in parallel, results handed to the main thread through the
   cache format; the server answers requests meanwhile.

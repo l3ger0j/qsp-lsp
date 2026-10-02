@@ -208,7 +208,7 @@ export function buildPerformanceReport(input: ReportInput): PerformanceReport {
     if (state.perLocationCache) {
       for (const entry of state.perLocationCache.values()) {
         if (entry.tree) retainedTrees++;
-        cachedTokens += Math.floor(entry.tokens.length / 5);
+        cachedTokens += Math.floor((entry.tokens?.length ?? 0) / 5);
       }
     }
     files.push({
