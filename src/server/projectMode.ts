@@ -96,8 +96,11 @@ export class ProjectModeService {
   workspaceFolders: string[] = [];
   /** Disk cache of per-file analysis results, when the client gave a directory for it. */
   analysisCache: AnalysisCache | undefined;
-  /** Files of the project load read from the cache, and analysed for lack of an entry. */
-  readonly cacheStats = { hits: 0, misses: 0, diagnostics: false };
+  /**
+   * Files of the last project load read from the cache, and analysed for
+   * lack of an entry; files re-read later (a tab closed) don't count.
+   */
+  cacheStats = { hits: 0, misses: 0, diagnostics: false };
   /** Cache key of each project file's analysis input, as last read from disk. */
   private readonly fileKeys = new Map<string, string>();
 
@@ -161,6 +164,7 @@ export class ProjectModeService {
   ): Promise<void> {
     this.log.log('[QSP] Initializing project mode...');
     this.projectFileUris.clear();
+    this.cacheStats = { hits: 0, misses: 0, diagnostics: false };
 
     // Discover all QSP files in workspace folders. `findFiles` already
     // yields between directories; this counter adds an extra yield every
@@ -178,7 +182,7 @@ export class ProjectModeService {
           if (!this.documents.get(uri)) {
             try {
               const text = await fsProvider.readFile(filePath, fileEncoding);
-              this.analyzeFile(uri, text);
+              this.analyzeFile(uri, text, true);
             } catch (e) {
               this.log.error(`[QSP] Failed to read project file ${filePath}: ${e}`);
             }
@@ -280,11 +284,11 @@ export class ProjectModeService {
    * Analyze a project file that isn't open in the editor.
    * Creates a DocumentState from the raw text.
    */
-  analyzeFile(uri: string, text: string): void {
-    this.perf.phase('project file analysis', () => this.analyzeFileNow(uri, text), () => formatChars(text.length));
+  analyzeFile(uri: string, text: string, partOfLoad = false): void {
+    this.perf.phase('project file analysis', () => this.analyzeFileNow(uri, text, partOfLoad), () => formatChars(text.length));
   }
 
-  private analyzeFileNow(uri: string, text: string): void {
+  private analyzeFileNow(uri: string, text: string, partOfLoad: boolean): void {
     const locationIndex = buildLocationIndex(text);
     let symbols: DocumentSymbols | undefined;
     // Kept on the state because the tree is freed here: without them a
@@ -303,11 +307,11 @@ export class ProjectModeService {
       symbols = reviveDocumentSymbols(hit?.symbols);
       if (symbols && Array.isArray(hit?.syntaxErrors)) {
         syntaxErrors = hit.syntaxErrors;
-        this.cacheStats.hits++;
+        if (partOfLoad) this.cacheStats.hits++;
         cacheable = false;
       } else {
         symbols = undefined;
-        this.cacheStats.misses++;
+        if (partOfLoad) this.cacheStats.misses++;
       }
     }
 
