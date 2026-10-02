@@ -109,13 +109,9 @@ the libraries in a GitHub repository of their own; it doesn't exist yet
 
 The cache (`src/server/nodeCache.ts`) reads unchanged project files back
 instead of analysing them: on a 20 MB game of 600 locations in 10 files,
-22.6 s of file analysis became 1.8 s, ready 36.9 s → 16.1 s. Still open:
-- **Show stored diagnostics at once.** Aggregates (7 s) and diagnostics
-  (3.5 s) still run before anything is shown. Store each file's
-  diagnostics with a key over every file's key and the `qsp.diagnostics.*`
-  settings, publish them before the aggregates, mark the status bar as
-  updating, and replace them when the fresh ones are ready.
-- **Memory.** A warm start used 1.18 GB of heap against 0.97 GB cold:
+22.6 s of file analysis became 1.8 s, and the stored diagnostics appear
+after 5.4 s instead of 36 s (fully checked at 16.7 s). Still open:
+- **Memory.** A warm start used 1.28 GB of heap against 1.0 GB cold:
   read-back symbols probably hold their own copy of every repeated name,
   where a parse shares them. Interning strings while reviving should help;
   measure first.

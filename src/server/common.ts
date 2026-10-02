@@ -568,8 +568,9 @@ export function createQspServer(
         },
       ), () => `${project.projectFileUris.size} files`);
       if (project.analysisCache) {
-        const { hits, misses } = project.cacheStats;
-        log.log(`[QSP] Analysis cache: ${hits} of ${hits + misses} project files read from it, ${misses} analysed`);
+        const { hits, misses, diagnostics } = project.cacheStats;
+        log.log(`[QSP] Analysis cache: ${hits} of ${hits + misses} project files read from it, ${misses} analysed`
+          + (diagnostics ? '; stored diagnostics shown first' : ''));
       }
     } finally {
       safeConnectionCall(() => progress?.done());

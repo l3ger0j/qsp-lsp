@@ -9,6 +9,8 @@
  *   files (cross-file references, duplicates), with Cyrillic names, exec:
  *   links, syntax errors of closed files and !@qsp-ignore comments.
  * - A file that changed is analysed again; the others still come from the cache.
+ * - An unchanged project shows the diagnostics it had last time before the
+ *   seconds-long aggregates; any change to its files means none are shown.
  */
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
@@ -67,17 +69,18 @@ describe('analysis cache', () => {
       expect(fresh.cacheLine).toBeUndefined();
 
       const cold = await analyse(dir, cacheDir);
-      expect(cold.cacheLine).toMatch(/0 of 3 project files read from it, 3 analysed/);
-      expect(fs.readdirSync(cacheDir).filter(f => f.endsWith('.bin'))).toHaveLength(3);
+      expect(cold.cacheLine).toMatch(/0 of 3 project files read from it, 3 analysed$/);
+      // Three files and the project's diagnostics.
+      expect(fs.readdirSync(cacheDir).filter(f => f.endsWith('.bin'))).toHaveLength(4);
 
       const warm = await analyse(dir, cacheDir);
-      expect(warm.cacheLine).toMatch(/3 of 3 project files read from it, 0 analysed/);
+      expect(warm.cacheLine).toMatch(/3 of 3 project files read from it, 0 analysed; stored diagnostics shown first$/);
       expect(cold.diagnostics).toEqual(fresh.diagnostics);
       expect(warm.diagnostics).toEqual(fresh.diagnostics);
 
       fs.appendFileSync(path.join(dir, 'broken.qsps'), "# Новая\ngt 'Прихожая'\n--- Новая ---\n");
       const changed = await analyse(dir, cacheDir);
-      expect(changed.cacheLine).toMatch(/2 of 3 project files read from it, 1 analysed/);
+      expect(changed.cacheLine).toMatch(/2 of 3 project files read from it, 1 analysed$/);
       expect(changed.diagnostics).toEqual((await analyse(dir)).diagnostics);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

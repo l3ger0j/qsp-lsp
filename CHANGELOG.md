@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### New
-- **Analysis cache**: each project file's analysis is kept on disk (VS Code's workspace storage) and read back when the file hasn't changed, so a project opens much faster the second time (on a 20 MB game, analysing the files went from 22.6 s to 1.8 s). `qsp.cache.enabled`, **QSP: Clear Analysis Cache**.
+- **Analysis cache**: each project file's analysis is kept on disk (VS Code's workspace storage) and read back when the file hasn't changed, and an unchanged project shows the diagnostics it had last time at once, replacing them when the cross-file analysis has run, so a project opens much faster the second time (on a 20 MB game, diagnostics after 5.4 s instead of 36 s). `qsp.cache.enabled`, **QSP: Clear Analysis Cache**.
 - **QSP Libraries** view: install, update and remove libraries from `libraries.json` catalogs (`qsp.libraries.sources`), with checksums, requirements, and a check against the game's location names before anything is written ([LIBRARIES.md](LIBRARIES.md)).
 - A build (**Run**, **Export**, MCP `qsp_build`) stops when two locations share a name and lists every place: a player would reach only one of them.
 - Libraries listed under `libraries` in `txt2gam.json` (sources in `libs/`) are built into `.qsp` files of their own for `inclib`, never into the game's.

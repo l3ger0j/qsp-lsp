@@ -16,6 +16,7 @@ import {
   type Connection,
   type TextDocuments,
 } from 'vscode-languageserver';
+import type { Diagnostic } from 'vscode-languageserver';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import {
   buildLocationIndex,
@@ -47,7 +48,7 @@ import type { DocumentState } from './lspFeatures';
 import { computeDiagnostics } from './diagnostics';
 import { parseSuppressions } from '../common/suppressions';
 import { PerfLog, formatChars } from './perfLog';
-import { stripBom, makeLocSymLoc, shiftErrors, QSP_FILE_EXTENSIONS, safeSendDiagnostics, safeConsole, type AnalysisCache, type FsProvider } from './serverUtils';
+import { stripBom, makeLocSymLoc, shiftErrors, QSP_FILE_EXTENSIONS, safeSendDiagnostics, safeConnectionCall, safeConsole, type AnalysisCache, type FsProvider } from './serverUtils';
 
 /**
  * Files at or above this size are parsed per-location instead of as one
@@ -71,6 +72,9 @@ function yieldToEventLoop(): Promise<void> {
 
 // ──────────────────────────────────────────────────────────────────────
 
+/** What the analysis cache keeps for a whole project: each file's diagnostics. */
+type StoredDiagnostics = Array<[uri: string, diagnostics: Diagnostic[]]>;
+
 /** What the analysis cache keeps for one project file. */
 interface CachedFileAnalysis {
   symbols: DocumentSymbols;
@@ -83,7 +87,9 @@ export class ProjectModeService {
   /** Disk cache of per-file analysis results, when the client gave a directory for it. */
   analysisCache: AnalysisCache | undefined;
   /** Files of the project load read from the cache, and analysed for lack of an entry. */
-  readonly cacheStats = { hits: 0, misses: 0 };
+  readonly cacheStats = { hits: 0, misses: 0, diagnostics: false };
+  /** Cache key of each project file's analysis input, as last read from disk. */
+  private readonly fileKeys = new Map<string, string>();
 
   /** Cached project aggregates (null when project mode is off). */
   projectAggregates: ProjectAggregates | null = null;
@@ -181,8 +187,19 @@ export class ProjectModeService {
       this.projectFileUris.add(doc.uri);
     }
 
+    // What the project showed last time it was in this exact state, shown
+    // now; the aggregates and diagnostics below take seconds on a large
+    // game and then replace it.
+    const diagnosticsKey = this.projectDiagnosticsKey(diagnosticsSettings);
+    if (diagnosticsKey) await this.publishStoredDiagnostics(diagnosticsKey);
+
     // Build aggregates and re-diagnose everything
-    this.rebuildAndReanalyzeAll(diagnosticsSettings, collectCallTypes, collectPeerDocs);
+    const published = diagnosticsKey ? new Map<string, Diagnostic[]>() : undefined;
+    this.rebuildAndReanalyzeAll(diagnosticsSettings, collectCallTypes, collectPeerDocs, published);
+    if (diagnosticsKey && published && this.analysisCache) {
+      const entry: StoredDiagnostics = [...published];
+      this.perf.step('cache write', () => this.analysisCache!.put(diagnosticsKey, entry));
+    }
 
     this.log.log(
       `[QSP] Project mode initialized with ${this.projectFileUris.size} files`,
@@ -206,6 +223,50 @@ export class ProjectModeService {
   }
 
   /**
+   * The cache key of the project's diagnostics: every file's input (open
+   * files by their current text, which may be unsaved) and the diagnostic
+   * settings, library folders included. Undefined without a cache, or
+   * while a file's analysis wasn't keyed (the regex fallback).
+   */
+  private projectDiagnosticsKey(settings: DiagnosticSettings): string | undefined {
+    const cache = this.analysisCache;
+    if (!cache || !this.tsParser.isReady) return undefined;
+    const inputs: string[] = [];
+    for (const uri of [...this.projectFileUris].sort()) {
+      const open = this.documents.get(uri);
+      const fileKey = open
+        ? cache.key('open file', uri, this.embeddedExecEnabled ? 'exec' : 'no exec', open.getText())
+        : this.fileKeys.get(uri);
+      if (!fileKey) return undefined;
+      inputs.push(`${uri}\n${fileKey}`);
+    }
+    return cache.key('project diagnostics', inputs.join('\n'), JSON.stringify(settings));
+  }
+
+  /**
+   * Send the diagnostics stored under `key`, and wait until they are on
+   * their way: messages leave only while the event loop runs, one write at
+   * a time, and the aggregates that follow hold the loop for seconds.
+   */
+  private async publishStoredDiagnostics(key: string): Promise<void> {
+    const stored = this.perf.step('cache read', () => this.analysisCache?.get(key)) as StoredDiagnostics | undefined;
+    if (!Array.isArray(stored)) return;
+    this.cacheStats.diagnostics = true;
+    const sent: Promise<unknown>[] = [];
+    for (const item of stored) {
+      if (!Array.isArray(item) || typeof item[0] !== 'string' || !Array.isArray(item[1])) continue;
+      if (!this.projectFileUris.has(item[0])) continue;
+      safeConnectionCall(() => {
+        const p = this.connection.sendDiagnostics({ uri: item[0], diagnostics: item[1] });
+        sent.push(p);
+        return p;
+      });
+    }
+    // A client that stops reading must not hold up the analysis.
+    await Promise.race([Promise.allSettled(sent), new Promise(resolve => setTimeout(resolve, 2000))]);
+  }
+
+  /**
    * Analyze a project file that isn't open in the editor.
    * Creates a DocumentState from the raw text.
    */
@@ -225,6 +286,7 @@ export class ProjectModeService {
     // regex fallback are never stored: they are poorer than a full parse.
     const cache = this.tsParser.isReady ? this.analysisCache : undefined;
     const key = cache?.key('file symbols', uri, this.embeddedExecEnabled ? 'exec' : 'no exec', text);
+    if (key) this.fileKeys.set(uri, key);
     let cacheable = key !== undefined;
     if (cache && key) {
       const hit = this.perf.step('cache read', () => cache.get(key)) as CachedFileAnalysis | undefined;
@@ -444,6 +506,7 @@ export class ProjectModeService {
     collectCallTypes: () => Map<string, { name: string; types: Set<string> }>,
     collectPeerDocs: (ownUri: string) => DocumentSymbols[],
     getDoc: (uri: string) => TextDocument | undefined,
+    collected?: Map<string, Diagnostic[]>,
   ): number {
     if (!this.projectAggregates) return 0;
     let published = 0;
@@ -471,6 +534,7 @@ export class ProjectModeService {
         state.suppressions,
       );
       published += diagnostics.length;
+      collected?.set(uri, diagnostics);
       safeSendDiagnostics(this.connection, { uri, diagnostics });
     }
     return published;
@@ -481,11 +545,12 @@ export class ProjectModeService {
     diagnosticsSettings: DiagnosticSettings,
     collectCallTypes: () => Map<string, { name: string; types: Set<string> }>,
     collectPeerDocs: (ownUri: string) => DocumentSymbols[],
+    collected?: Map<string, Diagnostic[]>,
   ): void {
     this.perf.phase('project aggregates', () => this.rebuildAggregates(collectCallTypes), () => `${this.projectFileUris.size} files`);
     this.perf.phase('project diagnostics', () => this.reanalyzeAll(
       diagnosticsSettings, collectCallTypes, collectPeerDocs,
-      uri => this.documents.get(uri),
+      uri => this.documents.get(uri), collected,
     ), (n) => `${this.projectFileUris.size} files, ${n} diagnostics`);
   }
 
