@@ -769,6 +769,12 @@ export function createQspServer(
     const tt = treeTimers.get(uri);
     if (tt) { clearTimeout(tt); treeTimers.delete(uri); }
     status.forget(uri);
+    // The editor's analysis, kept if the file on disk turns out to hold the
+    // same text: the trees go, but symbols and syntax errors are what a
+    // closed project file needs, and re-analysing a large one takes seconds.
+    // Not when an analysis was still pending (it lags behind the text).
+    const closedText = stripBom(event.document.getText());
+    const kept = ft || tt ? undefined : keepableAnalysis(uri, documentStates.get(uri));
     // Clean up retained per-location trees before discarding state.
     releasePerLocationTrees(documentStates.get(uri));
     documentStates.delete(uri);
@@ -784,7 +790,8 @@ export function createQspServer(
       const filePath = fsProvider.uriToPath(uri);
       fsProvider.readFile(filePath, fileEncoding).then(
         (text) => {
-          project.analyzeFile(uri, text);
+          if (kept && stripBom(text) === closedText) project.keepFile(uri, text, kept.symbols, kept.syntaxErrors);
+          else project.analyzeFile(uri, text);
           projectRebuildAndReanalyze();
         },
         (err: unknown) => {
@@ -886,6 +893,31 @@ export function createQspServer(
     const placed = LocationSymbols.copyWithLineShift(entry.symbols, shift);
     symbols.adoptLocation(loc.name, locLoc, placed);
     return { ...entry, symbols: placed, symbolsLine: loc.startLine };
+  }
+
+  /**
+   * An open file's symbols and syntax errors, for keeping when it closes;
+   * undefined when they can't stand for a fresh analysis (positions reused
+   * from an older parse, regex-only symbols, or errors no longer at hand).
+   * Call before the file's trees are released.
+   */
+  function keepableAnalysis(uri: string, state: DocumentState | undefined): { symbols: DocumentSymbols; syntaxErrors: SyntaxError[] } | undefined {
+    if (!state || state.positionsApproximate || !tsParser.isReady) return undefined;
+    for (const loc of state.symbols.locations.values()) if (loc.regexOnly) return undefined;
+    const syntaxErrors: SyntaxError[] = [];
+    if (state.perLocationCache) {
+      const keys = perLocationCacheKeys(state.locationIndex);
+      for (const [i, loc] of state.locationIndex.entries()) {
+        const entry = state.perLocationCache.get(keys[i]);
+        if (!entry) return undefined;
+        shiftErrors(entry.errors, loc.startLine, syntaxErrors);
+      }
+    } else {
+      const tree = tsParser.getTree(uri);
+      if (!tree) return undefined;
+      syntaxErrors.push(...extractErrors(tree));
+    }
+    return { symbols: state.symbols, syntaxErrors };
   }
 
   function releasePerLocationTrees(state: DocumentState | undefined): void {

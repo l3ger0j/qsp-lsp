@@ -44,6 +44,7 @@ import {
 import {
   CodeActionRequest,
   ConfigurationRequest,
+  DidCloseTextDocumentNotification,
   DidOpenTextDocumentNotification,
   HoverRequest,
   InitializeRequest,
@@ -576,5 +577,83 @@ describe('LSP e2e: syntax errors of a large open project file', () => {
     h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text } });
     const syntax = await withSyntax;
     expect(syntax[0].range.start.line).toBeGreaterThan(4000);
+  }, 60_000);
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// A closed project file keeps the editor's analysis
+// ──────────────────────────────────────────────────────────────────────
+//
+// Closing a tab re-reads the file from disk for the project. When the text
+// on disk is what the editor had, its analysis is kept instead of being
+// redone (seconds for a large file); otherwise the file is analysed again.
+describe('LSP e2e: closing a project file', () => {
+  let h: Harness;
+  let dir: string;
+  const files: Record<string, string> = {
+    'main.qsps': "# Прихожая\ngs 'Кухня'\n--- Прихожая ---\n",
+    'kitchen.qsps': "# Кухня\n*pl счёт\ngt 'нет_такой'\n--- Кухня ---\n# Сломано\nif x = 1\n--- Сломано ---\n",
+  };
+  beforeAll(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qsp-close-'));
+    for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), text);
+    h = await startServer({ debug: { performanceLog: true } }, dir);
+  });
+  afterAll(() => { h.shutdown(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  const summary = (p: PublishDiagnosticsParams) => p.diagnostics.map(d => `${d.range.start.line}:${d.code}`).sort();
+  const analyses = () => h.logs.filter(l => l.includes('[perf] project file analysis')).length;
+  const kept = () => h.logs.filter(l => l.includes('[perf] closed file kept')).length;
+
+  it('keeps the analysis of an unchanged file, and re-analyses a changed one', async () => {
+    const uri = fsProvider.pathToUri(path.join(dir, 'kitchen.qsps'));
+    const fromLoad = summary(await h.diagnosticsFor(uri));
+    expect(fromLoad).toEqual(expect.arrayContaining(['2:unresolvedLocationRefs']));
+    expect(fromLoad.some(d => d.endsWith(':syntax'))).toBe(true);
+
+    // Unchanged: open, close, and the closed file shows what it showed.
+    const opened = h.nextDiagnosticsFor(uri);
+    h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text: files['kitchen.qsps'] } });
+    await opened;
+    const before = analyses();
+    const closed = h.nextDiagnosticsFor(uri);
+    h.client.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
+    expect(summary(await closed)).toEqual(fromLoad);
+    expect(kept()).toBe(1);
+    expect(analyses()).toBe(before);
+
+    // Closed with unsaved edits: the file on disk differs, so it is analysed.
+    const reopened = h.nextDiagnosticsFor(uri);
+    h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text: files['kitchen.qsps'] + '# Новая\n--- Новая ---\n' } });
+    await reopened;
+    const closedAgain = h.nextDiagnosticsFor(uri);
+    h.client.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
+    expect(summary(await closedAgain)).toEqual(fromLoad);
+    expect(kept()).toBe(1);
+    expect(analyses()).toBe(before + 1);
+  }, 30_000);
+
+  it('keeps it for a large file analysed one location at a time, syntax errors included', async () => {
+    const big = makeBigDocument('большой') + "# Ошибка\nif x = 1\n--- Ошибка ---\n# Ссылка\ngt 'нет_такой'\n--- Ссылка ---\n";
+    const file = path.join(dir, 'big.qsps');
+    fs.writeFileSync(file, big);
+    const uri = fsProvider.pathToUri(file);
+    // The first diagnostics may come from the quick pass before the parse.
+    const parsed = (async () => {
+      for (;;) {
+        const p = await h.nextDiagnosticsFor(uri);
+        if (summary(p).some(d => d.endsWith(':syntax'))) return p;
+      }
+    })();
+    h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text: big } });
+    const whileOpen = summary(await parsed);
+    expect(h.logs.some(l => l.includes('Per-location parse'))).toBe(true);
+    expect(whileOpen.some(d => d.endsWith(':syntax'))).toBe(true);
+    expect(whileOpen.some(d => d.endsWith(':unresolvedLocationRefs'))).toBe(true);
+    const keptBefore = kept();
+    const closed = h.nextDiagnosticsFor(uri);
+    h.client.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
+    expect(summary(await closed)).toEqual(whileOpen);
+    expect(kept()).toBe(keptBefore + 1);
   }, 60_000);
 });

@@ -281,6 +281,24 @@ export class ProjectModeService {
   }
 
   /**
+   * Keep the analysis an editor made of a file that has just closed, its
+   * text unchanged on disk, instead of analysing it again. Not stored in
+   * the cache: only a project analysis is (see analyzeFileNow).
+   */
+  keepFile(uri: string, text: string, symbols: DocumentSymbols, syntaxErrors: SyntaxError[]): void {
+    this.perf.phase('closed file kept', () => {
+      const locationIndex = buildLocationIndex(text);
+      this.documentStates.set(uri, {
+        locationIndex,
+        symbols,
+        cachedSemanticTokens: undefined,
+        syntaxErrors,
+        suppressions: parseSuppressions(text, locationIndex),
+      });
+    }, () => formatChars(text.length));
+  }
+
+  /**
    * Analyze a project file that isn't open in the editor.
    * Creates a DocumentState from the raw text.
    */
