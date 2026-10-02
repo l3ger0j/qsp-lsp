@@ -105,39 +105,27 @@ the libraries in a GitHub repository of their own; it doesn't exist yet
   with the library id, and CI that recomputes each `sha256` and checks that
   no two libraries share a location name.
 
-## Analysis cache: what is left
+## Analysis: cache, one path, background
 
-The cache (`src/server/nodeCache.ts`) reads unchanged project files back
-instead of analysing them: on a 20 MB game of 600 locations in 10 files,
-22.6 s of file analysis became 1.8 s, and the stored diagnostics appear
-after 5.4 s instead of 36 s (fully checked at 16.7 s). Still open:
-- **Memory.** A warm start used 1.28 GB of heap against 1.0 GB cold:
-  read-back symbols probably hold their own copy of every repeated name,
-  where a parse shares them. Interning strings while reviving should help;
-  measure first.
-- **Opening a large file** (past 500 KB) reuses a stored analysis of the
-  same text, from the project scan or the cache, and only parses it for
-  trees and tokens: a 12.8 M-character file opened at start took 8.3 s
-  instead of 23.2 s. Reading that entry back takes 1.6 s, and the heap
-  ends 250 MB higher (see **Memory**). Files under 500 KB still go through
-  the whole-file editor path.
-- **Yield during the aggregates and diagnostics.** On first open the server
-  answers nothing for their ~10 s (hover, navigation, status updates all
-  wait); doing them in slices, as the jump graph layout does, would keep it
-  responsive.
-- **The MCP server and VS Code for the Web** run without a cache:
-  `QspHost` takes a `cacheDir` already, the MCP server would need a folder
-  (e.g. under the user's cache directory); the browser would need IndexedDB.
+Done so far: the cache (`src/server/nodeCache.ts`) reads unchanged files
+back instead of analysing them, keyed the same way in memory and on disk.
+On a 20 MB game of 600 locations in 10 files, 22.6 s of file analysis
+became 1.8 s, and the stored diagnostics appear after 5.4 s instead of
+36 s (fully checked at 16.7 s). Closing an unchanged file keeps the
+editor's analysis; opening a large one (past 500 KB) reuses a stored
+analysis and only parses it for trees and tokens (a 12.8 M-character file:
+8.3 s instead of 23.2 s).
 
-## Analysis: one path, whatever is open
-
-Today a file is analysed one of three ways: the project scan (closed files,
-the only one with the cache), the editor's whole-file parse (open, under
-500 KB), and the editor's per-location parse (open, 500 KB and up). The
-first two steps of making "open" only change where the text comes from and
-how soon it is analysed are done: a shared key for a file's analysis, kept
-in memory and on disk, and closing or opening an unchanged file reuses it.
-Next:
+Still, a file is analysed one of three ways: the project scan (closed
+files), the editor's whole-file parse (open, under 500 KB) and the editor's
+per-location parse (open, 500 KB and up). The goal is that "open" only
+changes where the text comes from and how soon it is analysed. Next, in
+order:
+- **Memory.** A warm start used 1.28 GB of heap against 1.0 GB cold, and
+  the 12.8 M-character file ends 250 MB higher when read back: read-back
+  symbols probably hold their own copy of every repeated name, where a
+  parse shares them. Intern strings while reviving; measure first. Reading
+  that file's entry back also takes 1.6 s.
 - **Lazy trees and tokens.** Parse a location only when a feature needs its
   tree (hover, highlighting, an edit in it), so opening an analysed file
   costs almost nothing; drop trees of locations nobody looked at for a while.
@@ -149,8 +137,15 @@ Next:
   doesn't re-diagnose the rest of the project.
 - **Incremental aggregates.** Update the project aggregates by the changed
   file's contribution instead of rebuilding them (5 s on a 12.8 M-character
-  file), and keep them in the cache keyed by the interface hashes.
+  file), and keep them in the cache keyed by the interface hashes (see also
+  **Incremental project aggregates**).
+- **Yield during the aggregates and diagnostics.** On first open the server
+  answers nothing for their ~10 s (hover, navigation, status updates all
+  wait); doing them in slices, as the jump graph layout does, would keep it
+  responsive.
 - **The first analysis in worker threads,** like clangd's background index:
   files analysed in parallel, results handed to the main thread through the
   cache format; the server answers requests meanwhile.
-
+- **The MCP server and VS Code for the Web** run without a cache:
+  `QspHost` takes a `cacheDir` already, the MCP server would need a folder
+  (e.g. under the user's cache directory); the browser would need IndexedDB.
