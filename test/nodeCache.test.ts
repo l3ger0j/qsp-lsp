@@ -8,12 +8,14 @@
  * - A cache must never make the analysis wrong or fail: a broken or
  *   half-written entry is a miss, and keys differ whenever any input does.
  * - It must not grow without bound: old and least recently used entries go.
+ * - Read-back strings are made one per value (internStrings), which rebuilds
+ *   Maps and Sets: their contents and order must stay as they were.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { NodeAnalysisCache, analyserSalt, nodeAnalysisCacheStore } from '../src/server/nodeCache';
+import { NodeAnalysisCache, analyserSalt, internStrings, nodeAnalysisCacheStore } from '../src/server/nodeCache';
 
 let dir: string;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qsp-cache-')); });
@@ -104,5 +106,29 @@ describe('NodeAnalysisCache', () => {
     const cache = nodeAnalysisCacheStore().open(nested, () => {});
     expect(fs.existsSync(nested)).toBe(true);
     expect(cache.get(cache.key('x'))).toBeUndefined();
+  });
+});
+
+describe('internStrings', () => {
+  it('keeps every value, the order of Maps and Sets, shared objects and cycles', () => {
+    const uri = 'file:///game/main.qsps';
+    const loc = { uri, line: 1, kind: 'write' };
+    const first = new Map([['счёт', [loc]], ['имя', []]]);
+    // Keys equal to the other map's, as separate strings: this map is rebuilt.
+    const copy = (text: string) => [...text].join('');
+    const second = new Map<string, unknown>([[copy('имя'), { uri: copy(uri) }], [copy('счёт'), loc]]);
+    const cyclic: { self?: unknown; names: Set<string> } = { names: new Set(['b', 'а', copy('b')]) };
+    cyclic.self = cyclic;
+    const value = { first, second, cyclic, refs: [loc, loc, 'write'], tokens: new Uint32Array([1, 2, 3]) };
+    const expected = structuredClone(value);
+
+    const back = internStrings(value);
+    expect(back).toBe(value);
+    expect(back).toEqual(expected);
+    expect([...back.second.keys()]).toEqual(['имя', 'счёт']);
+    expect([...back.cyclic.names]).toEqual(['b', 'а']);
+    expect(back.cyclic.self).toBe(back.cyclic);
+    expect(back.refs[0]).toBe(back.first.get('счёт')![0]);
+    expect(back.second.get('счёт')).toBe(loc);
   });
 });
