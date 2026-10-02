@@ -48,11 +48,20 @@ export function extractActionsFromLines(
   uri: string,
   skipLines?: Set<number | undefined>,
 ): void {
+  // The rest of the location from each act line, as a slice of one string:
+  // joining the remaining lines anew for every act was quadratic.
+  let joined: string | undefined;
+  let lineOffsets: number[] | undefined;
   for (let i = 0; i < lines.length; i++) {
     if (!/^\s*act[\s(]/i.test(lines[i])) continue;
     const absLine = startLine + i;
     if (skipLines?.has(absLine)) continue;
-    const result = parseActName(lines.slice(i).join('\n'));
+    if (!joined || !lineOffsets) {
+      joined = lines.join('\n');
+      lineOffsets = [];
+      for (let j = 0, offset = 0; j < lines.length; offset += lines[j].length + 1, j++) lineOffsets.push(offset);
+    }
+    const result = parseActName(joined.slice(lineOffsets[i]));
     if (result !== null) {
       const endIdx = i + result.extraLines;
       locSymbols.addAction(result.name, {
