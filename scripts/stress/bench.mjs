@@ -6,13 +6,16 @@
 // how long the analysis takes and how much memory it uses. Pair it with
 // scripts/stress/genGame.mjs.
 //
-//   node scripts/stress/bench.mjs <project dir> [--open <file>] [--graph]
+//   node scripts/stress/bench.mjs <project dir> [--open <file>] [--graph] [--tokens]
 //       [--edits N] [--heap-mb N] [--timeout S] [--json <out.json>]
 //       [--max-seconds S] [--max-heap-mb N]
 //
 // --open     file to open like an editor tab (default: the largest one;
 //            "none" opens nothing)
 // --graph    also ask for the jump graph and report its size
+// --tokens   ask for the open file's semantic tokens once its first
+//            diagnostics are in, as VS Code does: the visible lines (a range
+//            request) and the whole file, reporting when each answer came
 // --edits N  then type N characters into the open file, reporting how
 //            long each takes to be re-diagnosed
 // --heap-mb  the server's heap limit (Node's default otherwise)
@@ -42,7 +45,7 @@ function parseArgs(argv) {
 const args = parseArgs(process.argv.slice(2));
 const project = args._[0] && path.resolve(args._[0]);
 if (!project || !fs.existsSync(project)) {
-  console.error('usage: bench.mjs <project dir> [--open <file>|none] [--graph] [--edits N] [--heap-mb N] [--crash <dir>] [--cache <dir>] [--timeout S] [--json out.json] [--max-seconds S] [--max-heap-mb N]');
+  console.error('usage: bench.mjs <project dir> [--open <file>|none] [--graph] [--tokens] [--edits N] [--heap-mb N] [--crash <dir>] [--cache <dir>] [--timeout S] [--json out.json] [--max-seconds S] [--max-heap-mb N]');
   process.exit(2);
 }
 const server = path.join(root, 'out', 'server', 'nodeMain.js');
@@ -210,11 +213,25 @@ for (const f of qspFiles) results.chars += fs.statSync(f).size;
 
 try {
   results.firstDiagnosticsSeconds = await firstDiagnostics;
+  let tokensDone = Promise.resolve();
+  if (args.tokens && openUri) {
+    const asked = elapsed();
+    const answered = (kind) => (r) => {
+      results.tokens ??= {};
+      results.tokens[kind] = { seconds: elapsed() - asked, tokens: (r?.data?.length ?? 0) / 5 };
+    };
+    const range = { start: { line: 0, character: 0 }, end: { line: 60, character: 0 } };
+    tokensDone = Promise.all([
+      request('textDocument/semanticTokens/range', { textDocument: { uri: openUri }, range }).then(answered('range')),
+      request('textDocument/semanticTokens/full', { textDocument: { uri: openUri } }).then(answered('full')),
+    ]);
+  }
   const isReady = (st) => st && st.configured && st.busyUris.length === 0 && st.parser !== 'starting'
     && (!st.project || st.project.state === 'ready');
   results.readySeconds = isReady(lastStatus) ? elapsed()
     : await waitFor(m => m.method === 'qsp/analysisStatus' && isReady(m.params) && elapsed(), timeoutS);
   console.log(`\nready after ${results.readySeconds.toFixed(1)} s`);
+  await tokensDone;
 
   if (args.graph) {
     const started = Date.now();
@@ -275,6 +292,9 @@ function finish(code) {
   if (heapMb !== undefined) console.log(`heap at end    ${heapMb} MB of ${Math.round(mem.heapLimit / 1048576)} MB`);
   if (results.peakRssMb) console.log(`peak rss       ${results.peakRssMb} MB`);
   if (results.graph) console.log(`jump graph     ${results.graph.nodes} nodes, ${results.graph.edges} edges (${results.graph.possible} possible), ${results.graph.unresolved} unresolved, ${results.graph.megabytes.toFixed(1)} MB in ${results.graph.seconds.toFixed(1)} s`);
+  for (const [kind, t] of Object.entries(results.tokens ?? {})) {
+    console.log(`tokens ${kind.padEnd(7)} ${t.seconds.toFixed(1)} s after asking, ${t.tokens} tokens`);
+  }
   if (results.edits) console.log(`edits          median ${results.edits.medianMs} ms, max ${results.edits.maxMs} ms (${results.edits.count})`);
   if (results.crashed) console.log(`CRASHED        after ${results.crashed.seconds.toFixed(1)} s${results.crashed.outOfMemory ? ' (heap out of memory)' : ''}`);
 
