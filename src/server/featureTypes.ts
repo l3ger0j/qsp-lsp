@@ -76,6 +76,12 @@ export interface DocumentState {
    * the scan), or an open file parsed location by location.
    */
   syntaxErrors?: SyntaxError[];
+  /**
+   * Set while `symbols` are a complete analysis of the text with this
+   * analysis cache key (see ProjectModeService.analysisKey), which has
+   * these syntax errors: opening the file reuses them.
+   */
+  storedAnalysis?: { key: string; syntaxErrors: SyntaxError[] };
   /** The file's `!@qsp-ignore` comments, read from the text this state was built from. */
   suppressions?: Suppressions;
 }

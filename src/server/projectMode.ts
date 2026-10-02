@@ -86,7 +86,7 @@ export function syntaxErrorsFor(state: DocumentState, open: boolean): SyntaxErro
 type StoredDiagnostics = Array<[uri: string, diagnostics: Diagnostic[]]>;
 
 /** What the analysis cache keeps for one project file. */
-interface CachedFileAnalysis {
+export interface CachedFileAnalysis {
   symbols: DocumentSymbols;
   syntaxErrors: SyntaxError[];
 }
@@ -288,14 +288,40 @@ export class ProjectModeService {
   keepFile(uri: string, text: string, symbols: DocumentSymbols, syntaxErrors: SyntaxError[]): void {
     this.perf.phase('closed file kept', () => {
       const locationIndex = buildLocationIndex(text);
+      const key = this.analysisKey(uri, text);
       this.documentStates.set(uri, {
         locationIndex,
         symbols,
         cachedSemanticTokens: undefined,
         syntaxErrors,
+        storedAnalysis: key ? { key, syntaxErrors } : undefined,
         suppressions: parseSuppressions(text, locationIndex),
       });
     }, () => formatChars(text.length));
+  }
+
+  /**
+   * The analysis cache key of a file's symbols and syntax errors: they
+   * depend only on its text, its URI (stored in every location) and
+   * whether exec: links are analysed; the analyser itself is part of every
+   * key (nodeCache.ts). Undefined without a cache or a parser.
+   */
+  analysisKey(uri: string, text: string): string | undefined {
+    if (!this.tsParser.isReady) return undefined;
+    return this.analysisCache?.key('file symbols', uri, this.embeddedExecEnabled ? 'exec' : 'no exec', text);
+  }
+
+  /** The analysis stored on disk under `key`. */
+  readAnalysis(key: string): CachedFileAnalysis | undefined {
+    const hit = this.perf.step('cache read', () => this.analysisCache?.get(key)) as CachedFileAnalysis | undefined;
+    const symbols = reviveDocumentSymbols(hit?.symbols);
+    return symbols && Array.isArray(hit?.syntaxErrors) ? { symbols, syntaxErrors: hit.syntaxErrors } : undefined;
+  }
+
+  /** Store a complete analysis of the text `key` was made from (see analysisKey). */
+  storeAnalysis(key: string, symbols: DocumentSymbols, syntaxErrors: SyntaxError[]): void {
+    const entry: CachedFileAnalysis = { symbols, syntaxErrors };
+    this.perf.step('cache write', () => this.analysisCache?.put(key, entry));
   }
 
   /**
@@ -312,24 +338,19 @@ export class ProjectModeService {
     // Kept on the state because the tree is freed here: without them a
     // syntax error in a closed file would show only once it is opened.
     let syntaxErrors: SyntaxError[] | undefined;
-    // A file's symbols and syntax errors depend only on its text, its URI
-    // (stored in every location) and whether exec: links are analysed; the
-    // analyser itself is part of every key (nodeCache.ts). Results of the
-    // regex fallback are never stored: they are poorer than a full parse.
-    const cache = this.tsParser.isReady ? this.analysisCache : undefined;
-    const key = cache?.key('file symbols', uri, this.embeddedExecEnabled ? 'exec' : 'no exec', text);
+    // Without a parser there is no key: results of the regex fallback are
+    // never stored, they are poorer than a full parse.
+    const key = this.analysisKey(uri, text);
     if (key) this.fileKeys.set(uri, key);
     let cacheable = key !== undefined;
-    if (cache && key) {
-      const hit = this.perf.step('cache read', () => cache.get(key)) as CachedFileAnalysis | undefined;
-      symbols = reviveDocumentSymbols(hit?.symbols);
-      if (symbols && Array.isArray(hit?.syntaxErrors)) {
-        syntaxErrors = hit.syntaxErrors;
+    if (key) {
+      const hit = this.readAnalysis(key);
+      if (hit) {
+        ({ symbols, syntaxErrors } = hit);
         if (partOfLoad) this.cacheStats.hits++;
         cacheable = false;
-      } else {
-        symbols = undefined;
-        if (partOfLoad) this.cacheStats.misses++;
+      } else if (partOfLoad) {
+        this.cacheStats.misses++;
       }
     }
 
@@ -360,16 +381,14 @@ export class ProjectModeService {
         symbols = this.analyzePerLocation(uri, text, locationIndex, syntaxErrors);
       }
     }
-    if (cacheable && cache && key) {
-      const entry: CachedFileAnalysis = { symbols, syntaxErrors: syntaxErrors ?? [] };
-      this.perf.step('cache write', () => cache.put(key, entry));
-    }
+    if (cacheable && key) this.storeAnalysis(key, symbols, syntaxErrors ?? []);
 
     this.documentStates.set(uri, {
       locationIndex,
       symbols,
       cachedSemanticTokens: undefined,
       syntaxErrors,
+      storedAnalysis: key ? { key, syntaxErrors: syntaxErrors ?? [] } : undefined,
       suppressions: parseSuppressions(text, locationIndex),
     });
   }
