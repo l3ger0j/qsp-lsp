@@ -2829,7 +2829,7 @@ pl $x
 
     it('no false positive: local y in if-branch and local $y in else-branch are separate', () => {
       // Regression: `else_clause` was not scope-forming, so both bindings
-      // shared the if_block scopeNodeId.  The resolver then returned both
+      // shared the if_block scopeKey.  The resolver then returned both
       // sibling-branch bindings, adding the wrong prefix to `merged` and
       // firing a spurious warning.  Use literal RHS values (not var-refs)
       // so the resolver does not follow a chain to a differently-prefixed

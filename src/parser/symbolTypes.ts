@@ -260,7 +260,7 @@ export interface VariableBinding {
    */
   isValueBearing?: boolean;
   /**
-   * Tree-sitter node id of the nearest enclosing scope-forming node
+   * Key (`scopeKeyOf`) of the nearest enclosing scope-forming node
    * (act_block, loop_block, if_block, code_block…), or 0 when the
    * binding lives at the top level of the location.  Used by the
    * dataflow pass to decide which bindings are visible at each
@@ -268,16 +268,16 @@ export interface VariableBinding {
    *
    * Not shared with the main walker's numeric `scopeId` — different
    * identifier space.  Consumers should treat this as an opaque
-   * grouping key and use `isolationAncestorId` for visibility.
+   * grouping key and use `isolationKey` for visibility.
    */
-  scopeNodeId: number;
+  scopeKey: number;
   /**
-   * Tree-sitter node id of the nearest enclosing *isolating* scope
+   * Key (`scopeKeyOf`) of the nearest enclosing *isolating* scope
    * ancestor (act_*, non-dynamic code_block), or 0 when none.
-   * Bindings with the same `isolationAncestorId` share a visibility
-   * island; bindings with different ids cannot shadow each other.
+   * Bindings with the same `isolationKey` share a visibility
+   * island; bindings with different keys cannot shadow each other.
    */
-  isolationAncestorId: number;
+  isolationKey: number;
   /**
    * Type of the RHS expression at this write site, inferred statically
    * when possible.  Uses the same prefix convention as `writePrefix`:

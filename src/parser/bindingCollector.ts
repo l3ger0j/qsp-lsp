@@ -13,7 +13,7 @@ import type Parser from 'web-tree-sitter';
 import type { VariableBinding, SymbolLocation, TypePrefix, CompoundOp, BindingValue } from './symbolTypes';
 import type { LocationSymbols } from './locationSymbols';
 import { type QspSymbol } from './symbolTypes';
-import { isBindingVisibleFrom, findScopeAncestor, findIsolationAncestor } from './scopeUtils';
+import { isBindingVisibleFrom, findScopeAncestor, findIsolationAncestor, scopeKeyOf } from './scopeUtils';
 import {
   SIDE_EFFECT_WRITE_STMTS,
   VAR_DEF_STMT_NAMES,
@@ -46,14 +46,14 @@ type BindingInfo = VariableBinding & {
   fromSideEffect?: boolean;
   /**
    * The assignment statement's *initial* enclosing scope — set once at
-   * binding-creation and never mutated.  `scopeNodeId` may later be
+   * binding-creation and never mutated.  `scopeKey` may later be
    * overwritten by the retag pass to point at a local declaration's
-   * scope; `initialScopeNodeId` always reflects where the statement
+   * scope; `initialScopeKey` always reflects where the statement
    * actually sits in the parse tree.  Used by per-call-site multi-local
    * resolution to tell sequential same-scope writes from cross-branch
    * bindings.
    */
-  initialScopeNodeId: number;
+  initialScopeKey: number;
 };
 
 const MAX_BINDING_SNIPPET = 80;
@@ -150,8 +150,8 @@ export function collectVariableBindings(
 
     const scopeAnc = findScopeAncestor(stmtNode, locBlock, isConsumed);
     const isolAnc = findIsolationAncestor(stmtNode, locBlock, isConsumed);
-    const scopeNodeId = scopeAnc ? scopeAnc.id : 0;
-    const isolationAncestorId = isolAnc ? isolAnc.id : 0;
+    const scopeKey = scopeAnc ? scopeKeyOf(scopeAnc, locBlock) : 0;
+    const isolationKey = isolAnc ? scopeKeyOf(isolAnc, locBlock) : 0;
 
     const inferRhsTypePrefix = (node: Parser.SyntaxNode): TypePrefix | undefined => {
       if (node.type === 'number_literal') {
@@ -232,12 +232,12 @@ export function collectVariableBindings(
       value,
       stmtLoc: nodeLoc(stmtNode, docUri),
       stmtText: stmtTextOverride ?? rhsSnippet(stmtNode),
-      isLocal, scopeNodeId, isolationAncestorId,
+      isLocal, scopeKey, isolationKey,
       writePrefix, isValueBearing: true,
       compoundOp,
       rhsTypePrefix: inferRhsTypePrefix(rhs),
       stmtNode, blockNode,
-      initialScopeNodeId: scopeNodeId,
+      initialScopeKey: scopeKey,
     };
     pushBinding(baseName, info);
   };
@@ -257,10 +257,10 @@ export function collectVariableBindings(
       stmtLoc: nodeLoc(stmtNode, docUri),
       stmtText,
       isLocal: true, writePrefix, isValueBearing: false,
-      scopeNodeId: scopeAnc ? scopeAnc.id : 0,
-      isolationAncestorId: isolAnc ? isolAnc.id : 0,
+      scopeKey: scopeAnc ? scopeKeyOf(scopeAnc, locBlock) : 0,
+      isolationKey: isolAnc ? scopeKeyOf(isolAnc, locBlock) : 0,
       stmtNode,
-      initialScopeNodeId: scopeAnc ? scopeAnc.id : 0,
+      initialScopeKey: scopeAnc ? scopeKeyOf(scopeAnc, locBlock) : 0,
     };
     pushBinding(baseName, info);
   };
@@ -300,13 +300,13 @@ export function collectVariableBindings(
       stmtLoc: nodeLoc(stmtNode, docUri),
       stmtText,
       isLocal,
-      scopeNodeId: scopeAnc ? scopeAnc.id : 0,
-      isolationAncestorId: isolAnc ? isolAnc.id : 0,
+      scopeKey: scopeAnc ? scopeKeyOf(scopeAnc, locBlock) : 0,
+      isolationKey: isolAnc ? scopeKeyOf(isolAnc, locBlock) : 0,
       writePrefix, isValueBearing: true,
       compoundOp,
       rhsTypePrefix,
       stmtNode,
-      initialScopeNodeId: scopeAnc ? scopeAnc.id : 0,
+      initialScopeKey: scopeAnc ? scopeKeyOf(scopeAnc, locBlock) : 0,
     };
     pushBinding(baseName, info);
   };
@@ -377,10 +377,10 @@ export function collectVariableBindings(
       stmtText: rhsSnippet(node),
       isLocal: false, writePrefix: sidePrefix,
       isValueBearing: VAR_DEF_STMT_NAMES.has(stmtName),
-      scopeNodeId: scopeAnc ? scopeAnc.id : 0,
-      isolationAncestorId: isolAnc ? isolAnc.id : 0,
+      scopeKey: scopeAnc ? scopeKeyOf(scopeAnc, locBlock) : 0,
+      isolationKey: isolAnc ? scopeKeyOf(isolAnc, locBlock) : 0,
       stmtNode: node, fromSideEffect: true,
-      initialScopeNodeId: scopeAnc ? scopeAnc.id : 0,
+      initialScopeKey: scopeAnc ? scopeKeyOf(scopeAnc, locBlock) : 0,
     };
     pushBinding(baseName, info);
   };
@@ -615,12 +615,12 @@ export function collectVariableBindings(
           if (cand.stmtNode.startIndex > b.stmtNode.startIndex) continue;
           if (!isBindingVisibleFrom(
             b.stmtNode, locBlock,
-            cand.scopeNodeId, cand.isolationAncestorId,
+            cand.scopeKey, cand.isolationKey,
             /*bindIsLocal*/ true, isConsumed,
           )) continue;
           b.isLocal = true;
-          b.scopeNodeId = cand.scopeNodeId;
-          b.isolationAncestorId = cand.isolationAncestorId;
+          b.scopeKey = cand.scopeKey;
+          b.isolationKey = cand.isolationKey;
           break;
         }
       }
@@ -632,7 +632,7 @@ export function collectVariableBindings(
   for (const cs of callSites) {
     const visited = new Set<string>([cs.varLower]);
     const queue: string[] = [cs.varLower];
-    const blocks: Array<{ block: Parser.SyntaxNode; isLocal: boolean; initialScopeNodeId: number }> = [];
+    const blocks: Array<{ block: Parser.SyntaxNode; isLocal: boolean; initialScopeKey: number }> = [];
 
     while (queue.length > 0) {
       const name = queue.shift()!;
@@ -641,10 +641,10 @@ export function collectVariableBindings(
       for (const b of bindings) {
         if (!isBindingVisibleFrom(
           cs.stmtNode, locBlock,
-          b.scopeNodeId, b.isolationAncestorId, b.isLocal, isConsumed,
+          b.scopeKey, b.isolationKey, b.isLocal, isConsumed,
         )) continue;
         if (b.value.kind === 'code-block' && b.blockNode) {
-          blocks.push({ block: b.blockNode, isLocal: b.isLocal, initialScopeNodeId: b.initialScopeNodeId });
+          blocks.push({ block: b.blockNode, isLocal: b.isLocal, initialScopeKey: b.initialScopeKey });
         } else if (b.value.kind === 'var-ref') {
           const next = b.value.varBaseName;
           if (!visited.has(next)) { visited.add(next); queue.push(next); }
@@ -725,12 +725,12 @@ export function collectVariableBindings(
       //     branches (e.g. if/else).  The runtime target genuinely
       //     depends on which branch ran: emit `multiple-local-bindings`.
       //
-      // We use each binding's `initialScopeNodeId` (cached at creation
+      // We use each binding's `initialScopeKey` (cached at creation
       // time, never mutated by the retag pass) — the local
-      // declaration's own scope, copied by retag into `scopeNodeId`,
+      // declaration's own scope, copied by retag into `scopeKey`,
       // would conflate sequential writes with cross-branch ones.
-      const firstScope = uniq[0].initialScopeNodeId;
-      const sameScope = uniq.every(e => e.initialScopeNodeId === firstScope);
+      const firstScope = uniq[0].initialScopeKey;
+      const sameScope = uniq.every(e => e.initialScopeKey === firstScope);
       callSiteTargets.set(cs.stmtNode.id, uniq.map(e => e.block));
       if (!sameScope) {
         locSymbols.untrackedDynamicVarCalls.push({
@@ -773,7 +773,7 @@ export function collectVariableBindings(
           let write: { source: BindingInfo; varBaseName: string; binding: VariableBinding } | undefined;
           for (let p = ob.stmtNode.parent; p && p.id !== locBlock.id; p = p.parent) {
             if (!codeBlockIds.has(p.id)) continue;
-            write ??= { source: ob, varBaseName: otherName, binding: { value: ob.value, stmtLoc: ob.stmtLoc, stmtText: ob.stmtText, isLocal: ob.isLocal, writePrefix: ob.writePrefix, isValueBearing: ob.isValueBearing, compoundOp: ob.compoundOp, scopeNodeId: ob.scopeNodeId, isolationAncestorId: ob.isolationAncestorId } };
+            write ??= { source: ob, varBaseName: otherName, binding: { value: ob.value, stmtLoc: ob.stmtLoc, stmtText: ob.stmtText, isLocal: ob.isLocal, writePrefix: ob.writePrefix, isValueBearing: ob.isValueBearing, compoundOp: ob.compoundOp, scopeKey: ob.scopeKey, isolationKey: ob.isolationKey } };
             let list = writesByBlock.get(p.id);
             if (!list) { list = []; writesByBlock.set(p.id, list); }
             list.push(write);
@@ -800,14 +800,14 @@ export function collectVariableBindings(
     }
 
     if (deferredIds.size > 0) {
-      type CSInfo = { stmtNode: Parser.SyntaxNode; scopeNodeId: number; isolationAncestorId: number };
+      type CSInfo = { stmtNode: Parser.SyntaxNode; scopeKey: number; isolationKey: number };
       const blockCallSites = new Map<number, CSInfo[]>();
       for (const cs of callSites) {
         const targets = callSiteTargets.get(cs.stmtNode.id);
         if (!targets || targets.length === 0) continue;
         const scopeAnc = findScopeAncestor(cs.stmtNode, locBlock, isConsumed);
         const isolAnc = findIsolationAncestor(cs.stmtNode, locBlock, isConsumed);
-        const info: CSInfo = { stmtNode: cs.stmtNode, scopeNodeId: scopeAnc ? scopeAnc.id : 0, isolationAncestorId: isolAnc ? isolAnc.id : 0 };
+        const info: CSInfo = { stmtNode: cs.stmtNode, scopeKey: scopeAnc ? scopeKeyOf(scopeAnc, locBlock) : 0, isolationKey: isolAnc ? scopeKeyOf(isolAnc, locBlock) : 0 };
         for (const t of targets) {
           let arr = blockCallSites.get(t.id);
           if (!arr) { arr = []; blockCallSites.set(t.id, arr); }
@@ -868,7 +868,7 @@ export function collectVariableBindings(
           }
           moved = true;
           for (const cs of sites) {
-            next.push({ ...b, stmtNode: cs.stmtNode, scopeNodeId: cs.scopeNodeId, isolationAncestorId: cs.isolationAncestorId });
+            next.push({ ...b, stmtNode: cs.stmtNode, scopeKey: cs.scopeKey, isolationKey: cs.isolationKey });
           }
         }
         if (moved) bindingsByName.set(name, next);
@@ -884,8 +884,8 @@ export function collectVariableBindings(
     const published: VariableBinding[] = bindings.map(b => ({
       value: b.value, stmtLoc: b.stmtLoc, stmtText: b.stmtText, isLocal: b.isLocal,
       writePrefix: b.writePrefix, isValueBearing: b.isValueBearing,
-      compoundOp: b.compoundOp, scopeNodeId: b.scopeNodeId,
-      isolationAncestorId: b.isolationAncestorId, rhsTypePrefix: b.rhsTypePrefix,
+      compoundOp: b.compoundOp, scopeKey: b.scopeKey,
+      isolationKey: b.isolationKey, rhsTypePrefix: b.rhsTypePrefix,
     }));
     locSymbols.variableBindings.set(key, published);
   }

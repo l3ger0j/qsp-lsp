@@ -828,3 +828,32 @@ describe('LSP e2e: opening a large file with a stored analysis', () => {
     }
   }, 120_000);
 });
+
+// ──────────────────────────────────────────────────────────────────────
+// Hover on a local of a nested block in a large file
+// ──────────────────────────────────────────────────────────────────────
+//
+// Past 500 KB, hover parses the location again (only locations of 50 KB
+// and more keep their tree); scopes recorded as node ids of the first
+// parse matched nothing in it, so a loop body's local had no values.
+describe('LSP e2e: possible values of a nested local in a large file', () => {
+  it('follows a loop body\'s local to the loop variable', async () => {
+    const text = makeBigDocument('большой')
+      + '# комната\nloop local i = 0 while i < 3 step i += 1:\n  local y = i\n  *pl y\nend\n--- комната ---\n';
+    const uri = 'file:///nested-local-big.qsps';
+    const h = await startServer();
+    try {
+      h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text } });
+      for (;;) {
+        await h.nextDiagnosticsFor(uri);
+        if (h.logs.some(l => l.includes('Per-location parse'))) break;
+      }
+      const line = text.split('\n').indexOf('  *pl y');
+      const hover = await h.client.sendRequest(HoverRequest.type, { textDocument: { uri }, position: { line, character: 6 } }) as Hover | null;
+      const md = hover && typeof hover.contents === 'object' && 'value' in hover.contents ? hover.contents.value : '';
+      expect(md).toContain('local i = 0');
+    } finally {
+      h.shutdown();
+    }
+  }, 60_000);
+});

@@ -82,7 +82,7 @@ export function isScopeForming(nodeType: string): boolean {
 
 /**
  * Returns true for else/elseif branch nodes.  When `isBindingVisibleFrom`
- * walks up and crosses one of these, bindings whose `bindScopeId` is the
+ * walks up and crosses one of these, bindings whose `bindScopeKey` is the
  * enclosing if_block (i.e. bindings in the *if-body*, not the else/elseif)
  * are NOT visible — they belong to a sibling branch, not the current one.
  */
@@ -200,26 +200,40 @@ export function findIsolationAncestor(
 // ──────────────────────────────────────────────────────────────────────
 
 /**
- * Determine whether a binding with scope-ancestor `bindScopeId`,
- * isolation-ancestor `bindIsolId`, and `bindIsLocal` flag is visible
- * from a consumer at `consumerNode`.  Walks from the consumer upward.
+ * A scope node's key: its offset from the start of `locBlock`, its
+ * location, and its length. Bindings keep it instead of the node's id, an
+ * address that means nothing in another parse: hover parses a location
+ * again, and symbols outlive their tree (the analysis cache, a project
+ * file's analysis reused when it opens). Never 0, which means the
+ * location's top level.
+ */
+export function scopeKeyOf(node: Parser.SyntaxNode, locBlock: Parser.SyntaxNode): number {
+  const start = node.startIndex;
+  return (start - locBlock.startIndex + 1) * 2 ** 26 + (node.endIndex - start);
+}
+
+/**
+ * Determine whether a binding with scope-ancestor `bindScopeKey`,
+ * isolation-ancestor `bindIsolKey` (see {@link scopeKeyOf}), and
+ * `bindIsLocal` flag is visible from a consumer at `consumerNode`, in a
+ * tree of the binding's location (`stopAt`). Walks from the consumer upward.
  *
  * Visibility rules:
  *   • Global (non-local) bindings are visible EVERYWHERE — QSP stores
  *     them in a single flat namespace; isolation boundaries only
  *     affect `local` bindings.
  *   • For local bindings:
- *     – If we reach `bindScopeId` along the way, visible.
- *     – If we pass through an isolating scope (≠ bindScopeId and
- *       ≠ bindIsolId), blocked.
+ *     – If we reach `bindScopeKey` along the way, visible.
+ *     – If we pass through an isolating scope (≠ bindScopeKey and
+ *       ≠ bindIsolKey), blocked.
  *     – At the top level (reached `stopAt`), visible iff
- *       `bindScopeId === 0`.
+ *       `bindScopeKey === 0`.
  */
 export function isBindingVisibleFrom(
   consumerNode: Parser.SyntaxNode,
   stopAt: Parser.SyntaxNode,
-  bindScopeId: number,
-  bindIsolId: number,
+  bindScopeKey: number,
+  bindIsolKey: number,
   bindIsLocal: boolean,
   isConsumed: (id: number) => boolean,
 ): boolean {
@@ -230,20 +244,21 @@ export function isBindingVisibleFrom(
   if (!bindIsLocal) return true;
 
   // When the walk passes through an else/elseif branch node, any
-  // binding whose scopeNodeId equals the DIRECTLY-CONTAINING if_block
+  // binding whose scopeKey equals the DIRECTLY-CONTAINING if_block
   // (i.e. the if-body — a sibling branch) must be treated as not
   // visible.  We record the id of that specific if_block so that only
   // that scope is blocked; bindings in ENCLOSING scopes (a loop body
   // that wraps the whole if/else, for example) are still visible.
-  let blockedScopeId = 0;  // 0 = nothing blocked
+  let blockedScopeKey = 0;  // 0 = nothing blocked
 
   let a: Parser.SyntaxNode | null = consumerNode.parent;
   while (a && a.id !== stopAt.id) {
-    if (a.id === bindScopeId) {
+    const key = scopeKeyOf(a, stopAt);
+    if (key === bindScopeKey) {
       // Found the binding's scope anchor.  Block only when this is the
       // exact if_block whose if-body we must not reach from a sibling
       // branch.
-      return a.id !== blockedScopeId;
+      return key !== blockedScopeKey;
     }
     if (isBranchNode(a.type) && a.parent) {
       // Record this else/elseif's direct parent (the if_block) as the
@@ -251,19 +266,19 @@ export function isBindingVisibleFrom(
       // level will overwrite this with its own parent — which is the
       // correct thing to do (we only ever need to block the innermost
       // branch's direct parent at any point in the walk).
-      blockedScopeId = a.parent.id;
+      blockedScopeKey = scopeKeyOf(a.parent, stopAt);
     }
     if (isScopeForming(a.type)) {
       if (a.type === 'code_block' && (isConsumed(a.id) || isDynamicArgCodeBlock(a))) {
         a = a.parent;
         continue;
       }
-      if (isIsolatingScope(a.type) && a.id !== bindScopeId && a.id !== bindIsolId) {
+      if (isIsolatingScope(a.type) && key !== bindScopeKey && key !== bindIsolKey) {
         return false;
       }
     }
     a = a.parent;
   }
   // Reached stopAt (location body) — visible iff binding is also top-level.
-  return bindScopeId === 0;
+  return bindScopeKey === 0;
 }

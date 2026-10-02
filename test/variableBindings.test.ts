@@ -4,7 +4,7 @@
  * local-scope resolution pass inside `extractSymbols`.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
-import { QspTreeSitterParser } from '../src/parser/treeSitter';
+import { QspTreeSitterParser, extractSymbols } from '../src/parser/treeSitter';
 import {
   splitVarKey,
   parseVarStringArg,
@@ -14,6 +14,7 @@ import {
   getPossibleValuesAtCursor,
 } from '../src/parser/variableBindings';
 import {
+  buildFileAggregates,
   buildPropagatedLocals,
   emptyAggregates,
 } from '../src/server/aggregation';
@@ -3697,5 +3698,92 @@ describe('variableBindings: code blocks that dispatch each other', () => {
     const ls = symbols.getLocation('loop')!;
     expect(bindingCount(ls, 'x')).toBeGreaterThanOrEqual(1);
     expect(bindingCount(ls, 'y')).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Scopes are told apart without the tree the symbols came from
+// ──────────────────────────────────────────────────────────────────────
+//
+// Hover parses a location again, and symbols outlive their tree (the
+// analysis cache, a project file's analysis reused when it opens): local
+// variables of nested blocks must resolve the same against any parse of
+// the same text, of the whole file or of the location alone.
+describe('variableBindings: scopes in another parse of the same text', () => {
+  const parser = new QspTreeSitterParser();
+  beforeAll(() => initParser(parser));
+
+  const code = [
+    '# прихожая',
+    "*pl 'вход'",
+    '--- прихожая ---',
+    '# комната',
+    'if args[0] = 1:',
+    "  local x = 'один'",
+    '  *pl x',
+    'else',
+    '  *pl x',
+    'end',
+    'loop local i = 0 while i < 3 step i += 1:',
+    '  local y = i',
+    "  act 'взять': local y = 'act' & *pl y",
+    '  *pl y',
+    'end',
+    '--- комната ---',
+    '',
+  ].join('\n');
+
+  type Tree = NonNullable<ReturnType<QspTreeSitterParser['parseOnce']>>;
+
+  // Every proper read of a variable from line `from` on, with the bindings
+  // `tree` resolves for it; `tree` starts at line `treeLine` of the file.
+  function resolveAll(symbols: DocumentSymbols, tree: Tree, from = 0, treeLine = 0): string[] {
+    const agg = buildFileAggregates(symbols, 'test://t');
+    const out: string[] = [];
+    for (const [, locSyms] of symbols.locations) {
+      for (const sym of locSyms.ownedVariables) {
+        for (const ref of sym.references) {
+          if (!ref.isProperUsage || ref.line < from) continue;
+          const values = getPossibleValuesAtCursor(symbols, agg, tree, ref.line - treeLine, ref.column, sym.nameLower)
+            .map(e => `${e.binding.stmtLoc.line}:${e.binding.stmtLoc.column}`).sort();
+          out.push(`${sym.nameLower}@${ref.line}:${ref.column} → ${values.join(' ')}`);
+        }
+      }
+    }
+    return out;
+  }
+
+  // Symbols with the tree they were extracted from, which the caller deletes.
+  function extract(): { symbols: DocumentSymbols; tree: Tree } {
+    const tree = parser.parseOnce(code)!;
+    return { symbols: extractSymbols(tree, 'test://t').symbols, tree };
+  }
+
+  it('resolves every read the same with a second parse as with the first', () => {
+    const { symbols, tree } = extract();
+    const second = parser.parseOnce(code)!;
+    try {
+      const own = resolveAll(symbols, tree);
+      // The if-body's local is seen in the if-body, not in the else branch.
+      expect(own).toContain('x@6:6 → 5:2');
+      expect(own).toContain('x@8:6 → ');
+      expect(resolveAll(symbols, second)).toEqual(own);
+    } finally {
+      tree.delete();
+      second.delete();
+    }
+  });
+
+  it('resolves them the same with a parse of the location alone', () => {
+    const { symbols, tree } = extract();
+    const lines = code.split('\n');
+    const start = lines.indexOf('# комната');
+    const alone = parser.parseOnce(lines.slice(start).join('\n'))!;
+    try {
+      expect(resolveAll(symbols, alone, start, start)).toEqual(resolveAll(symbols, tree, start));
+    } finally {
+      tree.delete();
+      alone.delete();
+    }
   });
 });

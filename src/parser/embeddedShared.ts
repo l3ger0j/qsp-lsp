@@ -393,10 +393,10 @@ export function mergeIntoHost(
   // type-mismatch diagnostic underlines just the offending `$x = 34`
   // rather than the whole host string).  Multi-line bodies/hosts fall
   // back to the host span via the translator's own fallback.
-  // `scopeNodeId` / `isolationAncestorId` are sub-tree node ids that
-  // no longer match any node in the host's tree; this is harmless
-  // because the consumers (`aggregation.findCodeBlockDefs`, hover)
-  // iterate bindings by base name, not by node id.
+  // `scopeKey` / `isolationKey` are keys within the sub-tree, which
+  // match no scope of the host's location; this is harmless because
+  // the consumers (`aggregation.findCodeBlockDefs`, hover) iterate
+  // bindings by base name, not by scope.
   for (const [key, bindings] of sub.variableBindings) {
     if (skipVarNames?.has(key)) continue;
     const globals = bindings.filter(b => !b.isLocal);

@@ -1689,7 +1689,7 @@ if 1: local y = 1 else local y = 2
   });
 
   it('enclosing loop-body local IS visible inside else-branch of nested if', () => {
-    // `local y` is in the loop body (scopeNodeId = loop_block.id).
+    // `local y` is in the loop body (scopeKey = the loop_block's).
     // The else-branch is at a SIBLING level to the if-body, not to the
     // loop body — so loop-body locals must still propagate into it.
     // This was broken when passedBranch was a flat boolean that blocked
@@ -1715,7 +1715,7 @@ end
   });
 
   it('enclosing outer-if-body local IS visible inside else-branch of nested if', () => {
-    // `local y` in outer if-body (scopeNodeId = outer_if_block.id).
+    // `local y` in outer if-body (scopeKey = the outer if_block's).
     // Consumer is in the else-branch of a NESTED inner if — the inner
     // else should not block the outer if-body binding.
     const tree = parser.parse('test://outer-if-nested-else', `# test
@@ -2402,7 +2402,7 @@ dynamic $code
   });
 
   it('global write in else-branch is visible at top-level dynamic even when if-branch uses local', () => {
-    // `local $code` in the if-branch has bindScopeId=if_block.id — not
+    // `local $code` in the if-branch has bindScopeKey=if_block.id — not
     // visible at the top-level `dynamic $code` after `end`.  The bare
     // `$code = …` in the else-branch is a global write (the retag pass
     // no longer promotes it to a local now that else_clause is a
@@ -2988,15 +2988,15 @@ dynamic $fn
     const loc = symbols.getLocation('test')!;
     // Top-level dynamic sees NEITHER local.
     expect(loc.dynamicVarCalls).toHaveLength(0);
-    // Both local bindings are recorded in the store with different scopeNodeIds.
+    // Both local bindings are recorded in the store with different scopeKeys.
     const entries = loc.variableBindings.get('fn')!;
     expect(entries).toHaveLength(2);
-    expect(entries[0].scopeNodeId).not.toBe(0);
-    expect(entries[1].scopeNodeId).not.toBe(0);
-    expect(entries[0].scopeNodeId).not.toBe(entries[1].scopeNodeId);
+    expect(entries[0].scopeKey).not.toBe(0);
+    expect(entries[1].scopeKey).not.toBe(0);
+    expect(entries[0].scopeKey).not.toBe(entries[1].scopeKey);
     // Both isolation ancestors are the act blocks themselves.
-    expect(entries[0].isolationAncestorId).toBe(entries[0].scopeNodeId);
-    expect(entries[1].isolationAncestorId).toBe(entries[1].scopeNodeId);
+    expect(entries[0].isolationKey).toBe(entries[0].scopeKey);
+    expect(entries[1].isolationKey).toBe(entries[1].scopeKey);
   });
 
   it('scope-aware: local inside act only resolves dynamic at same act', () => {
@@ -3086,7 +3086,7 @@ dynamic $fn
     expect(loc.untrackedDynamicVarCalls[0].reason).toBe('multiple-assignments');
   });
 
-  it('scope-aware: bindings record scopeNodeId and isolationAncestorId', () => {
+  it('scope-aware: bindings record scopeKey and isolationKey', () => {
     const tree = parser.parse('test://vb-scope-meta', `# test
 $top = { pl 'top' }
 act 'A':
@@ -3103,17 +3103,17 @@ end
     const inner = loc.variableBindings.get('inner')![0];
     const ifB = loc.variableBindings.get('if')![0];
     // Top-level binding: scope/isolation both 0.
-    expect(top.scopeNodeId).toBe(0);
-    expect(top.isolationAncestorId).toBe(0);
-    // Act-local binding: scopeNodeId === act, isolation === act.
-    expect(inner.scopeNodeId).not.toBe(0);
-    expect(inner.isolationAncestorId).toBe(inner.scopeNodeId);
-    // Inside-if binding: scopeNodeId === if_block (non-isolating),
-    // isolationAncestorId === enclosing act.
-    expect(ifB.scopeNodeId).not.toBe(0);
-    expect(ifB.isolationAncestorId).not.toBe(0);
-    expect(ifB.isolationAncestorId).not.toBe(ifB.scopeNodeId);
-    expect(ifB.isolationAncestorId).toBe(inner.isolationAncestorId);
+    expect(top.scopeKey).toBe(0);
+    expect(top.isolationKey).toBe(0);
+    // Act-local binding: scopeKey === act, isolation === act.
+    expect(inner.scopeKey).not.toBe(0);
+    expect(inner.isolationKey).toBe(inner.scopeKey);
+    // Inside-if binding: scopeKey === if_block (non-isolating),
+    // isolationKey === enclosing act.
+    expect(ifB.scopeKey).not.toBe(0);
+    expect(ifB.isolationKey).not.toBe(0);
+    expect(ifB.isolationKey).not.toBe(ifB.scopeKey);
+    expect(ifB.isolationKey).toBe(inner.isolationKey);
   });
 
   // ── document-wide globalBindings index ──

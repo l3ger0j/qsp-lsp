@@ -131,6 +131,13 @@ order:
   (`internStrings` in `nodeCache.ts`) brings it to 274 MB, for 0.8 s more
   on a 2.5 s read. The rest is object layout: read-back objects and arrays
   take more room than the ones the analysis built.
+- **Code-block providers of nested locals.** `findCodeBlockDefs` in
+  `src/server/aggregation.ts` matches a local provider binding by comparing
+  its `scopeKey` (a scope's place in the location) with the symbol's
+  `scopeId` (the walker's scope counter): two different numberings, equal
+  only at the top level (both 0). Not verified yet: a local `$code = {…}`
+  inside an `if` or a loop probably never provides its writes. Write the
+  test first, then map one numbering onto the other.
 - **One path.** The project scan and the editor share one analysis per
   file; small open files use it too, with the whole-file tree made on demand.
 - **A second hash: a file's interface.** What other files can see of a file

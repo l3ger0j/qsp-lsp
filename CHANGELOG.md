@@ -15,6 +15,7 @@
 - Files in `libs/` show errors only (no warnings about a library's unused locations or variables), and a duplicate location names the library it clashes with.
 
 ### Fixes
+- In files past 500 KB, hover showed no possible values for a local of a nested block that takes its value from another variable (`local y = i` in a loop body): scopes were recorded by the parse tree's node ids, which mean nothing in the location's next parse.
 - In a project, a large open file (past 500 KB, parsed location by location) showed no syntax errors at all, and closed files could lose theirs after an edit elsewhere.
 - A line starting with `--` between locations (an ASCII table, a divider) no longer breaks the highlighting and reports false syntax errors in the rest of that text: only a `#` header starts something there. Reported by Aleks Versus.
 

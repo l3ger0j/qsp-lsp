@@ -856,7 +856,7 @@ export function buildPropagatedLocals(
           // binding at a different scope is shadowed / unrelated.
           if (pb.isLocal) {
             const symScope = codeProvider.sym.scopeId ?? 0;
-            if (pb.scopeNodeId !== symScope) continue;
+            if (pb.scopeKey !== symScope) continue;
           }
           const writes = pb.value.bodyWrites;
           if (!writes || writes.length === 0) continue;

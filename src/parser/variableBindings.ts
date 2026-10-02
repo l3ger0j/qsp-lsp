@@ -206,7 +206,7 @@ export function collectUnresolvedChainTails(
       for (const b of bindings) {
         if (!isBindingVisibleFrom(
           atNode, locBlock,
-          b.scopeNodeId, b.isolationAncestorId, b.isLocal, isConsumed,
+          b.scopeKey, b.isolationKey, b.isLocal, isConsumed,
         )) continue;
         if (b.value.kind === 'var-ref') {
           const next = b.value.varBaseName;
@@ -256,7 +256,7 @@ export function resolveBindingsAt(
     for (const b of bindings) {
       if (!isBindingVisibleFrom(
         atNode, locBlock,
-        b.scopeNodeId, b.isolationAncestorId, b.isLocal, isConsumed,
+        b.scopeKey, b.isolationKey, b.isLocal, isConsumed,
       )) continue;
       if (followChain && b.value.kind === 'var-ref') {
         const next = b.value.varBaseName;
@@ -627,7 +627,7 @@ export function getPossibleValuesAtCursor(
         if (b.value.varBaseName !== key) continue;
         if (!isBindingVisibleFrom(
           atNode, locBlock,
-          b.scopeNodeId, b.isolationAncestorId, b.isLocal, isConsumed,
+          b.scopeKey, b.isolationKey, b.isLocal, isConsumed,
         )) continue;
         hasSelfShadow = true;
         break;
@@ -686,7 +686,7 @@ export function getPossibleValuesAtCursor(
   //     a deferred code_block (the block is held in a local $code /
   //     $c and invoked via `dynamic $code` or `dyneval($c, …)`).  The
   //     deferred walker injects the caller's `QspSymbol` into a
-  //     synthetic scope, but the binding's `scopeNodeId` still refers
+  //     synthetic scope, but the binding's `scopeKey` still refers
   //     to the caller's AST scope — which `isBindingVisibleFrom`
   //     (step 1) blocks from inside the isolating code_block.
   //
@@ -694,7 +694,7 @@ export function getPossibleValuesAtCursor(
   //     definition lives elsewhere than at our cursor's AST scope, the
   //     scope-pass has genuinely missed the bindings that semantically
   //     apply here.  Recover them by anchoring on the symbol's
-  //     definition site: all LOCAL bindings sharing that scopeNodeId
+  //     definition site: all LOCAL bindings sharing that scopeKey
   //     belong to this symbol and are possible values at the cursor.
   //
   //     Non-local bindings are NOT added here — `isBindingVisibleFrom`
@@ -715,7 +715,7 @@ export function getPossibleValuesAtCursor(
           if (b.stmtLoc.column > defCol) continue;
           if (b.stmtLoc.endLine < defLine) continue;
           if (b.stmtLoc.endLine === defLine && b.stmtLoc.endColumn < defCol) continue;
-          anchor = b.scopeNodeId;
+          anchor = b.scopeKey;
           break;
         }
       }
@@ -725,7 +725,7 @@ export function getPossibleValuesAtCursor(
       if (bindings) {
         for (const b of bindings) {
           if (!b.isLocal) continue;
-          if (b.scopeNodeId !== anchor) continue;
+          if (b.scopeKey !== anchor) continue;
           // Skip bare var-ref edges — they are not terminal values
           // and `resolveBindingsAt` (step 1) already handles chain
           // traversal for non-shadow cases.  Surfacing them here as
@@ -811,7 +811,7 @@ export function getPossibleValuesAtCursor(
         if (b.value.kind !== 'var-ref') continue;
         if (!isBindingVisibleFrom(
           atNode, locBlock,
-          b.scopeNodeId, b.isolationAncestorId, b.isLocal, isConsumed,
+          b.scopeKey, b.isolationKey, b.isLocal, isConsumed,
         )) continue;
         return b;
       }
