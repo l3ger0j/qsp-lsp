@@ -105,6 +105,7 @@ function describeDiagnostic(host: QspHost, uri: string, d: Diagnostic, lineOffse
     line: d.range.start.line + 1 + lineOffset,
     column: d.range.start.character + 1,
     severity: SEVERITY_NAMES[d.severity ?? DiagnosticSeverity.Error],
+    ...(d.code !== undefined ? { code: d.code } : {}),
     message: d.message,
   };
 }
@@ -172,7 +173,8 @@ export function registerReadTools(server: McpServer, host: QspHost): void {
 
   server.registerTool('qsp_diagnostics', {
     title: 'QSP diagnostics',
-    description: 'Errors and warnings the QSP analysis reports, for the whole project or one file.',
+    description: 'Errors and warnings the QSP analysis reports, for the whole project or one file. '
+      + 'Each has a `code`: the check that found it, named like its qsp.diagnostics.<code> setting.',
     inputSchema: {
       file: z.string().optional().describe('Workspace-relative file; omit for the whole project'),
       minSeverity: z.enum(['error', 'warning', 'info', 'hint']).default('warning'),

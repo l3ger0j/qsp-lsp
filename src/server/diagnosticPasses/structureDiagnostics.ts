@@ -77,6 +77,7 @@ export function checkSyntaxErrors(
             end: { line: err.endRow, character: err.endCol },
           },
           err.message,
+          { code: 'syntax' },
         );
       }
     } else {
@@ -86,6 +87,7 @@ export function checkSyntaxErrors(
         DiagnosticSeverity.Warning,
         ctx.headerRange(line),
         `Location '${loc?.name ?? '?'}' has ${errs.length} syntax errors — only non-code content?`,
+        { code: 'syntax', name: loc?.name },
       );
     }
   }
@@ -114,6 +116,7 @@ export function checkDuplicateLocations(
         DiagnosticSeverity.Error,
         ctx.headerRange(loc.startLine),
         `Duplicate location name '${loc.name}' (also at line ${otherLines})`,
+        { code: 'duplicateLocations', name: loc.name },
       );
     }
   }
@@ -139,6 +142,7 @@ export function checkDuplicateLocations(
           DiagnosticSeverity.Error,
           ctx.headerRange(loc.startLine),
           `Duplicate location name '${loc.name}' (also defined in ${otherFiles.join(', ')})${consequence}`,
+          { code: 'duplicateLocations', name: loc.name },
         );
       }
     }
@@ -167,6 +171,7 @@ export function checkLocationBounds(
           DiagnosticSeverity.Error,
           ctx.headerRange(loc.startLine),
           `Location '${loc.name}' may not be properly closed with '---'`,
+          { code: 'unclosedLocations', name: loc.name },
         );
       }
     }
@@ -177,6 +182,7 @@ export function checkLocationBounds(
           DiagnosticSeverity.Warning,
           ctx.headerRange(loc.startLine),
           `Location '${loc.name}' is ${lineCount} lines long (max ${maxLines})`,
+          { code: 'maxLocationLines', name: loc.name },
         );
       }
     }

@@ -46,7 +46,7 @@ export function checkUntrackedDynamicCalls(
         + ` or a variable with a known code-block binding`
         + ` — local variables and references inside it are not tracked`;
     }
-    ctx.push(DiagnosticSeverity.Information, ctx.locRange(u.loc), msg);
+    ctx.push(DiagnosticSeverity.Information, ctx.locRange(u.loc), msg, { code: 'untrackedDynamicCalls', name: u.varName });
   }
 }
 

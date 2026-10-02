@@ -3256,10 +3256,10 @@ dynamic $never
     });
   });
 
-  // ── deprecated builtins (always on; no setting flag) ─────────────
+  // ── deprecated builtins ──────────────────────────────────────────
   describe('deprecated builtins', () => {
     function depDiags(code: string) {
-      return run(code, {}).filter(d => /is outdated/.test(d.message));
+      return run(code, { deprecatedBuiltins: true }).filter(d => /is outdated/.test(d.message));
     }
 
     it('flags ADDQST as deprecated and suggests INCLIB', () => {

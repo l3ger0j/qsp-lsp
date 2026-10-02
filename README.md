@@ -234,7 +234,7 @@ The server reads the files on disk: save files open in the editor before asking 
 
 ### Diagnostics
 
-All diagnostic checks are enabled by default. Set to `false` to disable a specific check.
+All diagnostic checks are enabled by default. Set to `false` to disable a specific check. Each diagnostic shows its check's name as its code (e.g. `qsp(uninitializedVariables)` in the Problems panel), the same name as its setting; syntax errors have the code `syntax`.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -254,6 +254,7 @@ All diagnostic checks are enabled by default. Set to `false` to disable a specif
 | `qsp.diagnostics.unusedObjects` | `true` | Hint about objects added but never referenced |
 | `qsp.diagnostics.invalidFunctionPrefix` | `true` | Warn when function called with wrong type prefix |
 | `qsp.diagnostics.invalidBuiltinArgCount` | `true` | Warn when built-in called with wrong arg count |
+| `qsp.diagnostics.deprecatedBuiltins` | `true` | Warn about outdated built-ins (e.g. `ADDQST` instead of `INCLIB`) and strike them through |
 | `qsp.diagnostics.mixedVariablePrefixes` | `true` | Info when variable uses inconsistent type prefixes |
 | `qsp.diagnostics.typeMismatch` | `true` | Info when assigning wrong type to a variable |
 | `qsp.diagnostics.mixedLocationCallTypes` | `true` | Info when location is called inconsistently (mix of func/gosub/goto/desc) |

@@ -752,6 +752,11 @@
           "default": true,
           "description": "Warn when a built-in statement or function is called with too few or too many arguments."
         },
+        "qsp.diagnostics.deprecatedBuiltins": {
+          "type": "boolean",
+          "default": true,
+          "description": "Warn when an outdated built-in is used (e.g. ADDQST instead of INCLIB), and strike it through."
+        },
         "qsp.diagnostics.mixedVariablePrefixes": {
           "type": "boolean",
           "default": true,

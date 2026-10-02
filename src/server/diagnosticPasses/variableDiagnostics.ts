@@ -157,6 +157,7 @@ export function checkUninitializedVariables(
           DiagnosticSeverity.Warning,
           ctx.locRange(ref),
           `Variable '${sym.name}' is used but never assigned`,
+          { code: 'uninitializedVariables', name: sym.name },
         );
       }
     }
@@ -241,6 +242,7 @@ export function checkMixedVariablePrefixes(
           DiagnosticSeverity.Information,
           ctx.locRange(ref),
           `Variable '${sym.name}' is used with mixed type prefixes: ${names}`,
+          { code: 'mixedVariablePrefixes', name: sym.name },
         );
       }
     }
@@ -276,6 +278,7 @@ export function checkTypeMismatch(
             DiagnosticSeverity.Information,
             ctx.locRange(b.stmtLoc),
             `Type mismatch: assignment of a ${rhsType} value to a ${lhsType} variable`,
+            { code: 'typeMismatch' },
           );
         }
       }
@@ -340,8 +343,8 @@ export function checkUnusedVariables(
         sym.hasValueDefinition
           ? `Variable '${sym.name}' is assigned but never read`
           : `Variable '${sym.name}' is declared but never used`,
-        true,  // unnecessary
-      );
+          { code: 'unusedVariables', name: sym.name, unnecessary: true },
+        );
     }
   }
 }
@@ -375,7 +378,7 @@ export function checkShadowsCallFrameBuiltin(
           DiagnosticSeverity.Information,
           ctx.locRange(sym.definition),
           `'local ${sym.name}' is unnecessary — '${sym.name}' is already a per-call-frame variable`,
-          true,  // unnecessary
+          { code: 'shadowsCallFrameBuiltin', name: sym.name, unnecessary: true },
         );
       }
     }
@@ -479,6 +482,7 @@ export function checkShadowsPropagatedLocal(
           DiagnosticSeverity.Information,
           ctx.locRange(sym.definition),
           `'local ${sym.name}' shadows a local variable propagated in from ${callerList}`,
+          { code: 'shadowsPropagatedLocal', name: sym.name },
         );
       }
     }

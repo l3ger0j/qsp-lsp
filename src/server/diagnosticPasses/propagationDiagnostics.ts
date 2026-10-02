@@ -111,7 +111,7 @@ export function checkInconsistentLocalPropagation(
         const propMsg = `Variable '${targetSym.name}' is propagated as local`
           + ` from ${fromList} but not from ${withoutList}`
           + ` — it may behave as local or global depending on the call path`;
-        ctx.push(DiagnosticSeverity.Warning, ctx.locRange(ref), propMsg);
+        ctx.push(DiagnosticSeverity.Warning, ctx.locRange(ref), propMsg, { code: 'inconsistentLocalPropagation', name: targetSym.name });
       }
     }
   }
@@ -172,7 +172,7 @@ export function checkUnusedLocations(
       DiagnosticSeverity.Hint,
       ctx.locRange(def.definition!),
       `Location '${def.name}' is defined but never referenced`,
-      true,  // unnecessary
+      { code: 'unusedLocations', name: def.name, unnecessary: true },
     );
   }
 }
@@ -210,6 +210,7 @@ export function checkMissingResultInFunctionCall(
           ctx.locRange(r),
           `Location '${ref.name}' is called as a function but never assigns 'result'`
           + ` — the call always returns an empty value`,
+          { code: 'missingResultInFunctionCall', name: ref.name },
         );
       }
     }
@@ -256,6 +257,7 @@ export function checkMissingResultInDyneval(
           ctx.locRange(block.callLoc),
           `'dyneval' block never assigns 'result'`
           + ` — the call always returns an empty value`,
+          { code: 'missingResultInFunctionCall' },
         );
       }
     }
@@ -277,6 +279,7 @@ export function checkMissingResultInDyneval(
           ctx.locRange(dispatch.callLoc),
           `'dyneval' block never assigns 'result'`
           + ` — the call always returns an empty value`,
+          { code: 'missingResultInFunctionCall' },
         );
       }
     }
@@ -329,6 +332,7 @@ export function checkExtraArgsToTargetWithoutArgs(
           DiagnosticSeverity.Information,
           ctx.locRange(r),
           formatExtraArgsMessage(`Location '${ref.name}'`, n, verdict),
+          { code: 'extraArgsToTargetWithoutArgs', name: ref.name },
         );
       }
     }
@@ -373,6 +377,7 @@ export function checkExtraArgsToTargetWithoutArgs(
           DiagnosticSeverity.Information,
           ctx.locRange(block.callLoc),
           formatExtraArgsMessage(`'${block.kind}' block`, block.argCount, mostInformative),
+          { code: 'extraArgsToTargetWithoutArgs' },
         );
       }
     }
@@ -400,6 +405,7 @@ export function checkExtraArgsToTargetWithoutArgs(
           DiagnosticSeverity.Information,
           ctx.locRange(dispatch.callLoc),
           formatExtraArgsMessage(`'${dispatch.kind}' block`, dispatch.argCount, mostInformative),
+          { code: 'extraArgsToTargetWithoutArgs' },
         );
       }
     }

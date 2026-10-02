@@ -1355,7 +1355,7 @@ pl '<a href="exec:$x = $len(''abc'')">click</a>'
 pl '<a href="exec:killqst">click</a>'
 ---
 `;
-      const diags = diagnose(code, {});
+      const diags = diagnose(code, { deprecatedBuiltins: true });
       const hits = diags.filter(d => /KILLQST.*outdated/.test(d.message));
       expect(hits.length).toBe(1);
       expect(hits[0]!.range.start.line).toBe(1);

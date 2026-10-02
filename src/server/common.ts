@@ -258,6 +258,7 @@ export function createQspServer(
       unusedObjects: true,
       invalidFunctionPrefix: true,
       invalidBuiltinArgCount: true,
+      deprecatedBuiltins: true,
       mixedVariablePrefixes: true,
       typeMismatch: true,
       mixedLocationCallTypes: true,

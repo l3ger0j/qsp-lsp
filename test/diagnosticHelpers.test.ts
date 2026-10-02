@@ -16,11 +16,11 @@ import type { DiagnosticSettings } from '../src/server/diagnostics';
 function ctxWith(maxPerFile: number): DiagnosticCtx {
   const ctx = new DiagnosticCtx(null, { maxPerFile } as DiagnosticSettings);
   const at = (line: number) => ({ start: { line, character: 0 }, end: { line, character: 1 } });
-  ctx.push(DiagnosticSeverity.Hint, at(0), 'hint 1');
-  ctx.push(DiagnosticSeverity.Warning, at(1), 'warning 1');
-  ctx.push(DiagnosticSeverity.Hint, at(2), 'hint 2');
-  ctx.push(DiagnosticSeverity.Error, at(3), 'error 1');
-  ctx.push(DiagnosticSeverity.Warning, at(4), 'warning 2');
+  ctx.push(DiagnosticSeverity.Hint, at(0), 'hint 1', { code: 'syntax' });
+  ctx.push(DiagnosticSeverity.Warning, at(1), 'warning 1', { code: 'syntax' });
+  ctx.push(DiagnosticSeverity.Hint, at(2), 'hint 2', { code: 'syntax' });
+  ctx.push(DiagnosticSeverity.Error, at(3), 'error 1', { code: 'syntax' });
+  ctx.push(DiagnosticSeverity.Warning, at(4), 'warning 2', { code: 'syntax' });
   return ctx;
 }
 

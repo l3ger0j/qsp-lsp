@@ -14,6 +14,22 @@ import {
   type Range,
 } from 'vscode-languageserver';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
+import type { DiagnosticCode } from '../../common/diagnosticCodes';
+
+/** What a diagnostic is about, besides its text. */
+export interface DiagnosticInfo {
+  /** The check that found it: the Problems panel shows it, `!@qsp-ignore` names it. */
+  code: DiagnosticCode;
+  /**
+   * The variable, location, label, action or object it is about, for
+   * `!@qsp-ignore <code>: <name>` and the quick fixes (sent as `data.name`).
+   */
+  name?: string;
+  /** Faded in the editor (unused code). */
+  unnecessary?: boolean;
+  /** Struck through in the editor (outdated builtin). */
+  deprecated?: boolean;
+}
 
 /**
  * Everything a diagnostic pass needs to emit diagnostics.
@@ -61,6 +77,7 @@ export class DiagnosticCtx {
       range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
       severity: DiagnosticSeverity.Information,
       source: 'qsp',
+      code: 'maxPerFile',
       message: `${all.length - max} more problems in this file are not shown (qsp.diagnostics.maxPerFile is ${max}); the most severe come first`,
     });
     return kept;
@@ -91,18 +108,13 @@ export class DiagnosticCtx {
     };
   }
 
-  push(
-    severity: DiagnosticSeverity,
-    range: Range,
-    message: string,
-    unnecessary = false,
-    deprecated = false,
-  ): void {
+  push(severity: DiagnosticSeverity, range: Range, message: string, info: DiagnosticInfo): void {
     if (this.errorsOnly && severity !== DiagnosticSeverity.Error) return;
-    const d: Diagnostic = { severity, range, message, source: 'qsp' };
+    const d: Diagnostic = { severity, range, message, source: 'qsp', code: info.code };
+    if (info.name !== undefined) d.data = { name: info.name };
     const tags: DiagnosticTag[] = [];
-    if (unnecessary) tags.push(DiagnosticTag.Unnecessary);
-    if (deprecated) tags.push(DiagnosticTag.Deprecated);
+    if (info.unnecessary) tags.push(DiagnosticTag.Unnecessary);
+    if (info.deprecated) tags.push(DiagnosticTag.Deprecated);
     if (tags.length) d.tags = tags;
     this._diagnostics.push(d);
   }

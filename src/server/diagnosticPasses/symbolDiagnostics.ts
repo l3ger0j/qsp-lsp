@@ -47,6 +47,7 @@ export function checkUnreachableLabels(
       ctx.locRange(loc),
       'Label is not at the start of a line and will not be recognized'
       + ' at runtime.',
+      { code: 'unreachableLabels' },
     );
   }
 }
@@ -65,6 +66,7 @@ export function checkDuplicateLabels(
         ctx.locRange(ref),
         `Duplicate label '${label.name}' in location '${locSyms.locationName}'`
         + ` (also at line ${otherLines})`,
+        { code: 'duplicateLabels', name: label.name },
       );
     }
   }
@@ -93,6 +95,7 @@ export function checkUnresolvedLabelRefs(
           DiagnosticSeverity.Warning,
           ctx.locRange(r),
           `Label '${ref.name}' is not defined in location '${locSyms.locationName}'`,
+          { code: 'unresolvedLabelRefs', name: ref.name },
         );
       }
     }
@@ -121,7 +124,7 @@ export function checkUnusedLabels(
           ctx.locRange(def),
           `Label '${label.name}' is defined but never targeted by jump in`
           + ` location '${locSyms.locationName}'`,
-          true,  // unnecessary
+          { code: 'unusedLabels', name: label.name, unnecessary: true },
         );
       }
     }
@@ -147,6 +150,7 @@ export function checkDuplicateActions(
         ctx.locRange(act.definition!),
         `Duplicate action '${act.name}' in location '${locSyms.locationName}'`
         + ` (also at line ${otherLines})`,
+        { code: 'duplicateActions', name: act.name },
       );
     }
   }
@@ -166,6 +170,7 @@ export function checkUnresolvedActionRefs(
         DiagnosticSeverity.Warning,
         ctx.locRange(r),
         `Action '${ref.name}' is referenced but never defined`,
+        { code: 'unresolvedActionRefs', name: ref.name },
       );
     }
   }
@@ -189,6 +194,7 @@ export function checkUnresolvedLocationRefs(
         isProject
           ? `Location '${ref.name}' is not defined in the project`
           : `Location '${ref.name}' is not defined in this file`,
+        { code: 'unresolvedLocationRefs', name: ref.name },
       );
     }
   }
@@ -216,6 +222,7 @@ export function checkMixedCallTypes(
         DiagnosticSeverity.Information,
         ctx.locRange(r),
         `Location '${entry.name}' is called as both ${labels}`,
+        { code: 'mixedLocationCallTypes', name: entry.name },
       );
     }
   }
@@ -238,6 +245,7 @@ export function checkUnresolvedObjectRefs(
         DiagnosticSeverity.Warning,
         ctx.locRange(r),
         `Object '${ref.name}' is referenced but never added`,
+        { code: 'unresolvedObjectRefs', name: ref.name },
       );
     }
   }
@@ -256,7 +264,7 @@ export function checkUnusedObjects(
       DiagnosticSeverity.Information,
       ctx.locRange(obj.definition),
       `Object '${obj.name}' is added but never referenced`,
-      true,
+      { code: 'unusedObjects', name: obj.name, unnecessary: true },
     );
   }
 }
@@ -276,6 +284,7 @@ export function checkInvalidFunctionPrefix(
       ctx.locRange(pw.loc),
       `Function '${pw.funcName}' does not support the '${pw.prefix}' prefix`
       + ` (valid: ${prefixNames})`,
+      { code: 'invalidFunctionPrefix', name: pw.funcName },
     );
   }
 }
@@ -297,6 +306,7 @@ export function checkInvalidArgCount(
       DiagnosticSeverity.Warning,
       ctx.locRange(aw.loc),
       `${kindLabel} '${aw.name}' expects ${expected} arguments, got ${aw.actual} ${noun}`,
+      { code: 'invalidBuiltinArgCount', name: aw.name },
     );
   }
 }
@@ -312,8 +322,7 @@ export function checkDeprecatedBuiltins(
       DiagnosticSeverity.Warning,
       ctx.locRange(dw.loc),
       `${kindLabel} '${dw.name.toUpperCase()}' is outdated; use '${dw.replacement.toUpperCase()}' instead`,
-      false,
-      true,  // deprecated tag (strikethrough in editors)
+      { code: 'deprecatedBuiltins', name: dw.name, deprecated: true },
     );
   }
 }
@@ -345,5 +354,5 @@ export function checkLocationSymbols(
   if (ctx.settings.invalidBuiltinArgCount)     checkInvalidArgCount(ctx, locSyms);
   if (ctx.settings.mixedLocationCallTypes)     checkMixedCallTypes(ctx, locSyms, callTypesPerTarget);
 
-  checkDeprecatedBuiltins(ctx, locSyms);
+  if (ctx.settings.deprecatedBuiltins)         checkDeprecatedBuiltins(ctx, locSyms);
 }

@@ -102,7 +102,7 @@ describe('read tools', () => {
   it('reports the project\'s diagnostics, and a single file\'s', async () => {
     const all = (await call('qsp_diagnostics', { minSeverity: 'error' })).json();
     expect(all).toEqual(expect.arrayContaining([expect.objectContaining({
-      file: 'errors.qsps', line: 2, severity: 'error', message: expect.stringContaining("Missing ':'"),
+      file: 'errors.qsps', line: 2, severity: 'error', code: 'syntax', message: expect.stringContaining("Missing ':'"),
     })]));
     expect((await call('qsp_diagnostics', { file: 'main.qsps', minSeverity: 'error' })).json()).toEqual([]);
   });

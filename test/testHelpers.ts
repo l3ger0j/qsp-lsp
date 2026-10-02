@@ -68,6 +68,7 @@ export const ALL_DIAGS_OFF: DiagnosticSettings = {
   unusedObjects: false,
   invalidFunctionPrefix: false,
   invalidBuiltinArgCount: false,
+  deprecatedBuiltins: false,
   mixedVariablePrefixes: false,
   typeMismatch: false,
   mixedLocationCallTypes: false,
