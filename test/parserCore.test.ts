@@ -21,6 +21,25 @@ describe('QspTreeSitterParser', () => {
     fromBuffer.dispose();
   });
 
+  // Between locations txt2gam looks only for `#`, so a `--` line there (an
+  // ASCII table, a divider) is text, not the end of a location. The native
+  // build the corpus tests use parsed the second case right while this WASM,
+  // which the server uses, did not, so both are checked here.
+  it('keeps "--" lines between locations as text', () => {
+    const cases = [
+      '# get_coords\n%result = [1, 2]\n--- get_coords ---\n\ny/x |  0   1\n----|--------   N = x + y * W\n   0|  0   1\n\n'
+        + "@get_coords(10, 4, '[x]')   & !@ кортеж (2,2)\n\n# next\n*pl 'дальше'\n--- next ---\n",
+      '# kdkkdkdd\n\n-- - ---------\n\ndkkkdkdk\n\nkdkdkd\nkdkd\n-----\n\ngoto\n',
+    ];
+    for (const text of cases) {
+      const tree = parser.parseOnce(text)!;
+      expect(tree.rootNode.hasError).toBe(false);
+      expect(tree.rootNode.namedChildren.map(n => n.type))
+        .toEqual(text.includes('# next') ? ['location_block', 'inter_loc_text', 'location_block'] : ['location_block', 'inter_loc_text']);
+      tree.delete();
+    }
+  });
+
   it('should parse a simple location', () => {
     const tree = parser.parse('test://doc', `# start
 pl 'hello'

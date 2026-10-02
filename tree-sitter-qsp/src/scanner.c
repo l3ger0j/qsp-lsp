@@ -266,7 +266,13 @@ bool tree_sitter_qsp_external_scanner_scan(void *payload, TSLexer *lexer, const 
     // unconditional emit acts as a hard recovery boundary that lets
     // tree-sitter resync at the next `# loc` even when the previous
     // location is broken — matching user intent for QSP source.
-    if (lexer->lookahead == '-') {
+    //
+    // Between locations, where a `#` header is what the parser expects,
+    // "--" is plain text instead: txt2gam looks only for `#` there, and
+    // authors draw tables and dividers with dashes. Emitting the end mark
+    // there turned the rest of the inter-location text into an ERROR. In
+    // recovery every symbol is valid, so the end mark stays a boundary.
+    if (lexer->lookahead == '-' && !(valid_symbols[LOCATION_START_MARK] && !in_recovery)) {
       lexer->advance(lexer, false);
       if (lexer->lookahead == '-') {
         lexer->advance(lexer, false);

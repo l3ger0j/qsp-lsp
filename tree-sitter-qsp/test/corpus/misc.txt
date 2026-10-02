@@ -1029,3 +1029,48 @@ end 'test annotation'
         note: (note_string
           (raw_string))))
     (location_end)))
+
+================
+Dashes between locations are text
+================
+# get_coords
+*pl 'координаты'
+--- get_coords ---
+
+y/x |  0   1
+----|--------   N = x + y * W
+   0|  0   1
+
+@get_coords(10, 4, '[x]')   & !@ кортеж (2,2)
+-- - ---------
+# next
+*pl 'дальше'
+--- next ---
+
+---
+
+(source_file
+  (location_block
+    (location_header
+      (location_name))
+    (single_line_block
+      (statement
+        name: (statement_name)
+        (string
+          (single_quoted_string))))
+    (location_end))
+  (inter_loc_text
+    (inter_loc_line)
+    (inter_loc_line)
+    (inter_loc_line)
+    (inter_loc_line)
+    (inter_loc_line))
+  (location_block
+    (location_header
+      (location_name))
+    (single_line_block
+      (statement
+        name: (statement_name)
+        (string
+          (single_quoted_string))))
+    (location_end)))

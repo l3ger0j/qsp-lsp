@@ -8,6 +8,9 @@
 - Libraries listed under `libraries` in `txt2gam.json` (sources in `libs/`) are built into `.qsp` files of their own for `inclib`, never into the game's.
 - Files in `libs/` show errors only (no warnings about a library's unused locations or variables), and a duplicate location names the library it clashes with.
 
+### Fixes
+- A line starting with `--` between locations (an ASCII table, a divider) no longer breaks the highlighting and reports false syntax errors in the rest of that text: only a `#` header starts something there. Reported by Aleks Versus.
+
 ## 0.3.0
 
 ### New
