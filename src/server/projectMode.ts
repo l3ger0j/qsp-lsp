@@ -46,6 +46,7 @@ import {
 import type { DiagnosticSettings } from './diagnostics';
 import type { DocumentState } from './lspFeatures';
 import { computeDiagnostics } from './diagnostics';
+import { extractLocationSymbols } from './locationAnalysis';
 import { parseSuppressions } from '../common/suppressions';
 import { PerfLog, formatChars } from './perfLog';
 import { stripBom, makeLocSymLoc, shiftErrors, QSP_FILE_EXTENSIONS, safeSendDiagnostics, safeConnectionCall, safeConsole, type AnalysisCache, type FsProvider } from './serverUtils';
@@ -411,28 +412,17 @@ export class ProjectModeService {
       const locLoc = makeLocSymLoc(uri, text, loc);
       const tree = this.perf.step('parse', () => this.tsParser.parseOnce(locText));
       if (tree) {
-        let result: ReturnType<typeof extractSymbols>;
+        let locSymbols: LocationSymbols;
         try {
-          result = this.perf.step('symbols', () => extractSymbols(
-            tree, uri, undefined, undefined,
+          locSymbols = this.perf.step('symbols', () => extractLocationSymbols(
+            tree, uri, loc.name, locText,
             this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
           ));
           this.perf.step('errors', () => shiftErrors(extractErrors(tree), loc.startLine, syntaxErrors));
         } finally {
           tree.delete();
         }
-        // extractSymbols wraps the location in a DocumentSymbols with
-        // one entry — pull out its LocationSymbols (same pattern as
-        // common.ts's parseLocationBlock).
-        let locSymbols: LocationSymbols | undefined;
-        for (const [, ls] of result.symbols.locations) { locSymbols = ls; break; }
-        if (locSymbols) {
-          const found = locSymbols;
-          this.perf.step('copy into file', () => symbols.addLocationFrom(loc.name, locLoc, found, loc.startLine));
-        } else {
-          const empty = symbols.addLocation(loc.name, locLoc);
-          empty.hasErrors = true;
-        }
+        this.perf.step('copy into file', () => symbols.addLocationFrom(loc.name, locLoc, locSymbols, loc.startLine));
       } else {
         // Tree-sitter failed (timeout) for this one location — fall
         // back to regex extraction for just that location.

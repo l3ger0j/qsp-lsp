@@ -47,6 +47,7 @@ import {
   DidChangeTextDocumentNotification,
   DidCloseTextDocumentNotification,
   DidOpenTextDocumentNotification,
+  DocumentSymbolRequest,
   HoverRequest,
   InitializeRequest,
   InitializedNotification,
@@ -55,6 +56,7 @@ import {
   SemanticTokensRangeRequest,
   SemanticTokensRequest,
   type CodeAction,
+  type DocumentSymbol,
   type Hover,
   type InitializeParams,
   type PublishDiagnosticsParams,
@@ -909,5 +911,31 @@ describe('LSP e2e: variable checks open and closed', () => {
     })();
     h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text: big } });
     expect(uninitialized(await parsed)).toContain(line);
+  }, 60_000);
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Actions a syntax error hides, in a large file
+// ──────────────────────────────────────────────────────────────────────
+//
+// A whole-file parse adds actions that ERROR nodes swallowed from the
+// text; locations parsed alone didn't, so a large file's Outline lost them.
+describe('LSP e2e: an action behind a syntax error in a large file', () => {
+  it('is in the Outline', async () => {
+    const text = makeBigDocument('большой') + "# комната\n(((\nact 'взять':\n*pl 1\nend\n--- комната ---\n";
+    const uri = 'file:///hidden-action-big.qsps';
+    const h = await startServer();
+    try {
+      h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text } });
+      for (;;) {
+        await h.nextDiagnosticsFor(uri);
+        if (h.logs.some(l => l.includes('Per-location parse'))) break;
+      }
+      const outline = await h.client.sendRequest(DocumentSymbolRequest.type, { textDocument: { uri } }) as DocumentSymbol[];
+      const room = outline.find(s => s.name === 'комната');
+      expect(room?.children?.map(c => c.name)).toContain('act взять');
+    } finally {
+      h.shutdown();
+    }
   }, 60_000);
 });

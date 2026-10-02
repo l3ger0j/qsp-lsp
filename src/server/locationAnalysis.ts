@@ -1,0 +1,48 @@
+// ── Analysis of one location ─────────────────────────────────────────
+//
+// Large files, in the editor and in the project scan, are parsed one
+// location at a time. Shared here so both get the same symbols.
+
+import { LocationSymbols, extractSymbols } from '../parser';
+import { extractLocationSymbolsFromText, mergeActionsFromText, mergeLabelsFromText } from './regexFallback';
+
+/**
+ * The symbols of a location parsed alone (`tree`, of `locText`), in its
+ * own coordinates: its header is line 0. Where syntax errors hid actions
+ * or labels from tree-sitter, they are added from the text, as for a
+ * whole-file parse; a location tree-sitter didn't find at all gets them
+ * from the text only (`regexOnly`).
+ */
+export function extractLocationSymbols(
+  tree: Parameters<typeof extractSymbols>[0],
+  docUri: string,
+  locationName: string,
+  locText: string,
+  embedParseFn: Parameters<typeof extractSymbols>[4],
+): LocationSymbols {
+  // extractSymbols wraps the location in a DocumentSymbols with one entry.
+  let found: LocationSymbols | undefined;
+  for (const [, ls] of extractSymbols(tree, docUri, undefined, undefined, embedParseFn).symbols.locations) {
+    found = ls;
+    break;
+  }
+  const lines = locText.split('\n').length;
+  const wholeText = {
+    name: locationName, nameLower: locationName.toLowerCase(),
+    startLine: 0, endLine: lines - 1, startOffset: 0, endOffset: locText.length,
+  };
+  if (!found) {
+    // E.g. the entire tree is ERROR: an empty location, so the result is still cached.
+    const empty = new LocationSymbols(locationName);
+    empty.hasErrors = true;
+    extractLocationSymbolsFromText(locText, wholeText, empty, docUri);
+    return empty;
+  }
+  if (found.hasErrors) {
+    // ERROR nodes can swallow act blocks and labels; tree-sitter's own are
+    // kept (more accurate for valid syntax), the text adds those on lines it missed.
+    mergeActionsFromText(locText, wholeText, found, docUri);
+    mergeLabelsFromText(locText, wholeText, found, docUri);
+  }
+  return found;
+}

@@ -15,6 +15,7 @@
 - Files in `libs/` show errors only (no warnings about a library's unused locations or variables), and a duplicate location names the library it clashes with.
 
 ### Fixes
+- In files past 500 KB and in closed project files, an action or label a syntax error hid from the parser was missing from the Outline and the checks; it is now taken from the text, as in smaller open files.
 - `uninitializedVariables` and `mixedVariablePrefixes` gave different results for a file open in the editor and closed (or past 500 KB): only a small open file had the scopes the checks need, so a value that comes through another variable (`б = а` with `а` never assigned) was missed elsewhere. Every file now gets the scope-aware checks (on a 12.8 M-character file, its diagnostics take 3.9 s instead of 3.0 s).
 - A write inside a code block held in a `local` of a nested block (`if`, loop) and run by another location through `dynamic` was reported as never read, and hover didn't show it among the caller's values.
 - In files past 500 KB, hover showed no possible values for a local of a nested block that takes its value from another variable (`local y = i` in a loop body): scopes were recorded by the parse tree's node ids, which mean nothing in the location's next parse.

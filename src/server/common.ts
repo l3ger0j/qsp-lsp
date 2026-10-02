@@ -37,6 +37,7 @@ import { computeDiagnostics, type DiagnosticSettings } from './diagnostics';
 import { registerLspFeatures, type DocumentState, type PerLocationParseResult } from './lspFeatures';
 import { stripBom, shiftErrors, dropIdleTrees, makeLocSymLoc, perLocationCacheKeys, safeSendDiagnostics, safeConnectionCall, safeConsole, QSP_FILE_EXTENSIONS, type FsProvider } from './serverUtils';
 import { ProjectModeService, syntaxErrorsFor } from './projectMode';
+import { extractLocationSymbols } from './locationAnalysis';
 import { AnalysisStatusReporter } from './analysisStatus';
 import { ANALYSIS_STATUS_MIN_BYTES } from '../common/analysisStatus';
 import { libraryFolderPrefixes } from '../common/libraryConfig';
@@ -1159,20 +1160,6 @@ export function createQspServer(
     return result;
   }
 
-  function extractLocationSymbols(
-    tree: Parameters<typeof extractSymbols>[0], docUri: string, locationName: string,
-    embedParseFn: Parameters<typeof extractSymbols>[4],
-  ): LocationSymbols {
-    // extractSymbols wraps the location in a DocumentSymbols with one entry.
-    const result = extractSymbols(tree, docUri, undefined, undefined, embedParseFn);
-    for (const [, ls] of result.symbols.locations) return ls;
-    // No location found (e.g. the entire tree is ERROR): an empty one, so
-    // the result is still cached.
-    const empty = new LocationSymbols(locationName);
-    empty.hasErrors = true;
-    return empty;
-  }
-
   /**
    * Parse a single location and return its local-coordinate results.
    * For large locations (≥INCREMENTAL_LOC_THRESHOLD), retains the tree
@@ -1222,7 +1209,7 @@ export function createQspServer(
         ? (t: string) => tsParser.parseOnce(t)
         : undefined;
       const parsed = tree;
-      const locSymbols = perf.step('symbols', () => extractLocationSymbols(parsed, docUri, locationName, embedParseFn));
+      const locSymbols = perf.step('symbols', () => extractLocationSymbols(parsed, docUri, locationName, locText, embedParseFn));
       const errors = perf.step('errors', () => extractErrors(parsed));
       // Short of memory, large files go without semantic highlighting
       // (TextMate still colours them).
