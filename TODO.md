@@ -104,3 +104,27 @@ the libraries in a GitHub repository of their own; it doesn't exist yet
 - Set the repository up as LIBRARIES.md suggests: location names prefixed
   with the library id, and CI that recomputes each `sha256` and checks that
   no two libraries share a location name.
+
+## Analysis cache: what is left
+
+The cache (`src/server/nodeCache.ts`) reads unchanged project files back
+instead of analysing them: on a 20 MB game of 600 locations in 10 files,
+22.6 s of file analysis became 1.8 s, ready 36.9 s → 16.1 s. Still open:
+- **Show stored diagnostics at once.** Aggregates (7 s) and diagnostics
+  (3.5 s) still run before anything is shown. Store each file's
+  diagnostics with a key over every file's key and the `qsp.diagnostics.*`
+  settings, publish them before the aggregates, mark the status bar as
+  updating, and replace them when the fresh ones are ready.
+- **Memory.** A warm start used 1.18 GB of heap against 0.97 GB cold:
+  read-back symbols probably hold their own copy of every repeated name,
+  where a parse shares them. Interning strings while reviving should help;
+  measure first.
+- **The open file** is analysed through the editor path, not the cache
+  (3.4 s on that game).
+- **Yield during the aggregates and diagnostics.** On first open the server
+  answers nothing for their ~10 s (hover, navigation, status updates all
+  wait); doing them in slices, as the jump graph layout does, would keep it
+  responsive.
+- **The MCP server and VS Code for the Web** run without a cache:
+  `QspHost` takes a `cacheDir` already, the MCP server would need a folder
+  (e.g. under the user's cache directory); the browser would need IndexedDB.
