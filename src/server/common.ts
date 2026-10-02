@@ -38,6 +38,7 @@ import { ProjectModeService } from './projectMode';
 import { AnalysisStatusReporter } from './analysisStatus';
 import { ANALYSIS_STATUS_MIN_BYTES } from '../common/analysisStatus';
 import { libraryFolderPrefixes } from '../common/libraryConfig';
+import { parseSuppressions } from '../common/suppressions';
 import { PerfLog, formatChars, type ServerHost } from './perfLog';
 import { buildPerformanceReport } from './performanceReport';
 import { Pseudonyms } from './pseudonyms';
@@ -628,6 +629,7 @@ export function createQspServer(
           st.symbols, undefined, liveAgg,
           undefined,
           collectPeerDocs(documentStates, uri),
+          st.suppressions,
         );
         safeSendDiagnostics(connection, { uri, diagnostics: d });
       }
@@ -812,6 +814,7 @@ export function createQspServer(
       perLocationCache: previousState?.perLocationCache,
       rawText: text,
       positionsApproximate,
+      suppressions: parseSuppressions(text, locationIndex),
     });
 
     // Clear stale diagnostics immediately so the user doesn't see
@@ -983,7 +986,9 @@ export function createQspServer(
     // while the file was above PER_LOCATION_BYTE_THRESHOLD must go now.
     releasePerLocationTrees(previousState);
     // Invalidate semantic token cache — tokens are built lazily on request.
-    documentStates.set(doc.uri, { locationIndex, symbols, cachedSemanticTokens: undefined });
+    documentStates.set(doc.uri, {
+      locationIndex, symbols, cachedSemanticTokens: undefined, suppressions: parseSuppressions(text, locationIndex),
+    });
 
     // In project mode, rebuild aggregates and re-diagnose all files
     if (settings.project.enabled && project.projectAggregates) {
@@ -999,6 +1004,7 @@ export function createQspServer(
         collectCallTypesPerTarget(documentStates), symbols,
         undefined, undefined, fileAgg,
         collectPeerDocs(documentStates, doc.uri),
+        state.suppressions,
       );
       safeSendDiagnostics(connection, { uri: doc.uri, diagnostics });
     }
@@ -1212,6 +1218,7 @@ export function createQspServer(
       perLocationCache: newCache,
       rawText: text,
       aggCache,
+      suppressions: parseSuppressions(text, currentIndex),
     });
 
     // ── 7. Send diagnostics ───────────────────────────────────────
@@ -1227,6 +1234,7 @@ export function createQspServer(
         collectCallTypesPerTarget(documentStates), symbols,
         allErrors, undefined, fileAgg,
         collectPeerDocs(documentStates, doc.uri),
+        state.suppressions,
       );
       safeSendDiagnostics(connection, { uri: doc.uri, diagnostics });
     }
@@ -1348,6 +1356,7 @@ export function createQspServer(
       cachedSemanticTokens: undefined,   // rebuilt lazily on first request
       perLocationCache: newCache,
       rawText: text,
+      suppressions: parseSuppressions(text, locationIndex),
     });
     // From here the file is in documentStates, so a report counts it there.
     analysisInProgress = undefined;
@@ -1366,6 +1375,7 @@ export function createQspServer(
         collectCallTypesPerTarget(documentStates), symbols,
         allErrors, undefined, fileAgg,
         collectPeerDocs(documentStates, doc.uri),
+        state.suppressions,
       );
       safeSendDiagnostics(connection, { uri: doc.uri, diagnostics });
     }

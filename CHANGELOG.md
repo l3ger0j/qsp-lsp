@@ -7,6 +7,7 @@
 - A build (**Run**, **Export**, MCP `qsp_build`) stops when two locations share a name and lists every place: a player would reach only one of them.
 - Libraries listed under `libraries` in `txt2gam.json` (sources in `libs/`) are built into `.qsp` files of their own for `inclib`, never into the game's.
 - Every diagnostic has a code: the name of its check's `qsp.diagnostics.<code>` setting (`syntax` for syntax errors), shown in the Problems panel and returned by the MCP `qsp_diagnostics`. Outdated built-ins get their own setting, `qsp.diagnostics.deprecatedBuiltins`.
+- `!@qsp-ignore` comments silence a check where its finding is intended: on the next line, on their own line after `&`, in the location (`!@qsp-ignore-location`) or in the file (`!@qsp-ignore-file`), for every name or only those after `:`. A misspelled check is reported.
 - Files in `libs/` show errors only (no warnings about a library's unused locations or variables), and a duplicate location names the library it clashes with.
 
 ### Fixes

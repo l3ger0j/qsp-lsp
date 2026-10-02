@@ -15,6 +15,7 @@ import { buildLocationIndex } from '../src/common/locations';
 import { computeDiagnostics, type DiagnosticSettings } from '../src/server/diagnostics';
 import { collectCallTypesPerTarget } from '../src/server/aggregation';
 import type { LocationEntry } from '../src/common/locations';
+import { parseSuppressions } from '../src/common/suppressions';
 
 /** Absolute path to the tree-sitter QSP grammar WASM. */
 export const WASM_PATH = path.join(__dirname, '..', 'tree-sitter-qsp', 'tree-sitter-qsp.wasm');
@@ -101,7 +102,10 @@ export function runDiagnostics(
   const locationIndex = buildLocationIndex(code);
   const settings = { ...ALL_DIAGS_OFF, ...overrides };
   const callTypes = collectCallTypesPerTarget([symbols]);
-  return computeDiagnostics(doc, uri, locationIndex, settings, parser, callTypes, symbols);
+  return computeDiagnostics(
+    doc, uri, locationIndex, settings, parser, callTypes, symbols,
+    undefined, undefined, undefined, [], parseSuppressions(code, locationIndex),
+  );
 }
 
 /** Diagnostics filtered by a substring match (case-sensitive) on the message. */

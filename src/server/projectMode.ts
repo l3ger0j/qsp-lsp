@@ -44,6 +44,7 @@ import {
 import type { DiagnosticSettings } from './diagnostics';
 import type { DocumentState } from './lspFeatures';
 import { computeDiagnostics } from './diagnostics';
+import { parseSuppressions } from '../common/suppressions';
 import { PerfLog, formatChars } from './perfLog';
 import { stripBom, makeLocSymLoc, shiftErrors, QSP_FILE_EXTENSIONS, safeSendDiagnostics, safeConsole, type FsProvider } from './serverUtils';
 
@@ -236,6 +237,7 @@ export class ProjectModeService {
       symbols,
       cachedSemanticTokens: undefined,
       syntaxErrors,
+      suppressions: parseSuppressions(text, locationIndex),
     });
   }
 
@@ -427,6 +429,7 @@ export class ProjectModeService {
         this.projectAggregates,
         undefined,
         collectPeerDocs(uri),
+        state.suppressions,
       );
       published += diagnostics.length;
       safeSendDiagnostics(this.connection, { uri, diagnostics });
@@ -502,7 +505,7 @@ export class ProjectModeService {
       const locationIndex = buildLocationIndex(text);
       const prevState = this.documentStates.get(uri);
       if (prevState) {
-        this.documentStates.set(uri, { ...prevState, locationIndex });
+        this.documentStates.set(uri, { ...prevState, locationIndex, suppressions: parseSuppressions(text, locationIndex) });
       }
     }
   }

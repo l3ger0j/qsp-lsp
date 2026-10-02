@@ -27,6 +27,8 @@ import {
 // ── Diagnostic passes ─────────────────────────────────────────────────
 
 import { libraryIdOfUri } from '../common/libraryConfig';
+import type { Suppressions } from '../common/suppressions';
+import { DiagnosticSeverity } from 'vscode-languageserver';
 import { DiagnosticCtx } from './diagnosticPasses/diagnosticHelpers';
 import { checkSyntaxErrors, checkDuplicateLocations, checkLocationBounds } from './diagnosticPasses/structureDiagnostics';
 import { checkLocationSymbols } from './diagnosticPasses/symbolDiagnostics';
@@ -91,10 +93,21 @@ export function computeDiagnostics(
   projectAgg?: ProjectAggregates | null,
   cachedFileAgg?: SymbolAggregates,
   projectDocs: DocumentSymbols[] = [],
+  suppressions?: Suppressions,
 ): import('vscode-languageserver').Diagnostic[] {
   const libraryFolders = diagnosticSettings.libraryFolders ?? [];
   const libraryOf = (uri: string) => libraryIdOfUri(uri, libraryFolders);
-  const ctx = new DiagnosticCtx(doc, diagnosticSettings, libraryOf(docUri) !== undefined);
+  const ctx = new DiagnosticCtx(doc, diagnosticSettings, libraryOf(docUri) !== undefined, suppressions);
+
+  // A mistyped `!@qsp-ignore` silences nothing, so say so where it is written.
+  for (const p of suppressions?.problems ?? []) {
+    ctx.push(
+      DiagnosticSeverity.Warning,
+      { start: { line: p.line, character: p.startCol }, end: { line: p.line, character: p.endCol } },
+      p.message,
+      { code: 'suppression' },
+    );
+  }
 
   // ── Document-structure diagnostics ──────────────────────────────
   checkSyntaxErrors(ctx, docUri, locationIndex, tsParser, preExtractedErrors, symbols);

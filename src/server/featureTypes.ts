@@ -9,6 +9,7 @@ import type {
 } from 'vscode-languageserver';
 import type Parser from 'web-tree-sitter';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
+import type { Suppressions } from '../common/suppressions';
 import type {
   DocumentSymbols,
   LocationSymbols,
@@ -75,6 +76,8 @@ export interface DocumentState {
    * a closed file's tree is freed right after the scan.
    */
   syntaxErrors?: SyntaxError[];
+  /** The file's `!@qsp-ignore` comments, read from the text this state was built from. */
+  suppressions?: Suppressions;
 }
 
 // ──────────────────────────────────────────────────────────────────────

@@ -173,6 +173,16 @@ The server reads the files on disk: save files open in the editor before asking 
 - **Embedded `<<…>>` analysis** — interpolation bodies are parsed inline by the grammar; bodies corrupted by host doubled-quote escapes (e.g. `'<<f(''a'')>>'`) are decoded and re-parsed in a post-pass so diagnostics still fire
 - **Missing `result` in function call** — function-style call (`@loc`, `func`, or `dyneval` block) that never assigns `result`
 - **Extra args to target without `args`** — call passes extra positional arguments but the target location or inline code block never reads the `args` variable; the extras are silently discarded
+
+#### Ignoring a finding in the code
+When a finding is intended, silence it where it is with a QSP comment (the player ignores it). Checks are named by their code, the name of their `qsp.diagnostics.*` setting; after `:` you can name the variables, locations, labels, actions or objects it applies to (case and the `$`/`#`/`%` prefix don't matter):
+
+- `!@qsp-ignore uninitializedVariables: счёт` on a line of its own: the next line with code.
+- `*pl счёт & !@qsp-ignore uninitializedVariables` after `&`: this line.
+- `!@qsp-ignore-location unusedVariables`: the whole location it is in.
+- `!@qsp-ignore-file unresolvedLocationRefs: map`: the whole file.
+
+Several directives can be stacked above one line; blank lines and notes between them and the code are skipped. Without a check name, every check is silenced there. A misspelled check name is reported and silences nothing. Syntax errors and duplicate location names can't be silenced: the game and the build can't work with them. To turn a check off for the whole workspace, set `qsp.diagnostics.<code>` to `false`.
 - **Shadows call-frame built-in** — `local args` / `local result` is unnecessary: both are already per-call-frame variables, so the `local` keyword has no effect at a location's top level and merely hides the outer value inside a nested scope
 - **Shadows propagated local** — `local x` in a callee re-declares a name that one or more callers already propagate as a local
 

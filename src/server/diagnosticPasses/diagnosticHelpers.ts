@@ -15,6 +15,7 @@ import {
 } from 'vscode-languageserver';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import type { DiagnosticCode } from '../../common/diagnosticCodes';
+import { NO_SUPPRESSIONS, type Suppressions } from '../../common/suppressions';
 
 /** What a diagnostic is about, besides its text. */
 export interface DiagnosticInfo {
@@ -44,14 +45,19 @@ export class DiagnosticCtx {
   /** Keep errors only: a library's warnings are not the author's to fix. */
   private readonly errorsOnly: boolean;
 
+  /** The file's `!@qsp-ignore` comments. */
+  private readonly suppressions: Suppressions;
+
   constructor(
     doc: TextDocument | null,
     settings: import('../diagnostics').DiagnosticSettings,
     errorsOnly = false,
+    suppressions: Suppressions = NO_SUPPRESSIONS,
   ) {
     this.doc = doc;
     this.settings = settings;
     this.errorsOnly = errorsOnly;
+    this.suppressions = suppressions;
     this._diagnostics = [];
   }
 
@@ -110,6 +116,8 @@ export class DiagnosticCtx {
 
   push(severity: DiagnosticSeverity, range: Range, message: string, info: DiagnosticInfo): void {
     if (this.errorsOnly && severity !== DiagnosticSeverity.Error) return;
+    // Before the maxPerFile cut, so the note counts only what is really hidden by it.
+    if (this.suppressions.isSuppressed(info.code, info.name, range.start.line)) return;
     const d: Diagnostic = { severity, range, message, source: 'qsp', code: info.code };
     if (info.name !== undefined) d.data = { name: info.name };
     const tags: DiagnosticTag[] = [];
