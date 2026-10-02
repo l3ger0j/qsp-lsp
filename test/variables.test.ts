@@ -4038,6 +4038,19 @@ end
     // both x's are read locally → neither is unused
     expect(diags.filter(d => d.varName === 'x' && d.locName === 'main')).toHaveLength(0);
   });
+
+  it('a write in a code block run by a callee through a nested local holder is not unused', () => {
+    // B runs A's `$code`, which writes A's local x; the holder sits in an
+    // `if`, where it was matched to the propagated symbol by the wrong
+    // scope numbering and the write looked unread.
+    const unused = (code: string) => diagnosticsMatching(
+      runDiagnostics(parser, code, { unusedVariables: true }),
+      'assigned but never read',
+    );
+    const callee = "# B\ndynamic $code\n---\n";
+    expect(unused("# A\nlocal x = 0\nlocal $code = { x = 123 }\ngs 'B'\n*pl x\n---\n" + callee)).toHaveLength(0);
+    expect(unused("# A\nlocal x = 0\nif args[0] = 1:\n  local $code = { x = 123 }\n  gs 'B'\nend\n*pl x\n---\n" + callee)).toHaveLength(0);
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────

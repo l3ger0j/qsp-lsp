@@ -31,6 +31,7 @@ import { ARGS_VAR_NAME, RESULT_VAR_NAME, CALL_FRAME_BUILTINS } from '../parser';
 import type { DocumentSymbols, VariableBinding } from '../parser/symbolTable';
 import type { SymbolLocation } from '../parser/symbolTypes';
 import { heartbeat } from './perfLog';
+import { bindingsOfLocal } from '../parser/variableBindings';
 
 /**
  * Project-wide aggregated data from all files.
@@ -850,14 +851,13 @@ export function buildPropagatedLocals(
           providerInfo.locSyms.variableBindings.get(varBase);
         if (!providerBindings || providerBindings.length === 0) continue;
 
-        for (const pb of providerBindings) {
+        // A local holder: only the bindings of the propagated symbol; one
+        // in another scope is shadowed or unrelated.
+        const holderBindings = codeProvider.sym.isLocal
+          ? bindingsOfLocal(providerBindings, codeProvider.sym)
+          : providerBindings.filter(b => !b.isLocal);
+        for (const pb of holderBindings) {
           if (pb.value.kind !== 'code-block') continue;
-          // Match the binding to the propagated QspSymbol: a local
-          // binding at a different scope is shadowed / unrelated.
-          if (pb.isLocal) {
-            const symScope = codeProvider.sym.scopeId ?? 0;
-            if (pb.scopeKey !== symScope) continue;
-          }
           const writes = pb.value.bodyWrites;
           if (!writes || writes.length === 0) continue;
 

@@ -1152,6 +1152,51 @@ dynamic $code
       && e.binding.value.kind === 'expr'
       && /\b77\b/.test(e.binding.stmtText))).toBe(true);
   });
+
+  it('propagated-local $code declared in a nested block flows inner writes back', () => {
+    // As above, with the holder declared inside an `if`: the provider's
+    // binding must be matched to the propagated symbol in that block too,
+    // not only at the location's top level.
+    const src = `# A
+local x = 0
+if args[0] = 1:
+  local $code = { x = 123 }
+  gs 'B'
+end
+---
+# B
+dynamic $code
+---
+`;
+    const { symbols } = parseAndExtract(parser, src, 'test://pl5');
+    const agg = aggFor(symbols, 'test://pl5');
+    const sym = localSymOf(symbols, 'A', 'x');
+    const ext = agg.externalLocalBindings.get(sym) ?? [];
+    expect(ext.some(e => e.sourceLoc === 'b' && /\b123\b/.test(e.binding.stmtText))).toBe(true);
+  });
+
+  it('propagated-local $code shadowed in a nested block: only the visible holder\'s writes flow back', () => {
+    // The `gs` sees the inner `local $code`; the outer one is shadowed
+    // there, so its body's write must not reach x.
+    const src = `# A
+local x = 0
+local $code = { x = 1 }
+if args[0] = 1:
+  local $code = { x = 2 }
+  gs 'B'
+end
+---
+# B
+dynamic $code
+---
+`;
+    const { symbols } = parseAndExtract(parser, src, 'test://pl6');
+    const agg = aggFor(symbols, 'test://pl6');
+    const sym = localSymOf(symbols, 'A', 'x');
+    const values = (agg.externalLocalBindings.get(sym) ?? []).filter(e => e.sourceLoc === 'b').map(e => e.binding.stmtText);
+    expect(values.some(t => /\b2\b/.test(t))).toBe(true);
+    expect(values.some(t => /\b1\b/.test(t))).toBe(false);
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────

@@ -225,6 +225,22 @@ export function collectUnresolvedChainTails(
 }
 
 /**
+ * The bindings of `bindings` (one variable's, in one location) that belong
+ * to the local symbol `sym`: those in the scope of its `local` declaration,
+ * found by the declaration's own binding. Needs no tree, unlike
+ * {@link resolveBindingsAt}; empty when the declaration has no binding.
+ */
+export function bindingsOfLocal(bindings: readonly VariableBinding[] | undefined, sym: QspSymbol): VariableBinding[] {
+  const def = sym.definition;
+  if (!bindings || !def) return [];
+  const declaration = bindings.find(b => b.isLocal
+    && b.stmtLoc.line === def.line && b.stmtLoc.column <= def.column
+    && (b.stmtLoc.endLine > def.line || (b.stmtLoc.endLine === def.line && b.stmtLoc.endColumn >= def.column)));
+  if (!declaration) return [];
+  return bindings.filter(b => b.isLocal && b.scopeKey === declaration.scopeKey);
+}
+
+/**
  * All bindings of `canonicalKey` visible from `atNode`, with `var-ref`
  * chains followed to their terminal (non-var-ref) values.
  *
@@ -702,43 +718,19 @@ export function getPossibleValuesAtCursor(
   //
   //     Skipped unless hoverMode — diagnostics never render the
   //     fallback bindings directly.
-  if (hoverMode && sym?.isLocal && sym.definition) {
-    const defLine = sym.definition.line;
-    const defCol = sym.definition.column;
-    let anchor: number | undefined;
-    {
-      const bindings = ownLocSyms.variableBindings.get(sym.nameLower);
-      if (bindings) {
-        for (const b of bindings) {
-          if (!b.isLocal) continue;
-          if (b.stmtLoc.line !== defLine) continue;
-          if (b.stmtLoc.column > defCol) continue;
-          if (b.stmtLoc.endLine < defLine) continue;
-          if (b.stmtLoc.endLine === defLine && b.stmtLoc.endColumn < defCol) continue;
-          anchor = b.scopeKey;
-          break;
-        }
-      }
-    }
-    if (anchor !== undefined) {
-      const bindings = ownLocSyms.variableBindings.get(sym.nameLower);
-      if (bindings) {
-        for (const b of bindings) {
-          if (!b.isLocal) continue;
-          if (b.scopeKey !== anchor) continue;
-          // Skip bare var-ref edges — they are not terminal values
-          // and `resolveBindingsAt` (step 1) already handles chain
-          // traversal for non-shadow cases.  Surfacing them here as
-          // "values" produces noisy output like "→ `x`" in hover.
-          if (b.value.kind === 'var-ref') continue;
-          push({
-            binding: b,
-            locationName: ownLocSyms.locationName,
-            uri: docSyms.uri,
-            origin: 'scope',
-          });
-        }
-      }
+  if (hoverMode && sym?.isLocal) {
+    for (const b of bindingsOfLocal(ownLocSyms.variableBindings.get(sym.nameLower), sym)) {
+      // Skip bare var-ref edges — they are not terminal values
+      // and `resolveBindingsAt` (step 1) already handles chain
+      // traversal for non-shadow cases.  Surfacing them here as
+      // "values" produces noisy output like "→ `x`" in hover.
+      if (b.value.kind === 'var-ref') continue;
+      push({
+        binding: b,
+        locationName: ownLocSyms.locationName,
+        uri: docSyms.uri,
+        origin: 'scope',
+      });
     }
   }
 
