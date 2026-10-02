@@ -17,12 +17,13 @@
 
 
 import type Parser from 'web-tree-sitter';
-import { DocumentSymbols } from './symbolTable';
+import { DocumentSymbols, type LocationSymbols } from './symbolTable';
 import { nodeLoc } from './walkHelpers';
 import { hasStructuralErrors } from './extractErrors';
 import { walkLocationBody } from './symbolWalker';
 import { extractEmbeddedExec } from './embeddedExec';
 import { extractEmbeddedInterpolations } from './embeddedInterpolation';
+import { scopePathOf } from './scopeUtils';
 
 // Re-export for backward compatibility.
 export { isVariableDefinition } from './variableUtils';
@@ -65,6 +66,7 @@ export function extractSymbols(
     return undefined;
   };
 
+  const walked: Array<[Parser.SyntaxNode, LocationSymbols]> = [];
   const rootChildCount = root.namedChildCount;
   for (let i = 0; i < rootChildCount; i++) {
     const locBlock = root.namedChild(i);
@@ -98,11 +100,29 @@ export function extractSymbols(
     const locSymbols = symbols.addLocation(locName, locLoc);
     locSymbols.hasErrors = hasStructuralErrors(locBlock);
     walkLocationBody(locBlock, locSymbols, docUri);
+    walked.push([locBlock, locSymbols]);
   }
 
   extractEmbeddedExec(tree, docUri, symbols, parseFn, reusedLocations);
   extractEmbeddedInterpolations(tree, docUri, symbols, parseFn, reusedLocations);
+  // After the embedded passes, whose references sit in the host's strings.
+  for (const [locBlock, locSymbols] of walked) recordCheckScopes(locBlock, locSymbols);
 
   symbols.rebuildGlobalBindings();
   return { symbols, reusedLocations };
+}
+
+// The scopes of the references the variable checks start from: a
+// variable's first reference and its first read. The checks then need no
+// tree, so a file gets the same warnings open or closed, parsed whole or
+// location by location, or read from the analysis cache.
+function recordCheckScopes(locBlock: Parser.SyntaxNode, locSymbols: LocationSymbols): void {
+  for (const sym of locSymbols.ownedVariables) {
+    const first = sym.references[0];
+    const firstRead = sym.references.find(r => r.isProperUsage);
+    for (const ref of [first, firstRead]) {
+      if (!ref || ref.scopePath) continue;
+      ref.scopePath = scopePathOf(locBlock.descendantForPosition({ row: ref.line, column: ref.column }), locBlock);
+    }
+  }
 }

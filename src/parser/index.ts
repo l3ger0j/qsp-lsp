@@ -13,6 +13,8 @@ export { findBlockKeywordRanges } from './blockKeywords';
 export type { KeywordRange } from './blockKeywords';
 export {
   getPossibleValuesAtCursor,
+  getPossibleValuesInScope,
+  cursorScopeAt,
   splitVarKey,
   parseVarStringArg,
   resolvePossibleValuesInDocument,
@@ -20,6 +22,7 @@ export {
 } from './variableBindings';
 export type {
   CursorValueEntry,
+  CursorScope,
   CursorValueOptions,
   PossibleValueEntry,
   TypePrefix,

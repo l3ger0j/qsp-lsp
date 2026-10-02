@@ -6,6 +6,7 @@
  */
 
 import type { TargetPattern } from './targetPattern';
+import type { ScopePath } from './scopeUtils';
 
 export interface SymbolLocation {
   /** URI of the document */
@@ -69,6 +70,12 @@ export interface SymbolLocation {
    * `uninitializedVariables`.
    */
   isProperUsage?: boolean;
+  /**
+   * The scopes around this reference, on the ones the variable checks
+   * start from (a variable's first reference and first read): they run
+   * on symbols whose tree is gone (`recordCheckScopes` in extractSymbols.ts).
+   */
+  scopePath?: ScopePath;
   /**
    * For `args` references: true iff this ref consumes a caller slot —
    * either a plain read or a compound-LHS read-then-write (the

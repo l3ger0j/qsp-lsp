@@ -7,7 +7,8 @@
  * - A cache may only make opening faster: what the editor shows must be the
  *   same with results read back from disk as with a fresh analysis, across
  *   files (cross-file references, duplicates), with Cyrillic names, exec:
- *   links, syntax errors of closed files and !@qsp-ignore comments.
+ *   links, syntax errors of closed files, !@qsp-ignore comments, and the
+ *   variable checks that need the scopes symbols keep for them.
  * - A file that changed is analysed again; the others still come from the cache.
  * - An unchanged project shows the diagnostics it had last time before the
  *   seconds-long aggregates; any change to its files means none are shown.
@@ -40,6 +41,16 @@ const FILES: Record<string, string> = {
     '# прихожая',
     '--- прихожая ---',
     '',
+    // A read whose value comes through `б = а` from a never assigned
+    // `а`: found only with the scopes symbols keep for the checks.
+    '# начало',
+    'б = а',
+    '--- начало ---',
+    '',
+    '# конец',
+    '*pl б',
+    '--- конец ---',
+    '',
   ].join('\n'),
   'broken.qsps': '# Сломано\nif x = 1\n  *pl 1\n--- Сломано ---\n',
 };
@@ -66,6 +77,9 @@ describe('analysis cache', () => {
       }
       const fresh = await analyse(dir);
       expect(fresh.diagnostics.flatMap(([, l]) => l).length).toBeGreaterThan(3);
+      const kitchen = fresh.diagnostics.find(([file]) => file === 'rooms/kitchen.qsps')![1];
+      const readLine = FILES['rooms/kitchen.qsps'].split('\n').indexOf('*pl б');
+      expect(kitchen.some(d => d.code === 'uninitializedVariables' && d.range.start.line === readLine)).toBe(true);
       expect(fresh.cacheLine).toBeUndefined();
 
       const cold = await analyse(dir, cacheDir);

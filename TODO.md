@@ -118,7 +118,10 @@ are asked for, the visible lines through a range request, the rest by the
 full request a slice at a time. A 12.8 M-character file shows diagnostics
 after 3.1 s instead of 23 s; its full tokens take 6.9 s in slices after
 the project load. Trees that large locations keep for incremental edits
-are freed after five minutes without use.
+are freed after five minutes without use. Symbols no longer depend on the
+tree they came from: scopes are keyed by position, and the variable checks
+run on scope paths recorded at extraction, so every file gets the same
+warnings open or closed.
 
 Still, a file is analysed one of three ways: the project scan (closed
 files), the editor's whole-file parse (open, under 500 KB) and the editor's

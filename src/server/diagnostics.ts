@@ -138,9 +138,6 @@ export function computeDiagnostics(
   const { definedActions, definedObjects, referencedObjects } = agg;
   const isProject = !!projectAgg;
 
-  // Tree shared by variable dataflow passes (fetched once).
-  const tree = (tsParser.isReady ? tsParser.getTree(docUri) : null) ?? undefined;
-
   // ── Per-location: symbol def/ref diagnostics ────────────────────
   for (const [, locSyms] of symbols.locations) {
     if (locSyms.hasErrors) continue;
@@ -152,7 +149,7 @@ export function computeDiagnostics(
   }
 
   // ── Variable dataflow diagnostics ────────────────────────────────
-  checkVariables(ctx, symbols, agg, docUri, tree, projectDocs);
+  checkVariables(ctx, symbols, agg, docUri, projectDocs);
 
   // ── Dynamic/dyneval call diagnostics ────────────────────────────
   checkDynamicCalls(ctx, symbols);

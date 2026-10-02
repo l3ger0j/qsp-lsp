@@ -8,7 +8,6 @@
 
 
 import { DiagnosticSeverity } from 'vscode-languageserver';
-import type Parser from 'web-tree-sitter';
 import {
   type DocumentSymbols,
   type LocationSymbols,
@@ -16,7 +15,8 @@ import {
   QSP_VARIABLES,
   type TypePrefix,
   type CursorValueEntry,
-  getPossibleValuesAtCursor,
+  type CursorValueOptions,
+  getPossibleValuesInScope,
   ARGS_VAR_NAME,
   CALL_FRAME_BUILTINS,
 } from '../../parser';
@@ -49,41 +49,24 @@ const ASSIGN_TYPE_RULES: Record<TypePrefix, Record<string, readonly TypePrefix[]
   '#': { '=': ['#'], 'other': ['#'], '+=': ['#'], '-=': ['#'], '*=': ['#'], '/=': ['#'] },
 };
 
-// ── Shared resolver cache ─────────────────────────────────────────────
+// ── Values at a recorded reference ────────────────────────────────────
 
-/**
- * Per-symbol memoised possible-values query.
- *
- * Anchored at the first proper-usage reference of a symbol — references
- * of one sym share a scope-island, so the result generalises to every
- * read of that sym.  Returns `null` when the sym has no proper-usage
- * reference (write-only — nothing to anchor on).
- */
-function buildResolverCache(
+// The values reaching `ref` of `locSyms`, at the scopes extraction recorded
+// there (see recordCheckScopes in extractSymbols.ts): the same whether the
+// file's tree is at hand or not. Undefined without recorded scopes
+// (regex-only symbols, which have no tree to record them from).
+function valuesAt(
   symbols: DocumentSymbols,
   agg: SymbolAggregates,
-  tree: Parser.Tree,
-  projectDocs?: DocumentSymbols[],
-): (sym: QspSymbol) => CursorValueEntry[] | null {
-  const cache = new WeakMap<QspSymbol, CursorValueEntry[] | null>();
-  const projectDocsArg = projectDocs && projectDocs.length > 0 ? projectDocs : undefined;
-
-  return (sym: QspSymbol): CursorValueEntry[] | null => {
-    const cached = cache.get(sym);
-    if (cached !== undefined) return cached;
-    const readRef = sym.references.find(r => r.isProperUsage);
-    if (!readRef) {
-      cache.set(sym, null);
-      return null;
-    }
-    const entries = getPossibleValuesAtCursor(
-      symbols, agg, tree,
-      readRef.line, readRef.column, sym.nameLower,
-      { projectDocs: projectDocsArg },
-    );
-    cache.set(sym, entries);
-    return entries;
-  };
+  locSyms: LocationSymbols,
+  ref: SymbolLocation | undefined,
+  nameLower: string,
+  options: CursorValueOptions,
+): CursorValueEntry[] | undefined {
+  if (!ref?.scopePath) return undefined;
+  return getPossibleValuesInScope(
+    symbols, agg, { location: locSyms, path: ref.scopePath }, ref.line, ref.column, nameLower, options,
+  );
 }
 
 // ── Uninitialized variables ───────────────────────────────────────────
@@ -105,17 +88,10 @@ export function checkUninitializedVariables(
   ctx: DiagnosticCtx,
   symbols: DocumentSymbols,
   agg: SymbolAggregates,
-  tree: Parser.Tree | undefined,
   projectDocs?: DocumentSymbols[],
 ): void {
   const { globallyValueDefined } = agg;
-  // Build the resolver-cache closure once per call: each sym is visited
-  // exactly once below, so the WeakMap memo never hits within this
-  // function — the cache exists only to fold the `firstProperUsageRef`
-  // anchor + null-write-only handling into a single reusable helper.
-  const resolverCache = tree
-    ? buildResolverCache(symbols, agg, tree, projectDocs)
-    : null;
+  const projectDocsArg = projectDocs && projectDocs.length > 0 ? projectDocs : undefined;
 
   for (const [, locSyms] of symbols.locations) {
     if (locSyms.hasErrors) continue;
@@ -129,26 +105,21 @@ export function checkUninitializedVariables(
         ?.get(sym.nameLower);
       if (providers && providers.some(p => p.sym.hasValueDefinition)) continue;
 
-      let hasValueBinding = false;
-      if (resolverCache) {
-        const entries = resolverCache(sym);
-        if (entries) {
-          // A compound-op binding (`x += 1`) is neither a proper read
-          // nor a proper write: it does not, on its own, prove the
-          // variable was previously assigned.  Require at least one
-          // plain (`=`) value-bearing binding to suppress the warning.
-          hasValueBinding = entries.some(
-            e => e.binding.isValueBearing === true && e.binding.compoundOp === undefined,
-          );
-        } else if (!sym.isLocal) {
-          // No proper-usage ref to anchor the resolver — fall back to
-          // project-wide set for globals assigned in another location.
-          hasValueBinding = globallyValueDefined.has(sym.nameLower);
-        }
-      } else {
-        // Tree unavailable (regex fallback) — flat name-existence check.
-        hasValueBinding = !sym.isLocal && globallyValueDefined.has(sym.nameLower);
-      }
+      // Anchored at the first read: references of one sym share a
+      // scope-island, so the result holds for every read of it.
+      const entries = valuesAt(
+        symbols, agg, locSyms, sym.references.find(r => r.isProperUsage), sym.nameLower,
+        { projectDocs: projectDocsArg },
+      );
+      const hasValueBinding = entries
+        // A compound-op binding (`x += 1`) is neither a proper read
+        // nor a proper write: it does not, on its own, prove the
+        // variable was previously assigned.  Require at least one
+        // plain (`=`) value-bearing binding to suppress the warning.
+        ? entries.some(e => e.binding.isValueBearing === true && e.binding.compoundOp === undefined)
+        // Never read (nothing to anchor on), or no scopes recorded: a
+        // global assigned anywhere in the project counts.
+        : !sym.isLocal && globallyValueDefined.has(sym.nameLower);
       if (hasValueBinding) continue;
 
       for (const ref of sym.references) {
@@ -177,7 +148,6 @@ export function checkMixedVariablePrefixes(
   ctx: DiagnosticCtx,
   symbols: DocumentSymbols,
   agg: SymbolAggregates,
-  tree: Parser.Tree | undefined,
   projectDocs?: DocumentSymbols[],
 ): void {
   const { globalPrefixes, propagatedLocals } = agg;
@@ -215,30 +185,23 @@ export function checkMixedVariablePrefixes(
         }
       }
 
-      if (tree) {
-        // Collect write-prefixes WITHOUT following var-ref chains to
-        // other base-named variables.  Chain-following would pull in
-        // prefixes from different variables.
-
-        // Scope-visible own-loc bindings (followChain:false).
-        const refForPrefix = sym.references[0];
-        const ownEntries = refForPrefix
-          ? getPossibleValuesAtCursor(
-              symbols, agg, tree,
-              refForPrefix.line, refForPrefix.column, sym.nameLower,
-              { projectDocs: projectDocsArg, followChain: false, includeDocumentGlobals: false },
-            )
-          : null;
-        if (ownEntries) {
-          for (const e of ownEntries) {
-            if (e.binding.writePrefix !== undefined) merged.add(e.binding.writePrefix);
-          }
+      // Collect write-prefixes WITHOUT following var-ref chains to
+      // other base-named variables.  Chain-following would pull in
+      // prefixes from different variables.
+      // Scope-visible own-loc bindings (followChain:false).
+      const ownEntries = valuesAt(
+        symbols, agg, locSyms, sym.references[0], sym.nameLower,
+        { projectDocs: projectDocsArg, followChain: false, includeDocumentGlobals: false },
+      );
+      if (ownEntries) {
+        for (const e of ownEntries) {
+          if (e.binding.writePrefix !== undefined) merged.add(e.binding.writePrefix);
         }
 
         // Cross-location globals: direct lookup by base name, no chain.
         for (const px of globalWritePrefixes(sym.nameLower)) merged.add(px);
       } else {
-        // Tree unavailable (regex fallback) — flat file-wide prefix union.
+        // No scopes recorded (regex-only symbols) — flat file-wide prefix union.
         const gp = globalPrefixes.get(sym.nameLower);
         if (gp) for (const px of gp.prefixes) merged.add(px);
       }
@@ -506,11 +469,10 @@ export function checkVariables(
   symbols: DocumentSymbols,
   agg: SymbolAggregates,
   docUri: string,
-  tree: Parser.Tree | undefined,
   projectDocs?: DocumentSymbols[],
 ): void {
-  if (ctx.settings.uninitializedVariables)  checkUninitializedVariables(ctx, symbols, agg, tree, projectDocs);
-  if (ctx.settings.mixedVariablePrefixes)   checkMixedVariablePrefixes(ctx, symbols, agg, tree, projectDocs);
+  if (ctx.settings.uninitializedVariables)  checkUninitializedVariables(ctx, symbols, agg, projectDocs);
+  if (ctx.settings.mixedVariablePrefixes)   checkMixedVariablePrefixes(ctx, symbols, agg, projectDocs);
   if (ctx.settings.typeMismatch)             checkTypeMismatch(ctx, symbols);
   if (ctx.settings.unusedVariables)          checkUnusedVariables(ctx, symbols, agg, docUri);
   if (ctx.settings.shadowsCallFrameBuiltin)  checkShadowsCallFrameBuiltin(ctx, symbols);

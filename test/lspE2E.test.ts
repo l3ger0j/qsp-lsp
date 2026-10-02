@@ -857,3 +857,57 @@ describe('LSP e2e: possible values of a nested local in a large file', () => {
     }
   }, 60_000);
 });
+
+// ──────────────────────────────────────────────────────────────────────
+// Variable checks don't depend on whether a file is open
+// ──────────────────────────────────────────────────────────────────────
+//
+// `uninitializedVariables` follows `б = а` to the never assigned `а` using
+// the scopes around the read. They used to come from the whole-file tree,
+// which only a small open file has: closed project files and large files
+// fell back to "`б` is assigned somewhere" and showed no warning.
+describe('LSP e2e: variable checks open and closed', () => {
+  const code = "# начало\nб = а\n--- начало ---\n# конец\n*pl б\n--- конец ---\n";
+  const readLine = 4;
+  const uninitialized = (p: PublishDiagnosticsParams) =>
+    p.diagnostics.filter(d => d.code === 'uninitializedVariables').map(d => d.range.start.line).sort();
+  let dir: string;
+  let h: Harness;
+  beforeAll(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qsp-var-checks-'));
+    fs.writeFileSync(path.join(dir, 'main.qsps'), code);
+    h = await startServer(null, dir);
+  });
+  afterAll(() => { h.shutdown(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('reports the same for a closed and an open file', async () => {
+    const uri = fsProvider.pathToUri(path.join(dir, 'main.qsps'));
+    const closed = uninitialized(await h.diagnosticsFor(uri));
+    expect(closed).toContain(readLine);
+
+    const opened = (async () => {
+      for (;;) {
+        const p = await h.nextDiagnosticsFor(uri);
+        if (p.diagnostics.length > 0) return p;
+      }
+    })();
+    h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text: code } });
+    expect(uninitialized(await opened)).toEqual(closed);
+  }, 30_000);
+
+  it('reports it in a large file parsed location by location', async () => {
+    const big = makeBigDocument('большой') + code.replace(/начало/g, 'старт').replace(/конец/g, 'финиш');
+    const file = path.join(dir, 'big.qsps');
+    fs.writeFileSync(file, big);
+    const uri = fsProvider.pathToUri(file);
+    const line = big.split('\n').indexOf('*pl б');
+    const parsed = (async () => {
+      for (;;) {
+        const p = await h.nextDiagnosticsFor(uri);
+        if (uninitialized(p).length > 0) return p;
+      }
+    })();
+    h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text: big } });
+    expect(uninitialized(await parsed)).toContain(line);
+  }, 60_000);
+});
