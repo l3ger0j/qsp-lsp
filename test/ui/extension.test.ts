@@ -248,4 +248,21 @@ suite('QSP extension', () => {
       await settings.update('game.promptPassword', undefined, vscode.ConfigurationTarget.Workspace);
     }
   });
+
+  test('the quick fix command turns a check off in the workspace settings', async () => {
+    const config = () => vscode.workspace.getConfiguration('qsp.diagnostics');
+    try {
+      // Not awaited: the command then waits on its "Undo" notification.
+      void vscode.commands.executeCommand('qsp.diagnostics.turnOff', 'unusedVariables');
+      await waitFor('the setting', () => config().inspect('unusedVariables')?.workspaceValue === false ? true : undefined);
+      void vscode.commands.executeCommand('qsp.diagnostics.turnOff', 'maxLocationLines');
+      await waitFor('the numeric setting', () => config().inspect('maxLocationLines')?.workspaceValue === 0 ? true : undefined);
+      void vscode.commands.executeCommand('qsp.diagnostics.turnOff', 'notACheck');
+      await new Promise(r => setTimeout(r, 300));
+      assert.strictEqual(config().inspect('notACheck')?.workspaceValue, undefined);
+    } finally {
+      await config().update('unusedVariables', undefined, vscode.ConfigurationTarget.Workspace);
+      await config().update('maxLocationLines', undefined, vscode.ConfigurationTarget.Workspace);
+    }
+  });
 });

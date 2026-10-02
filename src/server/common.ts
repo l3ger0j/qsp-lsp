@@ -409,6 +409,7 @@ export function createQspServer(
         },
         codeActionProvider: {
           codeActionKinds: [
+            CodeActionKind.QuickFix,
             CodeActionKind.RefactorExtract,
             CodeActionKind.Refactor,
             CodeActionKind.Source,

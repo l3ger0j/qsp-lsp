@@ -28,6 +28,7 @@ import {
 } from './locationCommands';
 
 import { registerAnalysisStatus } from './analysisStatus';
+import { registerDiagnosticCommands } from './diagnosticCommands';
 import { registerLibrariesView } from './librariesView';
 import { registerLocationsView } from './locationsView';
 import { registerJumpGraph } from './jumpGraph';
@@ -53,6 +54,7 @@ export function registerExtensionFeatures(
   registerAnalysisStatus(context, client);
   registerLocationsView(context, client);
   registerLibrariesView(context);
+  registerDiagnosticCommands(context);
   registerJumpGraph(context, client);
 
   // ── Status bar: current location ────────────────────────────────────

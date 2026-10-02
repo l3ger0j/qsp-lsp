@@ -40,6 +40,7 @@ import {
   type MessageConnection,
 } from 'vscode-jsonrpc/node';
 import {
+  CodeActionRequest,
   ConfigurationRequest,
   DidOpenTextDocumentNotification,
   HoverRequest,
@@ -47,6 +48,7 @@ import {
   InitializedNotification,
   PublishDiagnosticsNotification,
   RegistrationRequest,
+  type CodeAction,
   type Hover,
   type InitializeParams,
   type PublishDiagnosticsParams,
@@ -459,4 +461,62 @@ describe('LSP e2e: anonymized location code for crash reports', () => {
     expect(result.names).toEqual({ var_0001: 'рецепт' });
     expect(await h.client.sendRequest('qsp/anonymizedLocation', { uri, name: 'нет такой' })).toBeNull();
   });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Quick fixes that silence a check
+// ──────────────────────────────────────────────────────────────────────
+//
+// On a QSP diagnostic the server offers to ignore it on its line or in
+// its location (a `!@qsp-ignore` comment), or to turn the check off (a
+// client command, since only the client can write settings).
+describe('LSP e2e: quick fixes that silence a check', () => {
+  let h: Harness;
+  beforeAll(async () => { h = await startServer(); });
+  afterAll(() => h.shutdown());
+
+  it('offers line, location and settings fixes, and the line fix silences the diagnostic', async () => {
+    const uri = 'file:///game/quickfix.qsps';
+    const text = '# Прихожая\n  *pl счёт\n---\n';
+    h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text } });
+    const { diagnostics } = await h.diagnosticsFor(uri);
+    const uninit = diagnostics.find(d => d.code === 'uninitializedVariables')!;
+    expect(uninit.data).toEqual({ name: 'счёт' });
+
+    const actions = await h.client.sendRequest(CodeActionRequest.type, {
+      textDocument: { uri }, range: uninit.range, context: { diagnostics: [uninit] },
+    }) as CodeAction[];
+    const fixes = actions.filter(a => a.kind === 'quickfix');
+    expect(fixes.map(a => a.title)).toEqual([
+      "Ignore 'uninitializedVariables' for 'счёт' on this line",
+      "Ignore 'uninitializedVariables' for 'счёт' in location 'Прихожая'",
+      "Turn off 'uninitializedVariables' checks in this workspace",
+    ]);
+    expect(fixes[0].edit!.changes![uri]).toEqual([{
+      range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } },
+      newText: '  !@qsp-ignore uninitializedVariables: счёт\n',
+    }]);
+    expect(fixes[1].edit!.changes![uri][0].range.start.line).toBe(1);
+    expect(fixes[2].command).toEqual({
+      title: "Turn off 'uninitializedVariables'", command: 'qsp.diagnostics.turnOff', arguments: ['uninitializedVariables'],
+    });
+
+    const fixedUri = 'file:///game/quickfix-fixed.qsps';
+    const fixed = '# Прихожая\n  !@qsp-ignore uninitializedVariables: счёт\n  *pl счёт\n---\n';
+    h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri: fixedUri, languageId: 'qsp', version: 1, text: fixed } });
+    const after = await h.diagnosticsFor(fixedUri);
+    expect(after.diagnostics.filter(d => d.code === 'uninitializedVariables')).toEqual([]);
+  }, 30_000);
+
+  it('offers nothing that would hide a syntax error', async () => {
+    const uri = 'file:///game/quickfix-syntax.qsps';
+    h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text: '# a\nif x = 1\n---\n' } });
+    const { diagnostics } = await h.diagnosticsFor(uri);
+    const syntax = diagnostics.filter(d => d.code === 'syntax');
+    expect(syntax.length).toBeGreaterThan(0);
+    const actions = await h.client.sendRequest(CodeActionRequest.type, {
+      textDocument: { uri }, range: syntax[0].range, context: { diagnostics: syntax },
+    }) as CodeAction[];
+    expect(actions.filter(a => a.kind === 'quickfix')).toEqual([]);
+  }, 30_000);
 });

@@ -45,10 +45,12 @@ import type {
   SymbolAggregates,
 } from './aggregation';
 import { buildFileAggregates } from './aggregation';
+import { buildLocationIndex } from '../common/locations';
 import { buildSemanticTokens } from './semanticTokens';
 import { formatLines, getWordInfo, inferIndentLevel, startsWithKeyword, uriBasename as basename } from './helpers';
 import { locationNameCol } from './regexFallback';
 import { perLocationCacheKeys } from './serverUtils';
+import { buildSuppressionActions } from './suppressionActions';
 import {
   detectEol,
   buildExtractToLocationEdit,
@@ -753,6 +755,11 @@ export function registerLspFeatures(ctx: ServerContext): void {
     if (!doc) return [];
     const range = params.range;
     const actions: CodeAction[] = [];
+    const quickFixState = documentStates.get(params.textDocument.uri);
+    actions.push(...buildSuppressionActions(
+      doc, params.context.diagnostics,
+      quickFixState?.locationIndex ?? buildLocationIndex(doc.getText()), detectEol(doc),
+    ));
     const hasSelection = range.start.line !== range.end.line || range.start.character !== range.end.character;
 
     if (hasSelection) {

@@ -183,6 +183,8 @@ When a finding is intended, silence it where it is with a QSP comment (the playe
 - `!@qsp-ignore-file unresolvedLocationRefs: map`: the whole file.
 
 Several directives can be stacked above one line; blank lines and notes between them and the code are skipped. Without a check name, every check is silenced there. A misspelled check name is reported and silences nothing. Syntax errors and duplicate location names can't be silenced: the game and the build can't work with them. To turn a check off for the whole workspace, set `qsp.diagnostics.<code>` to `false`.
+
+The quick fix menu (**Ctrl+.** or the light bulb) on a diagnostic writes these comments for you: **Ignore … on this line**, **Ignore … in location …**, or **Turn off … checks in this workspace**, which sets the setting in `.vscode/settings.json` and offers **Undo**.
 - **Shadows call-frame built-in** — `local args` / `local result` is unnecessary: both are already per-call-frame variables, so the `local` keyword has no effect at a location's top level and merely hides the outer value inside a nested scope
 - **Shadows propagated local** — `local x` in a callee re-declares a name that one or more callers already propagate as a local
 

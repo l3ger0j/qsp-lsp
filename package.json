@@ -204,6 +204,11 @@
         "category": "QSP"
       },
       {
+        "command": "qsp.diagnostics.turnOff",
+        "title": "Turn Off a Diagnostic Check",
+        "category": "QSP"
+      },
+      {
         "command": "qsp.libraries.refresh",
         "title": "Reload Catalogs",
         "category": "QSP Libraries",
@@ -482,6 +487,10 @@
         },
         {
           "command": "qsp.locations.groupFlat",
+          "when": "false"
+        },
+        {
+          "command": "qsp.diagnostics.turnOff",
           "when": "false"
         },
         {
