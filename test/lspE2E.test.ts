@@ -30,6 +30,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { PassThrough } from 'stream';
 import { createConnection, TextDocuments } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
@@ -54,11 +56,16 @@ import {
   type PublishDiagnosticsParams,
 } from 'vscode-languageserver-protocol';
 import { createQspServer } from '../src/server/common';
+import { fsProvider } from '../src/server/nodeHost';
 import { WASM_PATH } from './testHelpers';
 
 interface Harness {
   client: MessageConnection;
   diagnosticsFor: (uri: string) => Promise<PublishDiagnosticsParams>;
+  /** The next diagnostics published for `uri`, ignoring any already received. */
+  nextDiagnosticsFor: (uri: string) => Promise<PublishDiagnosticsParams>;
+  /** The server's log lines so far. */
+  logs: string[];
   shutdown: () => void;
 }
 
@@ -70,6 +77,8 @@ interface Harness {
  */
 async function startServer(
   qspConfig: Record<string, unknown> | null = null,
+  // A folder on disk makes it a project: the server reads its files itself.
+  workspaceDir?: string,
 ): Promise<Harness> {
   const c2s = new PassThrough();
   const s2c = new PassThrough();
@@ -85,8 +94,10 @@ async function startServer(
     async () => fs.readFileSync(WASM_PATH),
     // Omit wasmDir: TreeSitter.init() with no `locateFile` resolves
     // its runtime via the Node.js module loader, which works in tests.
-    // No fsProvider → project mode disabled, which is what we want
-    // (the regression is in single-file/per-location mode).
+    // No fsProvider (unless a workspace is given) → no project files,
+    // which is what most tests here want.
+    undefined,
+    workspaceDir ? fsProvider : undefined,
   );
 
   const client = createMessageConnection(
@@ -114,7 +125,12 @@ async function startServer(
   // Bucket diagnostics by URI so tests can wait for analysis to complete.
   const diagnosticBuckets = new Map<string, PublishDiagnosticsParams>();
   const diagnosticWaiters = new Map<string, ((p: PublishDiagnosticsParams) => void)[]>();
+  const nextWaiters = new Map<string, ((p: PublishDiagnosticsParams) => void)[]>();
+  const logs: string[] = [];
+  client.onNotification('window/logMessage', (p: { message: string }) => { logs.push(p.message); });
   client.onNotification(PublishDiagnosticsNotification.type, (params) => {
+    const next = nextWaiters.get(params.uri);
+    if (next) { nextWaiters.delete(params.uri); for (const w of next) w(params); }
     diagnosticBuckets.set(params.uri, params);
     const waiters = diagnosticWaiters.get(params.uri);
     if (waiters) {
@@ -125,11 +141,12 @@ async function startServer(
 
   client.listen();
 
+  const folderUri = workspaceDir ? fsProvider.pathToUri(workspaceDir) : null;
   await client.sendRequest(InitializeRequest.type, {
     processId: process.pid,
-    rootUri: null,
+    rootUri: folderUri,
     capabilities: {},
-    workspaceFolders: null,
+    workspaceFolders: folderUri ? [{ uri: folderUri, name: 'game' }] : null,
   } as InitializeParams);
   client.sendNotification(InitializedNotification.type, {});
 
@@ -142,6 +159,12 @@ async function startServer(
       arr.push(resolve);
       diagnosticWaiters.set(uri, arr);
     }),
+    nextDiagnosticsFor: (uri) => new Promise((resolve) => {
+      const arr = nextWaiters.get(uri) ?? [];
+      arr.push(resolve);
+      nextWaiters.set(uri, arr);
+    }),
+    logs,
     shutdown: () => {
       client.dispose();
       c2s.destroy();
@@ -519,4 +542,39 @@ describe('LSP e2e: quick fixes that silence a check', () => {
     }) as CodeAction[];
     expect(actions.filter(a => a.kind === 'quickfix')).toEqual([]);
   }, 30_000);
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Syntax errors of a large open file in a project
+// ──────────────────────────────────────────────────────────────────────
+//
+// A file past the per-location threshold has no whole-file tree, and the
+// project re-diagnosis read syntax errors only from one: a large open file
+// in a project showed none at all.
+describe('LSP e2e: syntax errors of a large open project file', () => {
+  let h: Harness;
+  let dir: string;
+  beforeAll(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qsp-big-syntax-'));
+    fs.writeFileSync(path.join(dir, 'main.qsps'), "# Прихожая\ngs 'Ошибка'\n--- Прихожая ---\n");
+    h = await startServer(null, dir);
+  });
+  afterAll(() => { h.shutdown(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('reports them after the project re-diagnoses', async () => {
+    const text = makeBigDocument('большой') + '# Ошибка\nif x = 1\n--- Ошибка ---\n';
+    const file = path.join(dir, 'big.qsps');
+    fs.writeFileSync(file, text);
+    const uri = fsProvider.pathToUri(file);
+    const withSyntax = (async () => {
+      for (;;) {
+        const p = await h.nextDiagnosticsFor(uri);
+        const syntax = p.diagnostics.filter(d => d.code === 'syntax');
+        if (syntax.length > 0) return syntax;
+      }
+    })();
+    h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text } });
+    const syntax = await withSyntax;
+    expect(syntax[0].range.start.line).toBeGreaterThan(4000);
+  }, 60_000);
 });

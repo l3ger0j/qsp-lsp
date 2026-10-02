@@ -72,6 +72,16 @@ function yieldToEventLoop(): Promise<void> {
 
 // ──────────────────────────────────────────────────────────────────────
 
+/**
+ * The syntax errors to diagnose a file with, when they don't come from its
+ * tree: an open file parsed whole keeps its tree, so undefined (the
+ * diagnostics read it); one parsed location by location, or a closed file,
+ * has none and keeps its errors on the state.
+ */
+export function syntaxErrorsFor(state: DocumentState, open: boolean): SyntaxError[] | undefined {
+  return open && !state.perLocationCache ? undefined : state.syntaxErrors;
+}
+
 /** What the analysis cache keeps for a whole project: each file's diagnostics. */
 type StoredDiagnostics = Array<[uri: string, diagnostics: Diagnostic[]]>;
 
@@ -526,8 +536,7 @@ export class ProjectModeService {
         this.tsParser,
         callTypes,
         state.symbols,
-        // An open document's errors come from its tree; a closed one has none.
-        doc ? undefined : state.syntaxErrors,
+        syntaxErrorsFor(state, doc !== undefined),
         this.projectAggregates,
         undefined,
         collectPeerDocs(uri),

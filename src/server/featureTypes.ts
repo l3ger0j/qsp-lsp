@@ -71,9 +71,9 @@ export interface DocumentState {
    */
   positionsApproximate?: boolean;
   /**
-   * Syntax errors of a project file that is not open in the editor, found
-   * while the project scan parsed it. Open documents keep a tree instead;
-   * a closed file's tree is freed right after the scan.
+   * Syntax errors of a file that has no whole-file tree to read them from:
+   * a project file not open in the editor (its tree is freed right after
+   * the scan), or an open file parsed location by location.
    */
   syntaxErrors?: SyntaxError[];
   /** The file's `!@qsp-ignore` comments, read from the text this state was built from. */

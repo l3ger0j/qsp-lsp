@@ -34,7 +34,7 @@ import { type SymbolAggregates, buildFileAggregates, collectCallTypesPerTarget a
 import { computeDiagnostics, type DiagnosticSettings } from './diagnostics';
 import { registerLspFeatures, type DocumentState, type PerLocationParseResult } from './lspFeatures';
 import { stripBom, shiftErrors, makeLocSymLoc, perLocationCacheKeys, safeSendDiagnostics, safeConnectionCall, safeConsole, QSP_FILE_EXTENSIONS, type FsProvider } from './serverUtils';
-import { ProjectModeService } from './projectMode';
+import { ProjectModeService, syntaxErrorsFor } from './projectMode';
 import { AnalysisStatusReporter } from './analysisStatus';
 import { ANALYSIS_STATUS_MIN_BYTES } from '../common/analysisStatus';
 import { libraryFolderPrefixes } from '../common/libraryConfig';
@@ -641,7 +641,7 @@ export function createQspServer(
           otherDoc ?? null, uri, st.locationIndex,
           settings.diagnostics, tsParser,
           liveAgg.callTypesPerTarget ?? collectCallTypesPerTarget(documentStates),
-          st.symbols, undefined, liveAgg,
+          st.symbols, syntaxErrorsFor(st, otherDoc !== undefined), liveAgg,
           undefined,
           collectPeerDocs(documentStates, uri),
           st.suppressions,
@@ -1233,6 +1233,8 @@ export function createQspServer(
       perLocationCache: newCache,
       rawText: text,
       aggCache,
+      // No whole-file tree to read them from: project re-diagnoses need them here.
+      syntaxErrors: allErrors,
       suppressions: parseSuppressions(text, currentIndex),
     });
 
@@ -1371,6 +1373,8 @@ export function createQspServer(
       cachedSemanticTokens: undefined,   // rebuilt lazily on first request
       perLocationCache: newCache,
       rawText: text,
+      // No whole-file tree to read them from: project re-diagnoses need them here.
+      syntaxErrors: allErrors,
       suppressions: parseSuppressions(text, locationIndex),
     });
     // From here the file is in documentStates, so a report counts it there.

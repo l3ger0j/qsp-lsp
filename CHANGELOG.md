@@ -13,6 +13,7 @@
 - Files in `libs/` show errors only (no warnings about a library's unused locations or variables), and a duplicate location names the library it clashes with.
 
 ### Fixes
+- In a project, a large open file (past 500 KB, parsed location by location) showed no syntax errors at all, and closed files could lose theirs after an edit elsewhere.
 - A line starting with `--` between locations (an ASCII table, a divider) no longer breaks the highlighting and reports false syntax errors in the rest of that text: only a `#` header starts something there. Reported by Aleks Versus.
 
 ## 0.3.0
