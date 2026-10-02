@@ -46,6 +46,11 @@ export interface PerLocationParseResult {
    * location came from a stored analysis: opening the file parses nothing.
    */
   tokens?: Uint32Array;
+  /**
+   * Start and end lines, in pairs, of the blocks that fold, in the
+   * location's own coordinates; made with the tokens, undefined like them.
+   */
+  folds?: Uint32Array;
   tree?: Parser.Tree;
   /** When `tree` was last used (Date.now()); trees idle for long are dropped. */
   treeUsedAt?: number;
@@ -124,11 +129,14 @@ export interface ServerContext {
     gotoTargets?: ReadonlySet<string>,
     lines?: { start: number; end: number },
   ): SemanticTokens;
+  /** Fold ranges (start and end line) of a file parsed location by location, made for the locations that have none yet. */
+  buildFoldsFromCache(locationIndex: LocationEntry[], cache: Map<string, PerLocationParseResult>): Array<{ startLine: number; endLine: number }>;
   /**
-   * Make the missing location tokens of `uri` a slice at a time, so other
-   * requests are answered meanwhile; stops when `cancel` is requested.
+   * Make the missing tokens and fold ranges of `uri`'s locations a slice
+   * at a time, so other requests are answered meanwhile; stops when
+   * `cancel` is requested.
    */
-  prepareLocationTokens(uri: string, cancel: import('vscode-languageserver').CancellationToken): Promise<void>;
+  completeLocations(uri: string, cancel: import('vscode-languageserver').CancellationToken): Promise<void>;
 }
 
 // ──────────────────────────────────────────────────────────────────────

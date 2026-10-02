@@ -37,7 +37,7 @@ import { computeDiagnostics, type DiagnosticSettings } from './diagnostics';
 import { registerLspFeatures, type DocumentState, type PerLocationParseResult } from './lspFeatures';
 import { stripBom, shiftErrors, dropIdleTrees, makeLocSymLoc, perLocationCacheKeys, safeSendDiagnostics, safeConnectionCall, safeConsole, QSP_FILE_EXTENSIONS, type FsProvider } from './serverUtils';
 import { ProjectModeService, syntaxErrorsFor } from './projectMode';
-import { extractLocationSymbols } from './locationAnalysis';
+import { collectFoldLines, extractLocationSymbols } from './locationAnalysis';
 import { AnalysisStatusReporter } from './analysisStatus';
 import { ANALYSIS_STATUS_MIN_BYTES } from '../common/analysisStatus';
 import { libraryFolderPrefixes } from '../common/libraryConfig';
@@ -160,6 +160,25 @@ function buildTokensFromCache(
     }
   }
   return builder.build();
+}
+
+/** Fold ranges of the blocks in per-location caches; `foldsOf` makes those a location lacks. */
+function buildFoldsFromCache(
+  locationIndex: LocationEntry[],
+  cache: Map<string, PerLocationParseResult>,
+  foldsOf: (entry: PerLocationParseResult) => Uint32Array,
+): Array<{ startLine: number; endLine: number }> {
+  const ranges: Array<{ startLine: number; endLine: number }> = [];
+  const cacheKeys = perLocationCacheKeys(locationIndex);
+  for (const [i, loc] of locationIndex.entries()) {
+    const cached = cache.get(cacheKeys[i]);
+    if (!cached) continue;
+    const lines = foldsOf(cached);
+    for (let j = 0; j < lines.length; j += 2) {
+      ranges.push({ startLine: lines[j] + loc.startLine, endLine: lines[j + 1] + loc.startLine });
+    }
+  }
+  return ranges;
 }
 
 /**
@@ -940,26 +959,44 @@ export function createQspServer(
     return { symbols: state.symbols, syntaxErrors };
   }
 
-  // A location's semantic tokens, from a parse of its text the first time
-  // they are asked for. The tree isn't kept: the entry may already belong
-  // to a replaced state, whose trees nothing would free.
-  function locationTokens(entry: PerLocationParseResult): Uint32Array {
-    if (entry.tokens) return entry.tokens;
+  // A location's fold ranges and, with semantic highlighting on, its
+  // tokens, from a parse of its text the first time they are asked for.
+  // The tree isn't kept: the entry may already belong to a replaced state,
+  // whose trees nothing would free.
+  function completeLocation(entry: PerLocationParseResult): void {
+    const wantTokens = settings.semanticHighlighting.enabled && !entry.tokens;
+    if (entry.folds && !wantTokens) return;
     // Short of memory, or a parse that fails: none, and no retrying.
     const tree = tightOnMemory() ? null : perf.step('parse', () => tsParser.parseOnce(entry.text));
-    if (!tree) return (entry.tokens = new Uint32Array(0));
+    if (!tree) {
+      entry.folds ??= new Uint32Array(0);
+      entry.tokens ??= new Uint32Array(0);
+      return;
+    }
     try {
-      const embedParseFn = settings.embeddedExec.enabled ? (t: string) => tsParser.parseOnce(t) : undefined;
-      entry.tokens = perf.step('semantic tokens', () => Uint32Array.from(collectSemanticTokenTuples(tree, undefined, embedParseFn)));
+      entry.folds ??= perf.step('folding', () => Uint32Array.from(collectFoldLines(tree)));
+      if (wantTokens) {
+        const embedParseFn = settings.embeddedExec.enabled ? (t: string) => tsParser.parseOnce(t) : undefined;
+        entry.tokens = perf.step('semantic tokens', () => Uint32Array.from(collectSemanticTokenTuples(tree, undefined, embedParseFn)));
+      }
     } finally {
       tree.delete();
     }
-    return entry.tokens;
   }
 
-  const TOKEN_SLICE_MS = 20;
+  function locationTokens(entry: PerLocationParseResult): Uint32Array {
+    if (!entry.tokens) completeLocation(entry);
+    return entry.tokens ?? new Uint32Array(0);
+  }
 
-  async function prepareLocationTokens(uri: string, cancel: CancellationToken): Promise<void> {
+  function locationFolds(entry: PerLocationParseResult): Uint32Array {
+    if (!entry.folds) completeLocation(entry);
+    return entry.folds ?? new Uint32Array(0);
+  }
+
+  const SLICE_MS = 20;
+
+  async function completeLocations(uri: string, cancel: CancellationToken): Promise<void> {
     const cache = documentStates.get(uri)?.perLocationCache;
     if (!cache) return;
     let made = 0;
@@ -967,15 +1004,15 @@ export function createQspServer(
     let sliceStarted = started;
     for (const entry of [...cache.values()]) {
       if (cancel.isCancellationRequested || shuttingDown) return;
-      if (entry.tokens) continue;
-      locationTokens(entry);
+      if (entry.folds && (entry.tokens || !settings.semanticHighlighting.enabled)) continue;
+      completeLocation(entry);
       made++;
-      if (Date.now() - sliceStarted >= TOKEN_SLICE_MS) {
+      if (Date.now() - sliceStarted >= SLICE_MS) {
         await new Promise<void>((resolve) => afterPendingWrites(resolve));
         sliceStarted = Date.now();
       }
     }
-    if (made > 0) perf.note(`location tokens made · ${made} locations, ${Date.now() - started} ms`);
+    if (made > 0) perf.note(`locations completed · ${made} locations, ${Date.now() - started} ms`);
   }
 
   function releasePerLocationTrees(state: DocumentState | undefined): void {
@@ -1215,6 +1252,7 @@ export function createQspServer(
       // (TextMate still colours them).
       const tokens = tightOnMemory() ? new Uint32Array(0)
         : perf.step('semantic tokens', () => Uint32Array.from(collectSemanticTokenTuples(parsed, undefined, embedParseFn)));
+      const folds = perf.step('folding', () => Uint32Array.from(collectFoldLines(parsed)));
 
       keepTree = locText.length >= INCREMENTAL_LOC_THRESHOLD;
 
@@ -1224,6 +1262,7 @@ export function createQspServer(
         symbolsLine: 0,
         errors,
         tokens,
+        folds,
         tree: keepTree ? tree : undefined,
         treeUsedAt: keepTree ? Date.now() : undefined,
       };
@@ -1537,7 +1576,12 @@ export function createQspServer(
       () => buildTokensFromCache(locationIndex, cache, locationTokens, gotoTargets, lines),
       () => `${locationIndex.length} locations${lines ? `, lines ${lines.end - lines.start + 1}` : ''}`,
     ),
-    prepareLocationTokens,
+    buildFoldsFromCache: (locationIndex, cache) => perf.phase(
+      'folding ranges',
+      () => buildFoldsFromCache(locationIndex, cache, locationFolds),
+      () => `${locationIndex.length} locations`,
+    ),
+    completeLocations,
   });
 
   // ── Performance diagnostics ───────────────────────────────────────

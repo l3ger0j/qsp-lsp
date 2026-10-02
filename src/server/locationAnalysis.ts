@@ -46,3 +46,18 @@ export function extractLocationSymbols(
   }
   return found;
 }
+
+const FOLDABLE_TYPES = ['act_block', 'if_block', 'loop_block'];
+
+/** Start and end lines, in pairs, of the act, if and loop blocks of `tree` that span several lines. */
+export function collectFoldLines(tree: Parameters<typeof extractSymbols>[0]): number[] {
+  const lines: number[] = [];
+  // Searched inside tree-sitter: walking every node from JS cost as much
+  // as half the parse.
+  for (const node of tree.rootNode.descendantsOfType(FOLDABLE_TYPES)) {
+    const start = node.startPosition.row;
+    const end = node.endPosition.row;
+    if (end > start) lines.push(start, end);
+  }
+  return lines;
+}

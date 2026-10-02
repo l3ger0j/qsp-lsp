@@ -53,6 +53,7 @@ import { buildSemanticTokens } from './semanticTokens';
 import { formatLines, getWordInfo, inferIndentLevel, startsWithKeyword, uriBasename as basename } from './helpers';
 import { locationNameCol } from './regexFallback';
 import { perLocationCacheKeys } from './serverUtils';
+import { collectFoldLines } from './locationAnalysis';
 import { buildSuppressionActions } from './suppressionActions';
 import {
   detectEol,
@@ -739,7 +740,7 @@ export function registerLspFeatures(ctx: ServerContext): void {
     const uri = params.textDocument.uri;
     const before = documentStates.get(uri);
     if (before?.perLocationCache && !before.cachedSemanticTokens) {
-      await ctx.prepareLocationTokens(uri, cancel);
+      await ctx.completeLocations(uri, cancel);
       if (cancel.isCancellationRequested) return null;
     }
     const state = documentStates.get(uri);
@@ -852,11 +853,16 @@ export function registerLspFeatures(ctx: ServerContext): void {
 
   // ==================== FOLDING RANGES ====================
 
-  connection.onFoldingRanges((params: FoldingRangeParams): FoldingRange[] => {
-    const doc = documents.get(params.textDocument.uri);
+  connection.onFoldingRanges(async (params: FoldingRangeParams, cancel) => {
+    const uri = params.textDocument.uri;
+    if (documentStates.get(uri)?.perLocationCache) {
+      await ctx.completeLocations(uri, cancel);
+      if (cancel.isCancellationRequested) return null;
+    }
+    const doc = documents.get(uri);
     if (!doc) return [];
     const ranges: FoldingRange[] = [];
-    const state = documentStates.get(params.textDocument.uri);
+    const state = documentStates.get(uri);
 
     if (state) {
       for (const loc of state.locationIndex) {
@@ -866,31 +872,19 @@ export function registerLspFeatures(ctx: ServerContext): void {
       }
     }
 
-    const tree = tsParser.isReady ? tsParser.getTree(params.textDocument.uri) : null;
+    const tree = tsParser.isReady ? tsParser.getTree(uri) : null;
     const text = doc.getText();
     const lines = text.split(/\r?\n/);
 
-    if (tree) {
-      const FOLDABLE_TYPES = new Set(['act_block', 'if_block', 'loop_block']);
-      const cursor = tree.rootNode.walk();
-      let reachedRoot = false;
-      try {
-        do {
-          const node = cursor.currentNode;
-          if (FOLDABLE_TYPES.has(node.type)) {
-            const startLine = node.startPosition.row;
-            const endLine = node.endPosition.row;
-            if (endLine > startLine) ranges.push({ startLine, endLine, kind: FoldingRangeKind.Region });
-          }
-          if (cursor.gotoFirstChild()) continue;
-          if (cursor.gotoNextSibling()) continue;
-          while (!reachedRoot) {
-            if (!cursor.gotoParent()) { reachedRoot = true; break; }
-            if (cursor.gotoNextSibling()) break;
-          }
-        } while (!reachedRoot);
-      } finally {
-        cursor.delete();
+    const blocks = state?.perLocationCache
+      ? ctx.buildFoldsFromCache(state.locationIndex, state.perLocationCache)
+      : undefined;
+    if (blocks) {
+      for (const b of blocks) ranges.push({ ...b, kind: FoldingRangeKind.Region });
+    } else if (tree) {
+      const folds = collectFoldLines(tree);
+      for (let i = 0; i < folds.length; i += 2) {
+        ranges.push({ startLine: folds[i], endLine: folds[i + 1], kind: FoldingRangeKind.Region });
       }
     } else {
       const blockStack: { keyword: string; line: number }[] = [];

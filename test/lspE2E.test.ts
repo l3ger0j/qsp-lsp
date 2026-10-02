@@ -48,6 +48,7 @@ import {
   DidCloseTextDocumentNotification,
   DidOpenTextDocumentNotification,
   DocumentSymbolRequest,
+  FoldingRangeRequest,
   HoverRequest,
   InitializeRequest,
   InitializedNotification,
@@ -937,5 +938,57 @@ describe('LSP e2e: an action behind a syntax error in a large file', () => {
     } finally {
       h.shutdown();
     }
+  }, 60_000);
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Folding in a large file
+// ──────────────────────────────────────────────────────────────────────
+//
+// Without a whole-file tree, a large file's blocks were folded by
+// matching `act`/`if`/`loop` lines with `end` lines, which one-line
+// `if x: …` and `act '…': …` threw off. They now come from the
+// locations' own trees, as a small file's come from its tree.
+describe('LSP e2e: folding blocks of a large file', () => {
+  const room = [
+    '# комната',
+    "act 'взять':",
+    '  if x = 1: *pl 1',
+    '  if y = 2:',
+    "    act 'внутри': *pl 2",
+    '    *pl 3',
+    '  end',
+    'end',
+    'loop local i = 0 while i < 2 step i += 1:',
+    '  *pl i',
+    'end',
+    '--- комната ---',
+    '',
+  ].join('\n');
+
+  async function blockFolds(text: string, uri: string): Promise<string[]> {
+    const h = await startServer();
+    try {
+      h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text } });
+      await h.diagnosticsFor(uri);
+      for (;;) {
+        // The quick pass publishes before the parse; folding then still lacks the blocks.
+        const ranges = await h.client.sendRequest(FoldingRangeRequest.type, { textDocument: { uri } }) ?? [];
+        const start = text.split('\n').indexOf('# комната');
+        const inRoom = ranges
+          .filter(r => r.kind === 'region' && r.startLine > start)
+          .map(r => `${r.startLine - start}-${r.endLine - start}`).sort();
+        if (inRoom.length > 0) return inRoom;
+        await new Promise(r => setTimeout(r, 50));
+      }
+    } finally {
+      h.shutdown();
+    }
+  }
+
+  it('folds the same blocks as a small file with the same location', async () => {
+    const small = await blockFolds(room, 'file:///fold-small.qsps');
+    expect(small).toEqual(['1-7', '3-6', '8-10']);
+    expect(await blockFolds(makeBigDocument('большой') + room, 'file:///fold-big.qsps')).toEqual(small);
   }, 60_000);
 });
