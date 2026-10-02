@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### New
+- Opening a large file (past 500 KB) that was analysed before, by the project or in an earlier session, reuses that analysis and only parses it for highlighting (a 12.8 M-character file: 8.3 s instead of 23 s). A large file that stays open between sessions is stored in the cache too.
 - Closing a project file whose text is unchanged on disk keeps the editor's analysis of it instead of analysing it again (seconds for a large file).
 - **Analysis cache**: each project file's analysis is kept on disk (VS Code's workspace storage) and read back when the file hasn't changed, and an unchanged project shows the diagnostics it had last time at once, replacing them when the cross-file analysis has run, so a project opens much faster the second time (on a 20 MB game, diagnostics after 5.4 s instead of 36 s). `qsp.cache.enabled`, **QSP: Clear Analysis Cache**.
 - **QSP Libraries** view: install, update and remove libraries from `libraries.json` catalogs (`qsp.libraries.sources`), with checksums, requirements, and a check against the game's location names before anything is written ([LIBRARIES.md](LIBRARIES.md)).

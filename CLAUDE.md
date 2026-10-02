@@ -79,7 +79,7 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
    `test/performanceReport.test.ts`, `test/crashPackage.test.ts` and `test/anonymize.test.ts` checking that no
    name leaks. To reproduce a user's game, generate one of the same shape: `npm run stress:gen -- --shape report.json`.
 
-**Analysis cache** (`src/server/nodeCache.ts`, used by `projectMode.analyzeFileNow`)
+**Analysis cache** (`src/server/nodeCache.ts`, used by `projectMode.analyzeFileNow` and, for large open files, `analyzeAllLocations` in `common.ts`)
 ❌ Don't: leave out of a cache key anything the cached result depends on (text, URI, a setting that changes it),
    or let cache entries, their keys or the cache path reach `[perf]` lines, crash reports or zips: entries hold the game's text and names.
 ✅ Do: build keys with `AnalysisCache.key(...)` over every input; the analyser itself (server bundle, grammar) already salts

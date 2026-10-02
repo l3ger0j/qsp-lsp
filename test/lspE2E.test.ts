@@ -59,7 +59,7 @@ import {
 } from 'vscode-languageserver-protocol';
 import { createQspServer } from '../src/server/common';
 import { fsProvider } from '../src/server/nodeHost';
-import { nodeAnalysisCacheStore } from '../src/server/nodeCache';
+import { NodeAnalysisCache, analyserSalt, nodeAnalysisCacheStore } from '../src/server/nodeCache';
 import { WASM_PATH } from './testHelpers';
 
 interface Harness {
@@ -669,8 +669,9 @@ describe('LSP e2e: closing a project file', () => {
 //
 // A large file opened with the text the project scan analysed (kept in
 // memory) or an earlier session stored (on disk) is only parsed for its
-// trees and tokens; symbols and syntax errors are taken as they are.
-// Whatever the source, the diagnostics and the highlighting are the same.
+// trees and tokens; symbols and syntax errors are taken as they are. The
+// editor stores its own analysis of a file opened from scratch. Whatever
+// the source, the diagnostics and the highlighting are the same.
 describe('LSP e2e: opening a large file with a stored analysis', () => {
   const big = makeBigDocument('большой')
     + "# Ошибка\n*pl 'до ошибки'\nif x = 1\n--- Ошибка ---\n"
@@ -735,10 +736,32 @@ describe('LSP e2e: opening a large file with a stored analysis', () => {
     expect(fromDisk.tokens).toEqual(alone.tokens);
   }, 120_000);
 
+  it('stores the analysis of a file opened from scratch, equal to the project scan\'s', async () => {
+    const cache = path.join(root, 'cache-editor');
+    const first = await openBig(false, cache);
+    expect(extracted(first.perf)).toBe(true);
+    expect(first.perf).toContain('cache write');
+
+    const again = await openBig(false, cache);
+    expect(extracted(again.perf)).toBe(false);
+    expect(again.diagnostics).toEqual(first.diagnostics);
+    expect(again.tokens).toEqual(first.tokens);
+
+    // The same entry the project scan wrote in the test above.
+    const read = (dir: string) => {
+      const c = new NodeAnalysisCache(dir, { salt: analyserSalt([]) });
+      return c.get(c.key('file symbols', uri, 'exec', big));
+    };
+    const byEditor = read(cache);
+    expect(byEditor).toBeDefined();
+    expect(byEditor).toEqual(read(path.join(root, 'cache-project')));
+  }, 120_000);
+
   it('analyses a file with two locations of one name from scratch every time', async () => {
     const cache = path.join(root, 'cache-duplicates');
     const twice = big + "# ссылка\n*pl 'вторая'\n--- ссылка ---\n";
     const first = await openBig(false, cache, twice);
+    expect(first.perf).not.toContain('cache write');
     const again = await openBig(false, cache, twice);
     expect(extracted(again.perf)).toBe(true);
     expect(again.diagnostics).toEqual(first.diagnostics);

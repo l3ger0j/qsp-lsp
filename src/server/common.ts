@@ -1375,9 +1375,10 @@ export function createQspServer(
     // two locations share a name, so neither's cache entry (and its
     // retained tree, if any) is silently overwritten/leaked by the other.
     const cacheKeys = perLocationCacheKeys(locationIndex);
-    // Opened from scratch: the analysis may be stored already.
+    // Opened from scratch: the analysis may be stored already, or worth storing.
     const analysisKey = prevCache || text.length < PER_LOCATION_BYTE_THRESHOLD ? undefined : project.analysisKey(doc.uri, text);
     const stored = analysisKey ? perf.step('stored analysis', () => storedLocations(analysisKey, prevState, locationIndex)) : undefined;
+    let complete = true;
 
     for (const [i, loc] of locationIndex.entries()) {
       progress.parsedLocations = i;
@@ -1406,6 +1407,7 @@ export function createQspServer(
           shiftErrors(result.errors, loc.startLine, allErrors);
         } else {
           // Tree-sitter failed for this location — fall back to regex
+          complete = false;
           const locSymbols = symbols.addLocation(loc.name, locLoc);
           extractLocationSymbolsFromText(text, loc, locSymbols, doc.uri);
         }
@@ -1433,6 +1435,9 @@ export function createQspServer(
     // tryIncrementalPerLocationUpdate for rationale).
     perf.step('global bindings', () => symbols.rebuildGlobalBindings());
     progress.parsedLocations = locationIndex.length;
+    // A file that stays open never reaches the project scan, the one other writer.
+    const reusable = complete && symbols.locations.size === locationIndex.length;
+    if (analysisKey && !stored && reusable && !tightOnMemory()) project.storeAnalysis(analysisKey, symbols, allErrors);
 
     // Store state
     documentStates.set(doc.uri, {
