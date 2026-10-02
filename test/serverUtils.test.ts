@@ -16,7 +16,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ConnectionError, ConnectionErrors } from 'vscode-jsonrpc';
 import type { Connection } from 'vscode-languageserver';
-import { safeConsole, safeSendDiagnostics } from '../src/server/serverUtils';
+import { dropIdleTrees, safeConsole, safeSendDiagnostics } from '../src/server/serverUtils';
+import type { DocumentState, PerLocationParseResult } from '../src/server/featureTypes';
 
 function throwing(err: unknown): () => never {
   return () => { throw err; };
@@ -81,5 +82,30 @@ describe('safeSendDiagnostics', () => {
     const raw = { sendDiagnostics: spy } as unknown as Connection;
     safeSendDiagnostics(raw, params);
     expect(spy).toHaveBeenCalledWith(params);
+  });
+});
+
+// Trees kept for incremental edits of large locations hold WASM memory for
+// as long as the file is open; those nobody used for a while are freed,
+// and only those.
+describe('dropIdleTrees', () => {
+  const tree = () => ({ delete: vi.fn() });
+  const entry = (t: ReturnType<typeof tree> | undefined, usedAt?: number) =>
+    ({ text: '', symbolsLine: 0, errors: [], tree: t, treeUsedAt: usedAt }) as unknown as PerLocationParseResult;
+
+  it('frees trees idle for longer than the limit and keeps the rest', () => {
+    const idle = tree();
+    const recent = tree();
+    const cache = new Map([['старая', entry(idle, 1_000)], ['новая', entry(recent, 9_000)], ['без дерева', entry(undefined)]]);
+    const states = [{ perLocationCache: cache } as DocumentState, {} as DocumentState];
+
+    expect(dropIdleTrees(states, 10_000, 5_000)).toBe(1);
+    expect(idle.delete).toHaveBeenCalledOnce();
+    expect(cache.get('старая')!.tree).toBeUndefined();
+    expect(recent.delete).not.toHaveBeenCalled();
+    expect(cache.get('новая')!.tree).toBe(recent);
+
+    expect(dropIdleTrees(states, 10_000, 5_000)).toBe(0);
+    expect(idle.delete).toHaveBeenCalledOnce();
   });
 });

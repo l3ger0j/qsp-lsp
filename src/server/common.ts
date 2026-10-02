@@ -35,7 +35,7 @@ import {
 import { type SymbolAggregates, buildFileAggregates, collectCallTypesPerTarget as collectCallTypesPerTargetFromSymbols, isAggContributionStable } from './aggregation';
 import { computeDiagnostics, type DiagnosticSettings } from './diagnostics';
 import { registerLspFeatures, type DocumentState, type PerLocationParseResult } from './lspFeatures';
-import { stripBom, shiftErrors, makeLocSymLoc, perLocationCacheKeys, safeSendDiagnostics, safeConnectionCall, safeConsole, QSP_FILE_EXTENSIONS, type FsProvider } from './serverUtils';
+import { stripBom, shiftErrors, dropIdleTrees, makeLocSymLoc, perLocationCacheKeys, safeSendDiagnostics, safeConnectionCall, safeConsole, QSP_FILE_EXTENSIONS, type FsProvider } from './serverUtils';
 import { ProjectModeService, syntaxErrorsFor } from './projectMode';
 import { AnalysisStatusReporter } from './analysisStatus';
 import { ANALYSIS_STATUS_MIN_BYTES } from '../common/analysisStatus';
@@ -752,6 +752,15 @@ export function createQspServer(
     }, DEBOUNCE_TREE_MS));
   });
 
+  // Trees that large locations keep for edits go when nobody used them for a while.
+  const TREE_IDLE_MS = 5 * 60_000;
+  const treeSweep = setInterval(() => {
+    const dropped = dropIdleTrees(documentStates.values(), Date.now(), TREE_IDLE_MS);
+    if (dropped > 0) perf.note(`idle trees dropped · ${dropped}`);
+  }, 60_000);
+  // Node only: the sweep alone mustn't keep a process (tests, the MCP server) running.
+  (treeSweep as { unref?: () => void }).unref?.();
+
   // After shutdown only `exit` may arrive, so pending debounce timers must not
   // fire into a disposed parser. Freeing WASM memory matters for hosts that
   // keep the process alive (tests, embedders).
@@ -761,6 +770,7 @@ export function createQspServer(
     // client doesn't report it as a crash.
     if (host.recorder?.active) await host.recorder.stop().catch(() => []);
     status.stop();
+    clearInterval(treeSweep);
     for (const t of fastTimers.values()) clearTimeout(t);
     for (const t of treeTimers.values()) clearTimeout(t);
     fastTimers.clear();
@@ -1228,6 +1238,7 @@ export function createQspServer(
         errors,
         tokens,
         tree: keepTree ? tree : undefined,
+        treeUsedAt: keepTree ? Date.now() : undefined,
       };
     } finally {
       // keepTree is only set once the result is built, so a throw frees the tree too.

@@ -624,7 +624,7 @@ export function registerLspFeatures(ctx: ServerContext): void {
                 // FIRST of two same-named locations' cached tree.
                 const cacheKey = perLocationCacheKeys(state.locationIndex)[state.locationIndex.indexOf(currentLoc)];
                 const cached = state.perLocationCache.get(cacheKey);
-                if (cached?.tree) { tree = cached.tree; lineOffset = currentLoc.startLine; }
+                if (cached?.tree) { tree = cached.tree; cached.treeUsedAt = Date.now(); lineOffset = currentLoc.startLine; }
                 else {
                   const locText = state.rawText?.slice(currentLoc.startOffset, currentLoc.endOffset);
                   if (locText) { tree = ctx.tsParser.parseOnce(locText); lineOffset = currentLoc.startLine; tempTree = true; }
@@ -946,7 +946,7 @@ export function registerLspFeatures(ctx: ServerContext): void {
         // same-named locations' cached tree).
         const cacheKey = perLocationCacheKeys(state.locationIndex)[state.locationIndex.indexOf(loc)];
         const cached = state.perLocationCache.get(cacheKey);
-        if (cached?.tree) { tree = cached.tree; lineOffset = loc.startLine; }
+        if (cached?.tree) { tree = cached.tree; cached.treeUsedAt = Date.now(); lineOffset = loc.startLine; }
         else {
           const locText = state.rawText?.slice(loc.startOffset, loc.endOffset);
           if (locText) { tree = tsParser.parseOnce(locText); lineOffset = loc.startLine; tempTree = true; }

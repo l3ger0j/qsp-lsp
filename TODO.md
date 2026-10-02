@@ -117,7 +117,8 @@ analysis and parses nothing: a location is parsed when its semantic tokens
 are asked for, the visible lines through a range request, the rest by the
 full request a slice at a time. A 12.8 M-character file shows diagnostics
 after 3.1 s instead of 23 s; its full tokens take 6.9 s in slices after
-the project load.
+the project load. Trees that large locations keep for incremental edits
+are freed after five minutes without use.
 
 Still, a file is analysed one of three ways: the project scan (closed
 files), the editor's whole-file parse (open, under 500 KB) and the editor's
@@ -130,9 +131,6 @@ order:
   (`internStrings` in `nodeCache.ts`) brings it to 274 MB, for 0.8 s more
   on a 2.5 s read. The rest is object layout: read-back objects and arrays
   take more room than the ones the analysis built.
-- **Drop trees nobody looked at.** Locations of 50 KB and more keep their
-  tree after a parse for incremental edits, for as long as the file is
-  open; drop those not edited for a while.
 - **One path.** The project scan and the editor share one analysis per
   file; small open files use it too, with the whole-file tree made on demand.
 - **A second hash: a file's interface.** What other files can see of a file

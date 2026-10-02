@@ -47,6 +47,8 @@ export interface PerLocationParseResult {
    */
   tokens?: Uint32Array;
   tree?: Parser.Tree;
+  /** When `tree` was last used (Date.now()); trees idle for long are dropped. */
+  treeUsedAt?: number;
 }
 
 // ──────────────────────────────────────────────────────────────────────

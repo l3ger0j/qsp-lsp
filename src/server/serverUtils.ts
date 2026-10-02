@@ -10,6 +10,7 @@ import type { Connection } from 'vscode-languageserver';
 import { ConnectionError, ConnectionErrors } from 'vscode-jsonrpc';
 import { type LocationEntry, type SyntaxError, type SymbolLocation } from '../parser';
 import { locationNameCol } from './regexFallback';
+import type { DocumentState } from './featureTypes';
 
 /**
  * File-system provider for project mode.
@@ -108,6 +109,27 @@ export function perLocationCacheKeys(locationIndex: readonly LocationEntry[]): s
     occurrenceOf.set(loc.nameLower, n + 1);
     return n === 0 ? loc.nameLower : `${loc.nameLower}\u0000${n}`;
   });
+}
+
+/**
+ * Free the trees large locations keep for incremental edits when they
+ * haven't been used for `idleMs`: a 200 KB location's tree takes megabytes
+ * of WASM memory, and an edit after a long pause pays one location parse.
+ * Returns how many were dropped.
+ */
+export function dropIdleTrees(states: Iterable<DocumentState>, now: number, idleMs: number): number {
+  let dropped = 0;
+  for (const state of states) {
+    if (!state.perLocationCache) continue;
+    for (const entry of state.perLocationCache.values()) {
+      if (!entry.tree || now - (entry.treeUsedAt ?? 0) < idleMs) continue;
+      entry.tree.delete();
+      entry.tree = undefined;
+      entry.treeUsedAt = undefined;
+      dropped++;
+    }
+  }
+  return dropped;
 }
 
 /** Build the `SymbolLocation` for a location header, used by both the
