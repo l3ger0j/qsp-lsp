@@ -115,6 +115,9 @@ A **QSP Locations** section in the Explorer side bar lists every location of the
 - The `{}` item next to **QSP** in the status bar shows what the language server is doing: a spinner while it starts, loads the project (with a file count) or analyzes a large file, then **Ready** with the project size.
 - It also warns about degraded modes: **Limited mode** when the tree-sitter parser failed to load (regex-only analysis), **Per-location parsing** when a file's whole-file parse took too long, and **Reduced analysis** when the server ran short of memory (past 70% of its ~4 GB heap) and, rather than crash, stopped tracking locals passed between locations (and the checks built on them) and semantic highlighting of large files until it restarts. Click it (or run **QSP: Show Language Server Log**) for the server log.
 
+### Analysis Cache
+A project opens faster the second time: the language server keeps each file's analysis on disk and reads it back instead of parsing the file again, as long as the file, the extension and the settings that shape the analysis are the same (a file that changed is analysed again). On a 20 MB game of 600 locations in 10 files, analysing the files went from 22.6 s to 1.8 s. The cache lives in VS Code's storage for this workspace, not in the project, takes about as much space as the game's sources, and cleans up entries unused for a month or beyond 500 MB. Turn it off with `qsp.cache.enabled`, or delete it with **QSP: Clear Analysis Cache**. Not in VS Code for the Web or the MCP server.
+
 ### Performance Diagnostics
 For large games (hundreds of locations, tens of megabytes), every analysis phase longer than a second (parsing, symbols, project aggregates, diagnostics) writes a `[perf]` line to **QSP: Show Language Server Log** with its time, a breakdown by step, and the heap before and after. Turn on `qsp.debug.performanceLog` to log every phase. The lines hold only numbers, never file, location or variable names. The server runs on VS Code's own runtime, whose heap is capped near 4 GB.
 
@@ -240,6 +243,7 @@ The quick fix menu (**Ctrl+.** or the light bulb) on a diagnostic writes these c
 | `qsp.game.mainFile` | — | Regular expression for the main file, searched in workspace-relative paths (e.g. `^main\.qsps$`). Overridden by `mainFile` in `txt2gam.json` |
 | `qsp.game.mainFileStrategy` | `ask` | How the setup wizard picks the main file when none is configured: `ask` shows a list (dismiss → root files first), `root` puts root files first without asking |
 | `qsp.game.buildMode` | `single` | `single` builds one combined `.qsp`; `perFile` builds each source into its own `.qsp` next to it. Overridden by `buildMode` in `txt2gam.json` |
+| `qsp.cache.enabled` | `true` | Keep analysis results on disk so an unchanged project opens without being analysed again (next server start) |
 | `qsp.libraries.sources` | `[]` | URLs of `libraries.json` catalogs for the **QSP Libraries** view; the first catalog wins when two offer the same library. |
 | `qsp.game.password` | — | Default game password for export/import (leave blank for no password) |
 | `qsp.game.promptPassword` | `true` | Prompt for a password before each export |

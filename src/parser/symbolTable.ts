@@ -346,3 +346,22 @@ export class DocumentSymbols {
     return null;
   }
 }
+
+/**
+ * Turn a symbol table read back from the analysis cache into a working one.
+ * The cache keeps plain data (Maps, arrays, shared references) but not
+ * classes, so the methods come back by restoring the two prototypes. Returns
+ * undefined for anything that isn't a stored symbol table, which the caller
+ * treats as a cache miss.
+ */
+export function reviveDocumentSymbols(value: unknown): DocumentSymbols | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const doc = value as { uri?: unknown; locations?: unknown; locationDefs?: unknown; globalBindings?: unknown };
+  if (typeof doc.uri !== 'string' || !(doc.locations instanceof Map)
+    || !(doc.locationDefs instanceof Map) || !(doc.globalBindings instanceof Map)) return undefined;
+  for (const loc of doc.locations.values()) {
+    if (!loc || typeof loc !== 'object') return undefined;
+    Object.setPrototypeOf(loc, LocationSymbols.prototype);
+  }
+  return Object.setPrototypeOf(doc, DocumentSymbols.prototype) as DocumentSymbols;
+}

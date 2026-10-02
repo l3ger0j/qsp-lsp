@@ -23,6 +23,7 @@ import {
   LocationSymbols,
   extractErrors,
   extractSymbols,
+  reviveDocumentSymbols,
   fullParseTimeoutMicros,
   QspSymbolKind,
   type QspSymbol,
@@ -70,11 +71,19 @@ function yieldToEventLoop(): Promise<void> {
 
 // ──────────────────────────────────────────────────────────────────────
 
+/** What the analysis cache keeps for one project file. */
+interface CachedFileAnalysis {
+  symbols: DocumentSymbols;
+  syntaxErrors: SyntaxError[];
+}
+
 export class ProjectModeService {
   /** Workspace root folders (populated on initialize). */
   workspaceFolders: string[] = [];
   /** Disk cache of per-file analysis results, when the client gave a directory for it. */
   analysisCache: AnalysisCache | undefined;
+  /** Files of the project load read from the cache, and analysed for lack of an entry. */
+  readonly cacheStats = { hits: 0, misses: 0 };
 
   /** Cached project aggregates (null when project mode is off). */
   projectAggregates: ProjectAggregates | null = null;
@@ -206,12 +215,33 @@ export class ProjectModeService {
 
   private analyzeFileNow(uri: string, text: string): void {
     const locationIndex = buildLocationIndex(text);
-    let symbols: DocumentSymbols;
+    let symbols: DocumentSymbols | undefined;
     // Kept on the state because the tree is freed here: without them a
     // syntax error in a closed file would show only once it is opened.
     let syntaxErrors: SyntaxError[] | undefined;
+    // A file's symbols and syntax errors depend only on its text, its URI
+    // (stored in every location) and whether exec: links are analysed; the
+    // analyser itself is part of every key (nodeCache.ts). Results of the
+    // regex fallback are never stored: they are poorer than a full parse.
+    const cache = this.tsParser.isReady ? this.analysisCache : undefined;
+    const key = cache?.key('file symbols', uri, this.embeddedExecEnabled ? 'exec' : 'no exec', text);
+    let cacheable = key !== undefined;
+    if (cache && key) {
+      const hit = this.perf.step('cache read', () => cache.get(key)) as CachedFileAnalysis | undefined;
+      symbols = reviveDocumentSymbols(hit?.symbols);
+      if (symbols && Array.isArray(hit?.syntaxErrors)) {
+        syntaxErrors = hit.syntaxErrors;
+        this.cacheStats.hits++;
+        cacheable = false;
+      } else {
+        symbols = undefined;
+        this.cacheStats.misses++;
+      }
+    }
 
-    if (!this.tsParser.isReady) {
+    if (symbols) {
+      // From the cache.
+    } else if (!this.tsParser.isReady) {
       symbols = buildRegexSymbols(uri, locationIndex, text);
     } else if (text.length >= PROJECT_PER_LOCATION_BYTE_THRESHOLD) {
       syntaxErrors = [];
@@ -229,9 +259,16 @@ export class ProjectModeService {
           tree.delete();
         }
       } else {
+        // The whole-file parse ran out of time: what follows depends on how
+        // fast this machine is, not only on the text, so it isn't stored.
+        cacheable = false;
         syntaxErrors = [];
         symbols = this.analyzePerLocation(uri, text, locationIndex, syntaxErrors);
       }
+    }
+    if (cacheable && cache && key) {
+      const entry: CachedFileAnalysis = { symbols, syntaxErrors: syntaxErrors ?? [] };
+      this.perf.step('cache write', () => cache.put(key, entry));
     }
 
     this.documentStates.set(uri, {

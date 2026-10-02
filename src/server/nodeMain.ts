@@ -22,5 +22,5 @@ const documents = new TextDocuments(TextDocument);
 const { wasmLoader, wasmDir } = wasmFromOutDir(path.join(__dirname, '..'));
 
 createQspServer(connection, documents, wasmLoader, wasmDir, fsProvider, {
-  memory: nodeMemory, recorder: new NodeRecorder(), analysisCache: nodeAnalysisCacheStore(),
+  memory: nodeMemory, recorder: new NodeRecorder(), analysisCache: nodeAnalysisCacheStore([__filename, path.join(__dirname, '..', 'tree-sitter-qsp.wasm')]),
 });

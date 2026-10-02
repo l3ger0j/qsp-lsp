@@ -79,6 +79,13 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
    `test/performanceReport.test.ts`, `test/crashPackage.test.ts` and `test/anonymize.test.ts` checking that no
    name leaks. To reproduce a user's game, generate one of the same shape: `npm run stress:gen -- --shape report.json`.
 
+**Analysis cache** (`src/server/nodeCache.ts`, used by `projectMode.analyzeFileNow`)
+❌ Don't: leave out of a cache key anything the cached result depends on (text, URI, a setting that changes it),
+   or let cache entries, their keys or the cache path reach `[perf]` lines, crash reports or zips: entries hold the game's text and names.
+✅ Do: build keys with `AnalysisCache.key(...)` over every input; the analyser itself (server bundle, grammar) already salts
+   every key, so a rebuild never reads old results. Keep `test/analysisCache.test.ts` checking that results read from
+   the cache equal a fresh analysis.
+
 **Browser tooling (Playwright)**
 ❌ Don't: ship Playwright or its browser binaries in the `.vsix`, or add them to `dependencies`.
 ✅ Do: keep it dev-only (`devDependencies` at most, or installed in a scratch directory), with browsers in

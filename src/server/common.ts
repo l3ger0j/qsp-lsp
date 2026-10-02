@@ -567,6 +567,10 @@ export function createQspServer(
           safeConnectionCall(() => progress?.report(`${files} files`));
         },
       ), () => `${project.projectFileUris.size} files`);
+      if (project.analysisCache) {
+        const { hits, misses } = project.cacheStats;
+        log.log(`[QSP] Analysis cache: ${hits} of ${hits + misses} project files read from it, ${misses} analysed`);
+      }
     } finally {
       safeConnectionCall(() => progress?.done());
       if (settings.project.enabled) reportProjectSize();

@@ -43,6 +43,7 @@ import {
 import { ANALYSIS_STATUS_NOTIFICATION, type AnalysisStatus } from '../common/analysisStatus';
 import { createQspServer } from '../server/common';
 import { decodeBuffer, fsProvider } from '../server/nodeHost';
+import { nodeAnalysisCacheStore } from '../server/nodeCache';
 import { nodeMemory } from '../server/nodeRecorder';
 import type { WasmDirProvider, WasmLoader } from '../parser';
 import { QSP_FILE_EXTENSIONS } from '../server/serverUtils';
@@ -79,6 +80,8 @@ export class QspHost {
     readonly workspaceDir: string,
     private readonly wasm: { wasmLoader: WasmLoader; wasmDir?: WasmDirProvider },
     private readonly log: (message: string) => void = () => {},
+    /** Directory of an analysis cache (src/server/nodeCache.ts); none when absent. */
+    private readonly cacheDir?: string,
   ) {
     this.rootUri = URI.file(workspaceDir).toString();
     this.settings = readWorkspaceSettings(workspaceDir);
@@ -89,7 +92,10 @@ export class QspHost {
     const c2s = new PassThrough();
     const s2c = new PassThrough();
     const serverConn = createConnection(new StreamMessageReader(c2s), new StreamMessageWriter(s2c));
-    createQspServer(serverConn, new TextDocuments(TextDocument), this.wasm.wasmLoader, this.wasm.wasmDir, fsProvider, { memory: nodeMemory });
+    createQspServer(serverConn, new TextDocuments(TextDocument), this.wasm.wasmLoader, this.wasm.wasmDir, fsProvider, {
+      memory: nodeMemory,
+      ...(this.cacheDir ? { analysisCache: nodeAnalysisCacheStore() } : {}),
+    });
 
     const client = createMessageConnection(new StreamMessageReader(s2c), new StreamMessageWriter(c2s));
     this.client = client;
@@ -119,6 +125,7 @@ export class QspHost {
       rootUri: this.rootUri,
       capabilities: {},
       workspaceFolders: [{ uri: this.rootUri, name: path.basename(this.workspaceDir) }],
+      initializationOptions: this.cacheDir ? { cacheDir: this.cacheDir } : undefined,
     } as InitializeParams);
     client.sendNotification(InitializedNotification.type, {});
 

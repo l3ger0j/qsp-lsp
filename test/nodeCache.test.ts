@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { NodeAnalysisCache, nodeAnalysisCacheStore } from '../src/server/nodeCache';
+import { NodeAnalysisCache, analyserSalt, nodeAnalysisCacheStore } from '../src/server/nodeCache';
 
 let dir: string;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qsp-cache-')); });
@@ -28,7 +28,6 @@ describe('NodeAnalysisCache', () => {
     const value = { byName: new Map([['прихожая', shared]]), refs: [shared, shared], seen: new Set(['счёт']) };
     const key = cache.key('file:///game/main.qsps', '# Прихожая\n---\n');
     cache.put(key, value);
-    await cache.flush();
     const back = cache.get(key) as typeof value;
     expect(back).toEqual(value);
     expect(back.refs[0]).toBe(back.refs[1]);
@@ -60,7 +59,6 @@ describe('NodeAnalysisCache', () => {
     const cache = new NodeAnalysisCache(dir);
     const key = cache.key('k');
     cache.put(key, 1);
-    await cache.flush();
     const file = path.join(dir, `${key}.bin`);
     const old = new Date(Date.now() - 10 * 24 * 3600 * 1000);
     fs.utimesSync(file, old, old);
@@ -87,6 +85,18 @@ describe('NodeAnalysisCache', () => {
     const result = cache.collectGarbage(now);
     expect(entries()).toEqual(['fresh.456.def.tmp', 'newer.bin', 'newest.bin', 'unrelated.txt']);
     expect(result).toEqual({ deleted: 3, keptBytes: 2000 });
+  });
+
+  it('keys depend on the analyser, so a rebuilt one never reads old results', () => {
+    const bundle = path.join(dir, 'nodeMain.js');
+    fs.writeFileSync(bundle, 'analyser v1');
+    const v1 = analyserSalt([bundle]);
+    fs.writeFileSync(bundle, 'analyser v2');
+    const v2 = analyserSalt([bundle]);
+    expect(v1).not.toBe(v2);
+    expect(analyserSalt([path.join(dir, 'gone.wasm')])).not.toBe(analyserSalt([]));
+    const cacheDir = path.join(dir, 'c');
+    expect(new NodeAnalysisCache(cacheDir, { salt: v1 }).key('x')).not.toBe(new NodeAnalysisCache(cacheDir, { salt: v2 }).key('x'));
   });
 
   it('opens through the store, creating the folder', () => {
