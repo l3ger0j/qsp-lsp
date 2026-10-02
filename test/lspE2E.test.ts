@@ -51,6 +51,7 @@ import {
   InitializedNotification,
   PublishDiagnosticsNotification,
   RegistrationRequest,
+  SemanticTokensRequest,
   type CodeAction,
   type Hover,
   type InitializeParams,
@@ -58,6 +59,7 @@ import {
 } from 'vscode-languageserver-protocol';
 import { createQspServer } from '../src/server/common';
 import { fsProvider } from '../src/server/nodeHost';
+import { nodeAnalysisCacheStore } from '../src/server/nodeCache';
 import { WASM_PATH } from './testHelpers';
 
 interface Harness {
@@ -80,6 +82,7 @@ async function startServer(
   qspConfig: Record<string, unknown> | null = null,
   // A folder on disk makes it a project: the server reads its files itself.
   workspaceDir?: string,
+  cacheDir?: string,
 ): Promise<Harness> {
   const c2s = new PassThrough();
   const s2c = new PassThrough();
@@ -99,6 +102,7 @@ async function startServer(
     // which is what most tests here want.
     undefined,
     workspaceDir ? fsProvider : undefined,
+    cacheDir ? { analysisCache: nodeAnalysisCacheStore() } : {},
   );
 
   const client = createMessageConnection(
@@ -148,6 +152,7 @@ async function startServer(
     rootUri: folderUri,
     capabilities: {},
     workspaceFolders: folderUri ? [{ uri: folderUri, name: 'game' }] : null,
+    initializationOptions: cacheDir ? { cacheDir } : undefined,
   } as InitializeParams);
   client.sendNotification(InitializedNotification.type, {});
 
@@ -656,4 +661,86 @@ describe('LSP e2e: closing a project file', () => {
     expect(summary(await closed)).toEqual(whileOpen);
     expect(kept()).toBe(keptBefore + 1);
   }, 60_000);
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Opening a large file reuses a stored analysis
+// ──────────────────────────────────────────────────────────────────────
+//
+// A large file opened with the text the project scan analysed (kept in
+// memory) or an earlier session stored (on disk) is only parsed for its
+// trees and tokens; symbols and syntax errors are taken as they are.
+// Whatever the source, the diagnostics and the highlighting are the same.
+describe('LSP e2e: opening a large file with a stored analysis', () => {
+  const big = makeBigDocument('большой')
+    + "# Ошибка\n*pl 'до ошибки'\nif x = 1\n--- Ошибка ---\n"
+    + "# Ссылка\n$имя = 'Вася'\n*pl '<a href=\"exec:gt ''нет_ссылки''\">идти</a>'\ngt 'нет_такой'\n--- Ссылка ---\n";
+  const main = "# Прихожая\ngs 'Ссылка'\n--- Прихожая ---\n";
+  let root: string;
+  let game: string;
+  let uri: string;
+  beforeAll(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'qsp-stored-'));
+    game = path.join(root, 'game');
+    fs.mkdirSync(game);
+    fs.writeFileSync(path.join(game, 'main.qsps'), main);
+    fs.writeFileSync(path.join(game, 'big.qsps'), big);
+    uri = fsProvider.pathToUri(path.join(game, 'big.qsps'));
+  });
+  afterAll(() => { fs.rmSync(root, { recursive: true, force: true }); });
+
+  // Opens the big file (or `text` under its name) and returns what the editor shows for it, and the
+  // per-location analysis' perf line.
+  async function openBig(workspace: boolean, cacheDir?: string, text = big) {
+    const h = await startServer({ debug: { performanceLog: true } }, workspace ? game : undefined, cacheDir);
+    try {
+      if (workspace) await h.diagnosticsFor(fsProvider.pathToUri(path.join(game, 'main.qsps')));
+      // The performance log is on once the settings have arrived.
+      while (!h.logs.some(l => l.includes('Server ready'))) await new Promise(r => setTimeout(r, 10));
+      const parsed = (async () => {
+        for (;;) {
+          const p = await h.nextDiagnosticsFor(uri);
+          if (p.diagnostics.some(d => d.code === 'syntax')) return p;
+        }
+      })();
+      h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text } });
+      const diagnostics = (await parsed).diagnostics;
+      const tokens = await h.client.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } });
+      const perf = h.logs.find(l => l.includes('[perf] per-location analysis'));
+      return { diagnostics, tokens: tokens?.data, perf: perf ?? '' };
+    } finally {
+      h.shutdown();
+    }
+  }
+  const extracted = (perf: string) => /[·,] symbols /.test(perf);
+
+  it('takes the project scan\'s analysis, then the stored one, and gives the same result', async () => {
+    const cache = path.join(root, 'cache-project');
+    const fresh = await openBig(true);
+    expect(extracted(fresh.perf)).toBe(true);
+    expect(fresh.diagnostics.some(d => d.code === 'unresolvedLocationRefs')).toBe(true);
+
+    const fromMemory = await openBig(true, cache);
+    expect(fromMemory.perf).toContain('stored analysis');
+    expect(fromMemory.perf).not.toContain('cache read');
+    expect(extracted(fromMemory.perf)).toBe(false);
+    expect(fromMemory.diagnostics).toEqual(fresh.diagnostics);
+    expect(fromMemory.tokens).toEqual(fresh.tokens);
+
+    const alone = await openBig(false);
+    const fromDisk = await openBig(false, cache);
+    expect(fromDisk.perf).toContain('cache read');
+    expect(extracted(fromDisk.perf)).toBe(false);
+    expect(fromDisk.diagnostics).toEqual(alone.diagnostics);
+    expect(fromDisk.tokens).toEqual(alone.tokens);
+  }, 120_000);
+
+  it('analyses a file with two locations of one name from scratch every time', async () => {
+    const cache = path.join(root, 'cache-duplicates');
+    const twice = big + "# ссылка\n*pl 'вторая'\n--- ссылка ---\n";
+    const first = await openBig(false, cache, twice);
+    const again = await openBig(false, cache, twice);
+    expect(extracted(again.perf)).toBe(true);
+    expect(again.diagnostics).toEqual(first.diagnostics);
+  }, 120_000);
 });

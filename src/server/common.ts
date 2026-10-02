@@ -12,6 +12,7 @@ import {
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import {
   buildLocationIndex,
+  findLocationAtLine,
   DocumentSymbols,
   LocationSymbols,
   extractErrors,
@@ -836,6 +837,7 @@ export function createQspServer(
       perLocationCache: previousState?.perLocationCache,
       rawText: text,
       positionsApproximate,
+      storedAnalysis: previousState?.storedAnalysis,
       suppressions: parseSuppressions(text, locationIndex),
     });
 
@@ -1073,6 +1075,49 @@ export function createQspServer(
   // This reduces the per-edit cost from ~1.2s (incremental full-tree)
   // to ~10-40ms (single location re-parse + merge + diagnostics).
 
+  type StoredLocation = Pick<PerLocationParseResult, 'symbols' | 'symbolsLine' | 'errors'>;
+
+  // A complete analysis of exactly this text made earlier, split per
+  // location: by the project scan, kept while the file was closed, or
+  // stored on disk. Undefined when there is none, or it doesn't match the
+  // locations one to one (symbols are keyed by name, so duplicates collapse).
+  function storedLocations(
+    key: string, prevState: DocumentState | undefined, locationIndex: readonly LocationEntry[],
+  ): StoredLocation[] | undefined {
+    const stored = prevState?.storedAnalysis?.key === key
+      ? { symbols: prevState.symbols, syntaxErrors: prevState.storedAnalysis.syntaxErrors }
+      : project.readAnalysis(key);
+    if (!stored || stored.symbols.locations.size !== locationIndex.length) return undefined;
+    const result: StoredLocation[] = [];
+    const indexOf = new Map<LocationEntry, number>();
+    for (const [i, loc] of locationIndex.entries()) {
+      const symbols = stored.symbols.locations.get(loc.nameLower);
+      if (!symbols || symbols.regexOnly || indexOf.has(loc)) return undefined;
+      indexOf.set(loc, i);
+      result.push({ symbols, symbolsLine: loc.startLine, errors: [] });
+    }
+    for (const err of stored.syntaxErrors) {
+      const loc = findLocationAtLine(locationIndex as LocationEntry[], err.startRow);
+      if (!loc) return undefined;
+      result[indexOf.get(loc)!].errors.push({ ...err, startRow: err.startRow - loc.startLine, endRow: err.endRow - loc.startLine });
+    }
+    return result;
+  }
+
+  function extractLocationSymbols(
+    tree: Parameters<typeof extractSymbols>[0], docUri: string, locationName: string,
+    embedParseFn: Parameters<typeof extractSymbols>[4],
+  ): LocationSymbols {
+    // extractSymbols wraps the location in a DocumentSymbols with one entry.
+    const result = extractSymbols(tree, docUri, undefined, undefined, embedParseFn);
+    for (const [, ls] of result.symbols.locations) return ls;
+    // No location found (e.g. the entire tree is ERROR): an empty one, so
+    // the result is still cached.
+    const empty = new LocationSymbols(locationName);
+    empty.hasErrors = true;
+    return empty;
+  }
+
   /**
    * Parse a single location and return its local-coordinate results.
    * For large locations (≥INCREMENTAL_LOC_THRESHOLD), retains the tree
@@ -1080,12 +1125,15 @@ export function createQspServer(
    *
    * @param prev Optional previous parse result — if provided and the
    *   location has a retained tree, uses incremental parsing.
+   * @param known The location's symbols and errors from a stored analysis
+   *   of the same text: only the tree and the tokens are made.
    */
   function parseLocationBlock(
     locText: string,
     docUri: string,
     locationName: string,
     prev?: PerLocationParseResult,
+    known?: StoredLocation,
   ): PerLocationParseResult | null {
     let tree;
 
@@ -1122,34 +1170,19 @@ export function createQspServer(
         ? (t: string) => tsParser.parseOnce(t)
         : undefined;
       const parsed = tree;
-      const result = perf.step('symbols', () => extractSymbols(parsed, docUri, undefined, undefined, embedParseFn));
-      const errors = perf.step('errors', () => extractErrors(parsed));
+      const locSymbols = known?.symbols ?? perf.step('symbols', () => extractLocationSymbols(parsed, docUri, locationName, embedParseFn));
+      const errors = known?.errors ?? perf.step('errors', () => extractErrors(parsed));
       // Short of memory, large files go without semantic highlighting
       // (TextMate still colours them).
       const tokens = tightOnMemory() ? new Uint32Array(0)
         : perf.step('semantic tokens', () => Uint32Array.from(collectSemanticTokenTuples(parsed, undefined, embedParseFn)));
-
-      // extractSymbols wraps the location in a DocumentSymbols with one entry.
-      // Get the LocationSymbols for the single location_block.
-      let locSymbols: LocationSymbols | undefined;
-      for (const [, ls] of result.symbols.locations) {
-        locSymbols = ls;
-        break; // only one location in per-location tree
-      }
-
-      // If extractSymbols found no location (e.g. entire tree is ERROR),
-      // create an empty LocationSymbols so we still cache the result.
-      if (!locSymbols) {
-        locSymbols = new LocationSymbols(locationName);
-        locSymbols.hasErrors = true;
-      }
 
       keepTree = locText.length >= INCREMENTAL_LOC_THRESHOLD;
 
       return {
         text: locText,
         symbols: locSymbols,
-        symbolsLine: 0,
+        symbolsLine: known?.symbolsLine ?? 0,
         errors,
         tokens,
         hasErrors: tree.rootNode.hasError,
@@ -1342,6 +1375,9 @@ export function createQspServer(
     // two locations share a name, so neither's cache entry (and its
     // retained tree, if any) is silently overwritten/leaked by the other.
     const cacheKeys = perLocationCacheKeys(locationIndex);
+    // Opened from scratch: the analysis may be stored already.
+    const analysisKey = prevCache || text.length < PER_LOCATION_BYTE_THRESHOLD ? undefined : project.analysisKey(doc.uri, text);
+    const stored = analysisKey ? perf.step('stored analysis', () => storedLocations(analysisKey, prevState, locationIndex)) : undefined;
 
     for (const [i, loc] of locationIndex.entries()) {
       progress.parsedLocations = i;
@@ -1363,7 +1399,7 @@ export function createQspServer(
         shiftErrors(prev.errors, loc.startLine, allErrors);
       } else {
         // Parse this location (incrementally if prev has a retained tree)
-        const result = parseLocationBlock(locText, doc.uri, loc.name, prev);
+        const result = parseLocationBlock(locText, doc.uri, loc.name, prev, stored?.[i]);
         if (result) {
           newCache.set(cacheKey, perf.step('copy into file', () => placeLocation(symbols, loc, locLoc, result)));
 
