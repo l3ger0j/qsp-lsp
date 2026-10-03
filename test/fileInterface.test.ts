@@ -277,6 +277,19 @@ describe('locationInterfaceHash', () => {
       base.replace('\nif', '\n\n! комментарий\n\nif'),
       base.replace('if есть:', 'if   есть  :'),
     ]) expect(hash(same)).toBe(hash(base));
+    // A word list kept in a variable is text other files can't read.
+    const list = (words: string) => `# комната\nlocal $имена = {\n  ${words},\n}\nscanstr '$все', $имена, '[\\w-]+'\n---\n`;
+    expect(hash(list('Анна, Борис, Вера'))).toBe(hash(list('Анна, Борис, Варвара')));
+  });
+
+  it('changes with what a value or a block of code holds', () => {
+    const withValue = (value: string) => `# комната\nсила = ${value}\n$код = { gs 'кухня' }\n---\n`;
+    const plain = withValue('1');
+    for (const other of [
+      withValue('2'),
+      withValue('сила + 1'),
+      plain.replace("gs 'кухня'", "gs 'зал'"),
+    ]) expect(hash(other)).not.toBe(hash(plain));
   });
 
   it('changes with what other files can see', () => {

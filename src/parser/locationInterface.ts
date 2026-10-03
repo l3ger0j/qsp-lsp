@@ -13,11 +13,15 @@
 import type { LocationSymbols } from './locationSymbols';
 
 // Positions, the file's URI (the same in every position), and what isn't
-// analysis: the hash itself, a cache, tree-sitter node ids.
+// analysis: the hash itself, a cache, tree-sitter node ids. A binding's
+// statement text too: only hover shows it, read from the symbols as they
+// are, and what the value means is in `value` (editing a word list kept in
+// a variable changed nothing else, yet had every file diagnosed again).
 const SKIPPED_KEYS = new Set([
   'line', 'column', 'endLine', 'endColumn', 'callColumn',
   'startRow', 'startCol', 'endRow', 'endCol',
   'uri', 'interfaceHash', 'localsInScopeCache', 'interpolationHostScopes', 'dynamicCodeBlocks',
+  'stmtText',
 ]);
 // Scope keys are made from offsets in the location (scopeKeyOf), so they
 // change with any edit before them. Only which ones are equal matters:
