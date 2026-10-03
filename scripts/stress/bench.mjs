@@ -7,7 +7,7 @@
 // scripts/stress/genGame.mjs.
 //
 //   node scripts/stress/bench.mjs <project dir> [--open <file>] [--graph] [--tokens]
-//       [--edits N] [--heap-mb N] [--timeout S] [--json <out.json>]
+//       [--edits N] [--edit-in string] [--heap-mb N] [--timeout S] [--json <out.json>]
 //       [--max-seconds S] [--max-heap-mb N]
 //
 // --open     file to open like an editor tab (default: the largest one;
@@ -17,7 +17,10 @@
 //            diagnostics are in, as VS Code does: the visible lines (a range
 //            request) and the whole file, reporting when each answer came
 // --edits N  then type N characters into the open file, reporting how
-//            long each takes to be re-diagnosed
+//            long each takes to be re-diagnosed: its diagnostics cleared,
+//            then checked again, and how many other files were re-published
+// --edit-in string  type inside a `pl '…'` string (text only) instead of
+//            a `!` at the start of a line
 // --heap-mb  the server's heap limit (Node's default otherwise)
 // --crash    directory for the always-on crash recorder, as the extension
 //            passes it (breadcrumbs, memory, trail, report)
@@ -45,7 +48,7 @@ function parseArgs(argv) {
 const args = parseArgs(process.argv.slice(2));
 const project = args._[0] && path.resolve(args._[0]);
 if (!project || !fs.existsSync(project)) {
-  console.error('usage: bench.mjs <project dir> [--open <file>|none] [--graph] [--tokens] [--edits N] [--heap-mb N] [--crash <dir>] [--cache <dir>] [--timeout S] [--json out.json] [--max-seconds S] [--max-heap-mb N]');
+  console.error('usage: bench.mjs <project dir> [--open <file>|none] [--graph] [--tokens] [--edits N] [--edit-in string] [--heap-mb N] [--crash <dir>] [--cache <dir>] [--timeout S] [--json out.json] [--max-seconds S] [--max-heap-mb N]');
   process.exit(2);
 }
 const server = path.join(root, 'out', 'server', 'nodeMain.js');
@@ -248,22 +251,48 @@ try {
   if (edits > 0 && openText) {
     // Type into the middle of the file, one character at a time, waiting
     // for the diagnostics of each edit like a user pausing between keys.
+    // --edit-in string types inside the first string literal from there
+    // on (game text: no symbol changes), otherwise a `!` at a line's start.
     const lines = openText.split('\n');
-    const line = Math.floor(lines.length / 2);
+    let line = Math.floor(lines.length / 2);
+    let character = 0;
+    let text = '!';
+    if (args['edit-in'] === 'string') {
+      while (line < lines.length - 1 && !/^\s*\*?pl\s+'/i.test(lines[line])) line++;
+      character = lines[line].indexOf("'") + 1;
+      text = 'x';
+    }
     const latencies = [];
+    const settled = [];
+    const republished = [];
     for (let i = 0; i < edits; i++) {
       const started = Date.now();
       const done = waitFor(m => m.method === 'textDocument/publishDiagnostics' && m.params.uri === openUri, 120);
+      // The open file's second publish after the edit is the full one
+      // (the first clears it); the other files' come in the same run.
+      const others = new Set();
+      let openPublishes = 0;
+      const full = waitFor(m => {
+        if (m.method !== 'textDocument/publishDiagnostics') return false;
+        if (m.params.uri !== openUri) { others.add(m.params.uri); return false; }
+        return ++openPublishes === 2;
+      }, 300);
       send({
         method: 'textDocument/didChange',
         params: {
           textDocument: { uri: openUri, version: 2 + i },
-          contentChanges: [{ range: { start: { line, character: 0 }, end: { line, character: 0 } }, text: '!' }],
+          contentChanges: [{ range: { start: { line, character }, end: { line, character } }, text }],
         },
       });
       await done;
       latencies.push(Date.now() - started);
+      await full;
+      settled.push(Date.now() - started);
+      await new Promise(r => setTimeout(r, 500));
+      republished.push(others.size);
     }
+    settled.sort((a, b) => a - b);
+    results.editsSettled = { medianMs: settled[Math.floor(settled.length / 2)], maxMs: settled.at(-1), republishedFiles: republished };
     latencies.sort((a, b) => a - b);
     results.edits = { count: edits, medianMs: latencies[Math.floor(latencies.length / 2)], maxMs: latencies.at(-1) };
   }
@@ -296,6 +325,10 @@ function finish(code) {
     console.log(`tokens ${kind.padEnd(7)} ${t.seconds.toFixed(1)} s after asking, ${t.tokens} tokens`);
   }
   if (results.edits) console.log(`edits          median ${results.edits.medianMs} ms, max ${results.edits.maxMs} ms (${results.edits.count})`);
+  if (results.editsSettled) {
+    const { medianMs, maxMs, republishedFiles } = results.editsSettled;
+    console.log(`edits checked  median ${medianMs} ms, max ${maxMs} ms, other files re-published: ${republishedFiles.join(', ')}`);
+  }
   if (results.crashed) console.log(`CRASHED        after ${results.crashed.seconds.toFixed(1)} s${results.crashed.outOfMemory ? ' (heap out of memory)' : ''}`);
 
   const over = [];
