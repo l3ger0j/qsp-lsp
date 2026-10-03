@@ -84,6 +84,11 @@ export class LocationSymbols {
    * location's outgoing references (locations, objects, variables) are unknown.
    */
   public regexOnly = false;
+  /**
+   * What other files can see of this location, as a hash; see
+   * locationInterface.ts. Made once: copies moved to other lines keep it.
+   */
+  public interfaceHash: string | undefined = undefined;
 
   /**
    * Transient: host scope at the syntactic position of a
@@ -701,6 +706,7 @@ export class LocationSymbols {
     const copy = new LocationSymbols(source.locationName);
     copy.hasErrors = source.hasErrors;
     copy.regexOnly = source.regexOnly;
+    copy.interfaceHash = source.interfaceHash;
 
     // Copy scope hierarchy and local-name indices (shared, no line info)
     for (const [k, v] of source.scopeParent) copy.scopeParent.set(k, v);

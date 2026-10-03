@@ -622,12 +622,16 @@ export function createQspServer(
 
   // Helper: rebuild aggregates + re-diagnose all project files. It covers
   // everything a pending fast-tier re-diagnosis would do, so that one is dropped.
-  const projectRebuildAndReanalyze = () => {
+  // With `changed`, the files whose text changed: the others are diagnosed
+  // again only if one of them changed what they can see (fileInterface).
+  const projectRebuildAndReanalyze = (changed?: string) => {
     cancelProjectRediagnose();
     project.rebuildAndReanalyzeAll(
       settings.diagnostics,
       () => collectCallTypesPerTarget(documentStates),
       (ownUri: string) => collectPeerDocs(documentStates, ownUri),
+      undefined,
+      changed === undefined ? undefined : [changed],
     );
   };
 
@@ -656,6 +660,8 @@ export function createQspServer(
       projectRediagnoseSkip.clear();
       const liveAgg = project.projectAggregates;
       if (!liveAgg || !settings.project.enabled) return;
+      // From symbols that lag behind the edit: not a state to compare with.
+      project.forgetDiagnosedInterfaces();
       for (const uri of project.projectFileUris) {
         if (skip.has(uri)) continue;
         const st = documentStates.get(uri);
@@ -824,7 +830,7 @@ export function createQspServer(
         (text) => {
           if (kept && stripBom(text) === closedText) project.keepFile(uri, text, kept.symbols, kept.syntaxErrors);
           else project.analyzeFile(uri, text);
-          projectRebuildAndReanalyze();
+          projectRebuildAndReanalyze(uri);
         },
         (err: unknown) => {
           // A file deleted on disk is dropped from the project by the file watcher.
@@ -1033,7 +1039,7 @@ export function createQspServer(
     });
 
     if (settings.project.enabled && project.projectAggregates) {
-      projectRebuildAndReanalyze();
+      projectRebuildAndReanalyze(doc.uri);
     } else if (projectLoadPending) {
       deferredDiagnostics.add(doc.uri);
     } else {
@@ -1279,7 +1285,7 @@ export function createQspServer(
 
     // ── 7. Send diagnostics ───────────────────────────────────────
     if (settings.project.enabled && project.projectAggregates) {
-      projectRebuildAndReanalyze();
+      projectRebuildAndReanalyze(doc.uri);
     } else if (projectLoadPending) {
       deferredDiagnostics.add(doc.uri);
     } else {
@@ -1422,7 +1428,7 @@ export function createQspServer(
 
     // Send diagnostics (pass pre-extracted errors to skip full-tree extraction)
     if (settings.project.enabled && project.projectAggregates) {
-      projectRebuildAndReanalyze();
+      projectRebuildAndReanalyze(doc.uri);
     } else if (projectLoadPending) {
       deferredDiagnostics.add(doc.uri);
     } else {

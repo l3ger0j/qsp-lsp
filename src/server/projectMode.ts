@@ -23,6 +23,7 @@ import {
   DocumentSymbols,
   LocationSymbols,
   reviveDocumentSymbols,
+  locationInterface,
   QspSymbolKind,
   type QspSymbol,
   type SymbolLocation,
@@ -83,6 +84,13 @@ export class ProjectModeService {
 
   /** URIs of all project files (both open and on-disk). */
   readonly projectFileUris = new Set<string>();
+
+  /**
+   * Each project file's interface (fileInterface) when every file was last
+   * diagnosed: while all of them still match, an edit leaves the other
+   * files' diagnostics as they are.
+   */
+  private diagnosedInterfaces = new Map<string, string>();
 
   /**
    * Whether to sub-parse `<a href="exec:...">` link bodies during
@@ -207,6 +215,7 @@ export class ProjectModeService {
     }
 
     this.projectFileUris.clear();
+    this.diagnosedInterfaces.clear();
     this.projectAggregates = null;
   }
 
@@ -503,6 +512,7 @@ export class ProjectModeService {
     collectPeerDocs: (ownUri: string) => DocumentSymbols[],
     getDoc: (uri: string) => TextDocument | undefined,
     collected?: Map<string, Diagnostic[]>,
+    only?: ReadonlySet<string>,
   ): number {
     if (!this.projectAggregates) return 0;
     let published = 0;
@@ -510,6 +520,7 @@ export class ProjectModeService {
     const callTypes = this.projectAggregates.callTypesPerTarget ?? collectCallTypes();
 
     for (const uri of this.projectFileUris) {
+      if (only && !only.has(uri)) continue;
       const state = this.documentStates.get(uri);
       if (!state) continue;
 
@@ -534,18 +545,59 @@ export class ProjectModeService {
     return published;
   }
 
-  /** Convenience: rebuild aggregates then re-diagnose everything. */
+  /**
+   * Rebuild the aggregates, then diagnose the project files again: only
+   * `changed` when no file's interface differs from when they were all last
+   * diagnosed (the others' diagnostics can't have changed), every file
+   * otherwise or without `changed`.
+   */
   rebuildAndReanalyzeAll(
     diagnosticsSettings: DiagnosticSettings,
     collectCallTypes: () => Map<string, { name: string; types: Set<string> }>,
     collectPeerDocs: (ownUri: string) => DocumentSymbols[],
     collected?: Map<string, Diagnostic[]>,
+    changed?: readonly string[],
   ): void {
     this.perf.phase('project aggregates', () => this.rebuildAggregates(collectCallTypes), () => `${this.projectFileUris.size} files`);
+    const interfaces = new Map<string, string>();
+    for (const uri of this.projectFileUris) {
+      const iface = this.fileInterface(uri);
+      if (iface !== undefined) interfaces.set(uri, iface);
+    }
+    const only = changed && interfaces.size === this.projectFileUris.size
+      && interfaces.size === this.diagnosedInterfaces.size
+      && [...interfaces].every(([uri, iface]) => this.diagnosedInterfaces.get(uri) === iface)
+      ? new Set(changed)
+      : undefined;
     this.perf.phase('project diagnostics', () => this.reanalyzeAll(
       diagnosticsSettings, collectCallTypes, collectPeerDocs,
-      uri => this.documents.get(uri), collected,
-    ), (n) => `${this.projectFileUris.size} files, ${n} diagnostics`);
+      uri => this.documents.get(uri), collected, only,
+    ), (n) => `${only ? `${only.size} of ` : ''}${this.projectFileUris.size} files, ${n} diagnostics`);
+    if (!only) this.diagnosedInterfaces = interfaces;
+  }
+
+  /**
+   * The project files were diagnosed apart from rebuildAndReanalyzeAll (the
+   * fast tier's re-diagnosis): the next edit diagnoses every file again.
+   */
+  forgetDiagnosedInterfaces(): void {
+    this.diagnosedInterfaces.clear();
+  }
+
+  /**
+   * What the other files can see of `uri`: its locations' names and
+   * interface hashes, in order. Undefined while its symbols lag behind its
+   * text (the fast tier).
+   */
+  private fileInterface(uri: string): string | undefined {
+    const state = this.documentStates.get(uri);
+    if (!state || state.positionsApproximate) return undefined;
+    const parts: string[] = [];
+    for (const loc of state.locationIndex) {
+      const locSyms = state.symbols.getLocation(loc.name);
+      parts.push(loc.nameLower, locSyms ? locationInterface(locSyms) : '');
+    }
+    return parts.join('\n');
   }
 
   // ── File watcher handling ───────────────────────────────────────────
@@ -629,6 +681,6 @@ export class ProjectModeService {
     for (const change of changes) {
       await this.applyFileChange(change.uri, change.type, fsProvider, fileEncoding);
     }
-    this.rebuildAndReanalyzeAll(diagnosticsSettings, collectCallTypes, collectPeerDocs);
+    this.rebuildAndReanalyzeAll(diagnosticsSettings, collectCallTypes, collectPeerDocs, undefined, changes.map(c => c.uri));
   }
 }

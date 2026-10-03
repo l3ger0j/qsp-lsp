@@ -3,7 +3,7 @@
 // Files are parsed one location at a time, by the project scan and by the
 // editor. Shared here so both get the same symbols.
 
-import { LocationSymbols, extractErrors, extractSymbols, type SyntaxError } from '../parser';
+import { LocationSymbols, extractErrors, extractSymbols, locationInterface, type SyntaxError } from '../parser';
 import { extractLocationSymbolsFromText, mergeActionsFromText, mergeLabelsFromText } from './regexFallback';
 
 /**
@@ -58,10 +58,11 @@ export function analyzeParsedLocation(
   embedParseFn: Parameters<typeof extractSymbols>[2],
   step: <T>(name: string, fn: () => T) => T,
 ): { symbols: LocationSymbols; errors: SyntaxError[] } {
-  return {
-    symbols: step('symbols', () => extractLocationSymbols(tree, docUri, locationName, locText, embedParseFn)),
-    errors: step('errors', () => extractErrors(tree)),
-  };
+  const symbols = step('symbols', () => extractLocationSymbols(tree, docUri, locationName, locText, embedParseFn));
+  // Made now, from the symbols as extracted, so deciding what an edit
+  // changed for the other files costs nothing then.
+  step('interface', () => locationInterface(symbols));
+  return { symbols, errors: step('errors', () => extractErrors(tree)) };
 }
 
 const FOLDABLE_TYPES = ['act_block', 'if_block', 'loop_block'];

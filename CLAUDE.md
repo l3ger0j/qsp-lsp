@@ -67,6 +67,12 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
 ✅ Do: keep incremental edits proportional to one location's size (`perLocationCache`, `INCREMENTAL_LOC_THRESHOLD`),
    and make trees, tokens and fold ranges of a location only when a feature needs them.
 
+❌ Don't: add a field to `LocationSymbols` (or the objects it holds) that stores positions, offsets or tree-sitter node ids
+   without listing it in `locationInterface.ts`: an edit that only moves text would then look like an interface change,
+   and every project file would be diagnosed again.
+✅ Do: skip such fields there (`SKIPPED_KEYS`, or `SCOPE_KEYS` for offset-based scope keys), and keep
+   `test/fileInterface.test.ts` checking that other files keep the diagnostics a full re-diagnosis gives them.
+
 ❌ Don't: assume tree-sitter is ready (browser mode, initial load).
 ✅ Do: guard with `tsParser.isReady` and fall back to `regexFallback.ts`.
 

@@ -10,6 +10,9 @@
  *  - after `shutdown` it must not fire and publish diagnostics;
  *  - two files whose fast tiers fire together get one re-diagnosis of
  *    the rest of the project, not one per edited file.
+ * After the tree tier, the other files are diagnosed again only when the
+ * edit changed what they can see of the edited file (its interface): in a
+ * large project that is seconds per edit.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { PassThrough } from 'stream';
@@ -139,5 +142,32 @@ describe('project re-diagnosis after location names change', () => {
 
     const forC = h.published.filter(u => u === uriOf('/proj/c.qsps'));
     expect(forC).toHaveLength(1);
+  }, 15_000);
+});
+
+describe('project re-diagnosis after an edit', () => {
+  let harness: Awaited<ReturnType<typeof startProjectServer>> | undefined;
+  afterEach(() => { harness?.stop(); harness = undefined; });
+
+  const settle = () => new Promise(r => setTimeout(r, 900)); // tree tier (500 ms) + margin
+
+  async function editA(text: string): Promise<string[]> {
+    harness = await startProjectServer();
+    await new Promise(r => setTimeout(r, 800));
+    harness.open('/proj/a.qsps');
+    await settle();
+    harness.published.length = 0;
+    harness.edit('/proj/a.qsps', text);
+    await settle();
+    return [...new Set(harness.published)].sort();
+  }
+
+  // See test/fileInterface.test.ts for which edits change what other files see.
+  it('diagnoses only the edited file when the others can see no change', async () => {
+    expect(await editA("# shared\npl 'другой текст'\n\n---\n")).toEqual([uriOf('/proj/a.qsps')]);
+  }, 15_000);
+
+  it('diagnoses every file when the edit changes what they see', async () => {
+    expect(await editA('# shared\nсчёт = 1\n---\n')).toEqual(Object.keys(FILES).map(uriOf).sort());
   }, 15_000);
 });

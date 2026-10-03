@@ -124,18 +124,18 @@ run on scope paths recorded at extraction, so every file gets the same
 warnings open or closed. A read-back analysis takes less memory than a
 fresh one (212 MB against 230 MB for that file): `compactDeserialized` in
 `nodeCache.ts` makes equal strings one, copies arrays to their length and
-objects into literals of their keys, for 1.2 s.
+objects into literals of their keys, for 1.2 s. Each location carries a
+hash of what other files can see of it (`locationInterface.ts`: its symbols
+without positions), so an edit that leaves a file's interface alone
+diagnoses only that file: on a 15.6 M-character game in 10 files, an edit
+is checked in 7 s instead of 11 s, of which 6 s are the aggregates.
 
 Every file is now analysed one way, location by location, open or closed:
 "open" only changes where the text comes from and how soon it is analysed.
 Next, in order:
-- **A second hash: a file's interface.** What other files can see of a file
-  (its location names, the globals it reads and writes, the calls it makes)
-  hashed apart from its text, so an edit that leaves the interface alone
-  doesn't re-diagnose the rest of the project.
 - **Incremental aggregates.** Update the project aggregates by the changed
   file's contribution instead of rebuilding them (5 s on a 12.8 M-character
-  file), and keep them in the cache keyed by the interface hashes (see also
+  file), and keep them in the cache keyed by the files' interfaces (see also
   **Incremental project aggregates**).
 - **Yield during the aggregates and diagnostics.** On first open the server
   answers nothing for their ~10 s (hover, navigation, status updates all
