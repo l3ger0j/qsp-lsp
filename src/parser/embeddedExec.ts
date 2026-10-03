@@ -241,16 +241,12 @@ function isHeaderField(type: string): boolean {
  *
  * `parseFn` is used to sub-parse each link body as QSP source.  When
  * omitted, the pass is a no-op.
- *
- * Locations listed in `reusedLocations` are skipped because their
- * embedded refs were already extracted and shifted by `extractSymbols`.
  */
 export function extractEmbeddedExec(
   tree: Parser.Tree,
   docUri: string,
   symbols: DocumentSymbols,
   parseFn?: (text: string) => Parser.Tree | null,
-  reusedLocations?: ReadonlySet<string>,
 ): void {
   if (!parseFn) return;
 
@@ -266,8 +262,6 @@ export function extractEmbeddedExec(
     if (!nameNode) continue;
 
     const locName = nameNode.text.trim();
-    if (reusedLocations?.has(locName.toLowerCase())) continue;
-
     const locSymbols = symbols.getLocation(locName);
     if (!locSymbols) continue;
 

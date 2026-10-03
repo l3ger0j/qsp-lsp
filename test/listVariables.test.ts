@@ -29,7 +29,7 @@ describe('collectProjectVariables', () => {
   });
 
   function parse(code: string, uri = 'test://t'): DocumentSymbols {
-    const tree = parser.parse(uri, code)!;
+    const tree = parser.parseOnce(code)!;
     return extractSymbols(tree, uri).symbols;
   }
 

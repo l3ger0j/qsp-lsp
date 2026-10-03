@@ -53,7 +53,7 @@ describe('QspTreeSitterParser: recovers after a parse timeout', () => {
 
     // parse() is the per-document entry point used by analyzeDocument();
     // it also shares the single underlying Parser instance.
-    const tree = parser.parse('test://after-timeout', CLEAN_DOC);
+    const tree = parser.parseOnce(CLEAN_DOC);
     expect(tree).not.toBeNull();
     expect(tree!.rootNode.hasError).toBe(false);
     expect(tree!.rootNode.text).toBe(CLEAN_DOC);

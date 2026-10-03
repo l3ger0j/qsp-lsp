@@ -41,10 +41,9 @@ describe('examples/sample.qsps', () => {
   // the decode-and-reparse pass must recover the reference.
   it('recovers location refs from a doubled-quote interpolation body', () => {
     const code = readSample();
-    const tree = parser.parse('file:///sample.qsps', code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(
-      tree, 'file:///sample.qsps', undefined, undefined,
-      (t) => parser.parseOnce(t),
+      tree, 'file:///sample.qsps', (t) => parser.parseOnce(t),
     );
 
     let caveLookRefs = 0;

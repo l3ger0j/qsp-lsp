@@ -8,6 +8,7 @@
  *   - mixedVariablePrefixes
  *   - inconsistentLocalPropagation
  */
+import { extractErrors } from '../src/parser/extractErrors';
 import { describe, it, expect, beforeAll } from 'vitest';
 import * as fs from 'fs';
 import { TextDocument } from 'vscode-languageserver-textdocument';
@@ -56,11 +57,11 @@ describe('diagnostics: propagated locals (reads & writes)', () => {
   function run(code: string, overrides: Partial<DiagnosticSettings>) {
     const uri = 'test://diag';
     const doc = TextDocument.create(uri, 'qsp', 1, code);
-    const tree = parser.parse(uri, code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(tree, uri);
     const locationIndex = buildLocationIndex(code);
     const settings = { ...ALL_OFF, ...overrides };
-    return computeDiagnostics(doc, uri, locationIndex, settings, parser, new Map(), symbols);
+    return computeDiagnostics(doc, uri, locationIndex, settings, new Map(), symbols, extractErrors(tree));
   }
 
   // ── unusedVariables ──────────────────────────────────────────────

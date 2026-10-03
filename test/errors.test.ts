@@ -11,7 +11,7 @@ describe('extractErrors — error classification', () => {
   });
 
   it('should narrow single-line error to one row', () => {
-    const tree = parser.parse('test://err-single', `# test
+    const tree = parser.parseOnce(`# test
 )(
 ---
 `);
@@ -25,7 +25,7 @@ describe('extractErrors — error classification', () => {
   });
 
   it('should detect unclosed string as root cause', () => {
-    const tree = parser.parse('test://err-quote', `# test
+    const tree = parser.parseOnce(`# test
 pl 'unclosed
 x = 1
 y = 2
@@ -42,7 +42,7 @@ y = 2
   });
 
   it('should detect missing end keyword for unclosed block', () => {
-    const tree = parser.parse('test://err-noend', `# test
+    const tree = parser.parseOnce(`# test
 if x > 0:
   pl 'hello'
 ---
@@ -58,7 +58,7 @@ if x > 0:
   });
 
   it('should detect unclosed brace as root cause', () => {
-    const tree = parser.parse('test://err-brace', `# test
+    const tree = parser.parseOnce(`# test
 pl {
 x = 1
 y = 2
@@ -78,7 +78,7 @@ y = 2
     // big ERROR. The `{ ... }` on line 3 is well-balanced but its `}`
     // lands inside a grandchild ERROR. A shallow scan would spuriously
     // flag "Unclosed '{'"; a deep stack-match must not.
-    const tree = parser.parse('test://err-brace-balanced', `# test
+    const tree = parser.parseOnce(`# test
 if x = 1
   pl {balanced block}
 end
@@ -96,7 +96,7 @@ end
     // location was swallowed into a giant ERROR.  The external scanner
     // now captures such bodies as one opaque `interpolation_raw_body`
     // token, so the host parses cleanly and no false diagnostics fire.
-    const tree = parser.parse('test://err-malformed-interp', `# forest
+    const tree = parser.parseOnce(`# forest
 ! Demonstrates: loop, rand(), local variables, mixed call types.
 local encounters = rand(1, 3)
 local i = 0
@@ -129,7 +129,7 @@ result = 1
   describe('malformed <<>> stack-counting cases', () => {
     it('flags a lone unclosed `<<` at end-of-line', () => {
       // `<<func(` with no `>>` anywhere; ERROR spans into next line.
-      const tree = parser.parse('test://mi-lone-eol', `# t\npl 'a <<func(\n---\n`)!;
+      const tree = parser.parseOnce(`# t\npl 'a <<func(\n---\n`)!;
       const errs = extractErrors(tree);
       const hit = errs.find(e => /malformed interpolation/i.test(e.message));
       expect(hit).toBeDefined();
@@ -138,14 +138,14 @@ result = 1
     });
 
     it('does NOT flag a balanced `<<x>>` interpolation', () => {
-      const tree = parser.parse('test://mi-balanced', `# t\npl 'a <<x>> b'\n---\n`)!;
+      const tree = parser.parseOnce(`# t\npl 'a <<x>> b'\n---\n`)!;
       const errs = extractErrors(tree);
       expect(errs.some(e => /malformed interpolation/i.test(e.message))).toBe(false);
     });
 
     it('does NOT flag a stray `>>` with no preceding `<<`', () => {
       // openCount stays 0 on `>>`, so it's discarded and no diag fires.
-      const tree = parser.parse('test://mi-stray-close', `# t\npl 'a >> b'\n---\n`)!;
+      const tree = parser.parseOnce(`# t\npl 'a >> b'\n---\n`)!;
       const errs = extractErrors(tree);
       expect(errs.some(e => /malformed interpolation/i.test(e.message))).toBe(false);
     });
@@ -153,7 +153,7 @@ result = 1
     it('flags an unclosed `<<` that follows a stray `>>`', () => {
       // The leading `>>` is discarded (openCount=0); the later `<<func(`
       // has no matching `>>` and triggers the diagnostic at the `<<`.
-      const tree = parser.parse('test://mi-close-then-open', `# t\npl 'a >> b <<func(\n---\n`)!;
+      const tree = parser.parseOnce(`# t\npl 'a >> b <<func(\n---\n`)!;
       const errs = extractErrors(tree);
       const hit = errs.find(e => /malformed interpolation/i.test(e.message));
       expect(hit).toBeDefined();
@@ -164,9 +164,7 @@ result = 1
     it('flags a second unclosed `<<` after a balanced pair', () => {
       // `<<x>>` cancels out; the second `<<func(` is the unmatched
       // opener and is what the diagnostic should anchor to.
-      const tree = parser.parse(
-        'test://mi-balanced-then-unclosed',
-        `# t\npl 'a <<x>> b <<func(\nact 'y':\nend\n---\n`,
+      const tree = parser.parseOnce(`# t\npl 'a <<x>> b <<func(\nact 'y':\nend\n---\n`,
       )!;
       const errs = extractErrors(tree);
       const hit = errs.find(e => /malformed interpolation/i.test(e.message));
@@ -187,17 +185,13 @@ result = 1
   // decode-and-reparse pass (covered in embeddedExec.test.ts), not here.
   describe('doubled-quote interpolation containment', () => {
     it('single-quoted host with `' + "''" + '` escapes parses cleanly', () => {
-      const tree = parser.parse(
-        'test://dq-squote',
-        `# t\npl '<<$func(''a/b'', ''c'')>>'\n---\n`,
+      const tree = parser.parseOnce(`# t\npl '<<$func(''a/b'', ''c'')>>'\n---\n`,
       )!;
       expect(extractErrors(tree)).toEqual([]);
     });
 
     it('double-quoted host with `""` escapes parses cleanly', () => {
-      const tree = parser.parse(
-        'test://dq-dquote',
-        `# t\npl "<<$func(""a/b"", ""c"")>>"\n---\n`,
+      const tree = parser.parseOnce(`# t\npl "<<$func(""a/b"", ""c"")>>"\n---\n`,
       )!;
       expect(extractErrors(tree)).toEqual([]);
     });
@@ -206,9 +200,7 @@ result = 1
       // The body holds BOTH a `''` sequence (an inner single-quoted
       // literal's own escape) and the `""` host escape.  The scanner
       // keys on the HOST quote, so the inner `''` is plain content.
-      const tree = parser.parse(
-        'test://dq-both-types',
-        `# t\npl "<<$func(""a/b"", 'it''s')>>"\n---\n`,
+      const tree = parser.parseOnce(`# t\npl "<<$func(""a/b"", 'it''s')>>"\n---\n`,
       )!;
       expect(extractErrors(tree)).toEqual([]);
     });
@@ -216,7 +208,7 @@ result = 1
     it('still reports a genuinely unclosed `<<`', () => {
       // No `>>` and no doubled quotes: the raw-body token is not
       // emitted, so the inline path runs and the diagnostic fires.
-      const tree = parser.parse('test://dq-genuine', `# t\npl 'a <<func(\n---\n`)!;
+      const tree = parser.parseOnce(`# t\npl 'a <<func(\n---\n`)!;
       const errs = extractErrors(tree);
       expect(errs.some(e => /malformed interpolation/i.test(e.message))).toBe(true);
     });
@@ -226,9 +218,7 @@ result = 1
       // which always terminates the host string.  The scanner ends the
       // raw body before it and the missing `>>` surfaces as an error
       // instead of the whole rest of the file being swallowed.
-      const tree = parser.parse(
-        'test://dq-unterminated',
-        `# t\npl '<<mid(''abc'', 1)'\nx = 1\n---\n`,
+      const tree = parser.parseOnce(`# t\npl '<<mid(''abc'', 1)'\nx = 1\n---\n`,
       )!;
       const errs = extractErrors(tree);
       expect(errs.length).toBeGreaterThan(0);
@@ -239,7 +229,7 @@ result = 1
 
   it('should report MISSING node with descriptive message', () => {
     // `act:` without a name triggers a MISSING identifier_text node
-    const tree = parser.parse('test://err-missing', `# test
+    const tree = parser.parseOnce(`# test
 act:
 end
 ---
@@ -264,27 +254,27 @@ end
     ['act', "# t\nact 'do it'\n  x = 1\nend\n---"],
     ['loop', '# t\nloop i=0 while i<10\n  x+=1\nend\n---'],
   ])("should detect missing colon after '%s'", (keyword, text) => {
-    const tree = parser.parse(`test://mc-${keyword}`, text)!;
+    const tree = parser.parseOnce(text)!;
     const errors = extractErrors(tree);
     expect(errors.some(e => e.message === `Missing ':' after '${keyword}'`)).toBe(true);
   });
 
   it('should report valid code with no errors', () => {
-    const tree = parser.parse('test://ok1', "# t\nif x=1:\n  y=2\nend\nact 'go':\n  z=3\nend\n---")!;
+    const tree = parser.parseOnce("# t\nif x=1:\n  y=2\nend\nact 'go':\n  z=3\nend\n---")!;
     expect(extractErrors(tree)).toEqual([]);
   });
 
   // ── BOM handling ──
 
   it('BOM at start of file → parse fails (BOM-stripping done in server)', () => {
-    const tree = parser.parse('test://bom1', '\uFEFF# test\nx=1\n---')!;
+    const tree = parser.parseOnce('\uFEFF# test\nx=1\n---')!;
     expect(tree.rootNode.hasError).toBe(true);
   });
 
   it('text with BOM stripped parses correctly', () => {
     const raw = '\uFEFF# test\nx=1\n---';
     const text = raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;
-    const tree = parser.parse('test://bom2', text)!;
+    const tree = parser.parseOnce(text)!;
     expect(tree.rootNode.hasError).toBe(false);
   });
 
@@ -295,7 +285,7 @@ end
       '# templates', 'REMOVE MARKS FROM INVENTORY NAMES', '--- templates', '',
       '# next_loc', "if $j_name = 'test'", '  x = 1', 'end', '--- next_loc',
     ].join('\n');
-    const tree = parser.parse('test://cascade1', text)!;
+    const tree = parser.parseOnce(text)!;
     const colonErrors = extractErrors(tree).filter(e => e.message.includes("Missing ':'"));
     expect(colonErrors.some(e => e.message.includes("'if'"))).toBe(true);
   });
@@ -310,7 +300,7 @@ end
       'ENTER DIALOG WITH CHARACTER', '--- templates', '',
       '# next_loc', "if $j_name = 'Sidework'", '  x = 1', 'end', '--- next_loc',
     ].join('\n');
-    const tree = parser.parse('test://cascade2', text)!;
+    const tree = parser.parseOnce(text)!;
     const colonErrors = extractErrors(tree).filter(e => e.message.includes("Missing ':'"));
     expect(colonErrors.some(e => e.message.includes("'if'"))).toBe(true);
   });
@@ -320,7 +310,7 @@ end
       '# templates', 'REMOVE MARKS FROM INVENTORY NAMES', '--- templates', '',
       '# next_loc', 'x = 1', '--- next_loc',
     ].join('\n');
-    const tree = parser.parse('test://cascade3', text)!;
+    const tree = parser.parseOnce(text)!;
     const errors = extractErrors(tree);
     expect(errors.some(e => e.startRow <= 2)).toBe(true);
     expect(errors.filter(e => e.message.includes("Missing ':'"))).toHaveLength(0);
@@ -331,7 +321,7 @@ end
       '# test', "if $j_name = 'Sidework at Stem'",
       "    $j_text='<<$stemwork>>'", 'end', '--- test',
     ].join('\n');
-    const tree = parser.parse('test://cascade4', text)!;
+    const tree = parser.parseOnce(text)!;
     expect(extractErrors(tree).some(e => e.message === "Missing ':' after 'if'")).toBe(true);
   });
 
@@ -340,13 +330,13 @@ end
       '# test', "if $j_name = 'Sidework at Stem'",
       "    $j_text='<<$stemwork>>'", 'end', '--- test',
     ].join('\r\n');
-    const tree = parser.parse('test://cascade5', text)!;
+    const tree = parser.parseOnce(text)!;
     expect(extractErrors(tree).some(e => e.message === "Missing ':' after 'if'")).toBe(true);
   });
 
   it('marks errors inside code_block as inCodeBlock', () => {
     // Use dynamic with a syntactic code block that has errors inside
-    const tree = parser.parse('test://err-cb', `# test
+    const tree = parser.parseOnce(`# test
 dynamic {
   if
 }
@@ -363,7 +353,7 @@ dynamic {
     // The scanner must accept this as "syntactically valid" for the grammar
     // to attempt parsing. Use an expression that passes the scanner validator
     // but fails the full grammar parse.
-    const tree = parser.parse('test://err-interp', `# test
+    const tree = parser.parseOnce(`# test
 pl '<<x + >>'
 ---
 `);
@@ -377,7 +367,7 @@ pl '<<x + >>'
   });
 
   it('errors outside interpolation are not tagged inInterpolation', () => {
-    const tree = parser.parse('test://err-no-interp', `# test
+    const tree = parser.parseOnce(`# test
 )(
 ---
 `);
@@ -387,7 +377,7 @@ pl '<<x + >>'
   });
 
   it('errors outside code_block are not tagged inCodeBlock', () => {
-    const tree = parser.parse('test://err-no-cb', `# test
+    const tree = parser.parseOnce(`# test
 )(
 ---
 `);
@@ -421,7 +411,7 @@ pl '<<x + >>'
     ['set',   'set 7=9'],
     ['let',   'let 7=9'],
   ])("reports 'Expected a variable name' when '%s' is followed by a digit", (kw, line) => {
-    const tree = parser.parse(`test://vn-lead-${kw}`, `# t\n${line}\n---\n`)!;
+    const tree = parser.parseOnce(`# t\n${line}\n---\n`)!;
     const errors = extractErrors(tree);
     const hit = errors.find(e => /expected a variable name/i.test(e.message));
     expect(hit, `missing descriptive error for '${line}'\nGot: ${JSON.stringify(errors)}`).toBeDefined();
@@ -436,7 +426,7 @@ pl '<<x + >>'
     ['let',        'let i,7=5,8'],
     ['assignment', 'i,7=5,8'],
   ])("reports 'Invalid variable name' for digit in %s variable list", (_label, line) => {
-    const tree = parser.parse(`test://vn-list-${_label}`, `# t\n${line}\n---\n`)!;
+    const tree = parser.parseOnce(`# t\n${line}\n---\n`)!;
     const errors = extractErrors(tree);
     const hit = errors.find(e => /invalid variable name/i.test(e.message));
     expect(hit, `missing descriptive error for '${line}'. Got: ${JSON.stringify(errors)}`).toBeDefined();
@@ -450,32 +440,32 @@ pl '<<x + >>'
   // ── Targeted single-line ERROR shapes ─────────────────────────────
 
   it('bare `@` reports "Expected user function name after \'@\'"', () => {
-    const tree = parser.parse('test://bare-at', '# t\n@\n---\n');
+    const tree = parser.parseOnce('# t\n@\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.some(e => /expected user function name.*'@'/i.test(e.message)
                           && !/'@@'/.test(e.message))).toBe(true);
   });
 
   it('bare `@@` reports "Expected user function name after \'@@\'"', () => {
-    const tree = parser.parse('test://bare-atat', '# t\n@@\n---\n');
+    const tree = parser.parseOnce('# t\n@@\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.some(e => /expected user function name.*'@@'/i.test(e.message))).toBe(true);
   });
 
   it('trailing operator reports "Expected expression after \'+\'"', () => {
-    const tree = parser.parse('test://trail-op', '# t\nx = 1 +\n---\n');
+    const tree = parser.parseOnce('# t\nx = 1 +\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.some(e => /expected expression after '\+'/i.test(e.message))).toBe(true);
   });
 
   it('double type prefix `$$x` reports "Duplicate type prefix"', () => {
-    const tree = parser.parse('test://dup-prefix', '# t\n$$x = "a"\n---\n');
+    const tree = parser.parseOnce('# t\n$$x = "a"\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.some(e => /duplicate type prefix.*\$/i.test(e.message))).toBe(true);
   });
 
   it('`@` and `.` are valid inside variable names — no errors', () => {
-    const tree = parser.parse('test://at-dot', '# t\nlocal x@y = 1\nlocal x.y = 2\n---\n');
+    const tree = parser.parseOnce('# t\nlocal x@y = 1\nlocal x.y = 2\n---\n');
     const errs = extractErrors(tree!);
     expect(errs).toHaveLength(0);
   });
@@ -483,38 +473,37 @@ pl '<<x + >>'
   // ── Whitespace between type prefix and name ─────────────────────────
 
   it('whitespace between `#` and variable name is flagged', () => {
-    const tree = parser.parse('test://hash-space', '# t\n# foo = 1\n---\n');
+    const tree = parser.parseOnce('# t\n# foo = 1\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.some(e => /no whitespace allowed.*type prefix.*variable/i.test(e.message))).toBe(true);
   });
 
   it('whitespace between `$` and variable name is flagged', () => {
-    const tree = parser.parse('test://dollar-space', '# t\n$ name = "x"\n---\n');
+    const tree = parser.parseOnce('# t\n$ name = "x"\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.some(e => /no whitespace allowed.*type prefix.*variable/i.test(e.message))).toBe(true);
   });
 
   it('whitespace between `@` and user function name is flagged', () => {
-    const tree = parser.parse('test://at-space', '# t\n@ foo\n---\n');
+    const tree = parser.parseOnce('# t\n@ foo\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.some(e => /no whitespace allowed.*'@'.*user function/i.test(e.message))).toBe(true);
   });
 
   it('whitespace between `@@` and user function name is flagged', () => {
-    const tree = parser.parse('test://atat-space', '# t\n@@ foo\n---\n');
+    const tree = parser.parseOnce('# t\n@@ foo\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.some(e => /no whitespace allowed.*'@@'.*user function/i.test(e.message))).toBe(true);
   });
 
   it('adjacent prefix and name produces no whitespace error', () => {
-    const tree = parser.parse('test://prefix-ok',
-      '# t\n#x = 1\n$y = "a"\n@foo\n@@bar\nlen("z")\n---\n');
+    const tree = parser.parseOnce('# t\n#x = 1\n$y = "a"\n@foo\n@@bar\nlen("z")\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.filter(e => /no whitespace allowed/i.test(e.message))).toHaveLength(0);
   });
 
   it('line continuation between prefix and name is flagged', () => {
-    const tree = parser.parse('test://prefix-cont', '# t\n# _\n  foo = 1\n---\n');
+    const tree = parser.parseOnce('# t\n# _\n  foo = 1\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.some(e => /no whitespace allowed.*type prefix/i.test(e.message))).toBe(true);
   });
@@ -525,8 +514,7 @@ pl '<<x + >>'
     // with a phantom prefix/name gap, but those groupings are recovery
     // artifacts -- the ERROR is already reported, so no redundant
     // prefix-whitespace noise should be emitted.
-    const tree = parser.parse('test://prefix-in-err',
-      '# t\nx = {\n# foo = 1\n$ bar = 2\n---\n');
+    const tree = parser.parseOnce('# t\nx = {\n# foo = 1\n$ bar = 2\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.some(e => /no whitespace allowed/i.test(e.message))).toBe(false);
   });
@@ -535,8 +523,7 @@ pl '<<x + >>'
     // Validates that the errorDepth counter is decremented on exit: a
     // genuine `# foo = 1` gap in a well-formed location AFTER an earlier
     // broken one must still be flagged.
-    const tree = parser.parse('test://prefix-after-err',
-      '# t\nif x:\n---\n# t2\n# foo = 1\n---\n');
+    const tree = parser.parseOnce('# t\nif x:\n---\n# t2\n# foo = 1\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.some(e => /no whitespace allowed.*type prefix.*variable/i.test(e.message))).toBe(true);
   });
@@ -544,43 +531,43 @@ pl '<<x + >>'
   // ── Function name as lvalue ─────────────────────────────────────────
 
   it('`$len = "a"` reports function name cannot be assigned to', () => {
-    const tree = parser.parse('test://fn-lvalue-1', '# t\n$len = "a"\n---\n');
+    const tree = parser.parseOnce('# t\n$len = "a"\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.some(e => /'len'.*reserved function name.*cannot be assigned/i.test(e.message))).toBe(true);
   });
 
   it('`len = 1` reports function name cannot be assigned to', () => {
-    const tree = parser.parse('test://fn-lvalue-2', '# t\nlen = 1\n---\n');
+    const tree = parser.parseOnce('# t\nlen = 1\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.some(e => /'len'.*reserved function name/i.test(e.message))).toBe(true);
   });
 
   it('`$mid = "a"` reports function name cannot be assigned to', () => {
-    const tree = parser.parse('test://fn-lvalue-3', '# t\n$mid = "a"\n---\n');
+    const tree = parser.parseOnce('# t\n$mid = "a"\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.some(e => /'mid'.*reserved function name/i.test(e.message))).toBe(true);
   });
 
   it('`len("sdsd") = 44` is flagged (QSP parses as assignment)', () => {
-    const tree = parser.parse('test://fn-args-1', "# t\nlen('sdsd') = 44\n---\n");
+    const tree = parser.parseOnce("# t\nlen('sdsd') = 44\n---\n");
     const errs = extractErrors(tree!);
     expect(errs.some(e => /'len'.*reserved function name/i.test(e.message))).toBe(true);
   });
 
   it('`$mid("a",1,2) = "b"` is flagged', () => {
-    const tree = parser.parse('test://fn-args-2', '# t\n$mid("a",1,2) = "b"\n---\n');
+    const tree = parser.parseOnce('# t\n$mid("a",1,2) = "b"\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.some(e => /'mid'.*reserved function name/i.test(e.message))).toBe(true);
   });
 
   it('`if len("x") = 5:` (comparison inside condition) is NOT flagged', () => {
-    const tree = parser.parse('test://fn-cmp-call', '# t\nif len("x") = 5:\n  x = 1\nend\n---\n');
+    const tree = parser.parseOnce('# t\nif len("x") = 5:\n  x = 1\nend\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.filter(e => /reserved function name/i.test(e.message))).toHaveLength(0);
   });
 
   it('`x = len("a")` is NOT flagged (function call on RHS)', () => {
-    const tree = parser.parse('test://fn-rhs', '# t\nx = len("a")\n---\n');
+    const tree = parser.parseOnce('# t\nx = len("a")\n---\n');
     const errs = extractErrors(tree!);
     expect(errs.filter(e => /reserved function name/i.test(e.message))).toHaveLength(0);
   });
@@ -588,7 +575,7 @@ pl '<<x + >>'
   it('`if len = 5:` (comparison, not assignment) is still flagged', () => {
     // This one is a judgment call — `len = 5` at any expression position
     // looks like assignment intent. We flag it consistently.
-    const tree = parser.parse('test://fn-if-cmp', '# t\nif len = 5:\n  x = 1\nend\n---\n');
+    const tree = parser.parseOnce('# t\nif len = 5:\n  x = 1\nend\n---\n');
     const errs = extractErrors(tree!);
     // Inside `if ... :`, na_binary's parent is `if_keyword`-bearing rule,
     // not `implicit_statement` — so this case is NOT flagged. Verify

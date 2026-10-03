@@ -22,7 +22,6 @@ import {
   RenameParams,
   SemanticTokensParams,
   SemanticTokensRangeParams,
-  type SemanticTokens,
   SemanticTokensRequest,
   SemanticTokensRangeRequest,
   SymbolKind,
@@ -49,11 +48,9 @@ import type {
 } from './aggregation';
 import { buildFileAggregates } from './aggregation';
 import { buildLocationIndex } from '../common/locations';
-import { buildSemanticTokens } from './semanticTokens';
 import { formatLines, getWordInfo, inferIndentLevel, startsWithKeyword, uriBasename as basename } from './helpers';
 import { locationNameCol } from './regexFallback';
 import { perLocationCacheKeys } from './serverUtils';
-import { collectFoldLines } from './locationAnalysis';
 import { buildSuppressionActions } from './suppressionActions';
 import {
   detectEol,
@@ -616,10 +613,10 @@ export function registerLspFeatures(ctx: ServerContext): void {
 
             // Possible values
             if (ctx.settings.hover.possibleValues) {
-              let tree = ctx.tsParser.getTree(uri);
+              let tree: ReturnType<typeof ctx.tsParser.parseOnce> = null;
               let lineOffset = 0;
               let tempTree = false;
-              if (!tree && state.perLocationCache) {
+              if (state.perLocationCache) {
                 // Keyed like the cache's writers (see perLocationCacheKeys'
                 // doc comment) — plain nameLower would only ever find the
                 // FIRST of two same-named locations' cached tree.
@@ -751,20 +748,9 @@ export function registerLspFeatures(ctx: ServerContext): void {
       state.cachedSemanticTokens = tokens;
       return tokens;
     }
-    return wholeFileTokens(uri, state);
+    // Regex-only symbols (no parser): TextMate colours the file.
+    return { data: [] };
   });
-
-  function wholeFileTokens(uri: string, state: DocumentState | undefined): SemanticTokens {
-    if (!tsParser.isReady) return { data: [] };
-    const tree = tsParser.getTree(uri);
-    if (!tree) return { data: [] };
-    const embedParseFn = ctx.settings.embeddedExec.enabled
-      ? (t: string) => tsParser.parseOnce(t)
-      : undefined;
-    const tokens = buildSemanticTokens(tree, gotoTargetsNow(), embedParseFn);
-    if (state) state.cachedSemanticTokens = tokens;
-    return tokens;
-  }
 
   connection.onRequest(SemanticTokensRangeRequest.type, (params: SemanticTokensRangeParams) => {
     if (!ctx.settings.semanticHighlighting.enabled) return { data: [] };
@@ -774,8 +760,7 @@ export function registerLspFeatures(ctx: ServerContext): void {
       const lines = { start: params.range.start.line, end: params.range.end.line };
       return ctx.buildTokensFromCache(state.locationIndex, state.perLocationCache, gotoTargetsNow(), lines);
     }
-    // A small file's whole tokens: the protocol lets a range get more.
-    return wholeFileTokens(params.textDocument.uri, state);
+    return { data: [] };
   });
 
   // ==================== CODE ACTIONS ====================
@@ -872,7 +857,6 @@ export function registerLspFeatures(ctx: ServerContext): void {
       }
     }
 
-    const tree = tsParser.isReady ? tsParser.getTree(uri) : null;
     const text = doc.getText();
     const lines = text.split(/\r?\n/);
 
@@ -881,12 +865,8 @@ export function registerLspFeatures(ctx: ServerContext): void {
       : undefined;
     if (blocks) {
       for (const b of blocks) ranges.push({ ...b, kind: FoldingRangeKind.Region });
-    } else if (tree) {
-      const folds = collectFoldLines(tree);
-      for (let i = 0; i < folds.length; i += 2) {
-        ranges.push({ startLine: folds[i], endLine: folds[i + 1], kind: FoldingRangeKind.Region });
-      }
     } else {
+      // Regex-only symbols (no parser): match block keywords with `end`.
       const blockStack: { keyword: string; line: number }[] = [];
       for (let i = 0; i < lines.length; i++) {
         const trimmed = lines[i].trimStart();
@@ -928,11 +908,11 @@ export function registerLspFeatures(ctx: ServerContext): void {
     if (!tsParser.isReady) return null;
     const uri = params.textDocument.uri;
     const state = documentStates.get(uri);
-    let tree = tsParser.getTree(uri);
+    let tree: ReturnType<typeof tsParser.parseOnce> = null;
     let lineOffset = 0;
     let tempTree = false;
 
-    if (!tree && state?.perLocationCache) {
+    if (state?.perLocationCache) {
       const loc = findLocationAtLine(state.locationIndex, params.position.line);
       if (loc) {
         // Keyed like the cache's writers — see perLocationCacheKeys' doc

@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import type { Diagnostic } from 'vscode-languageserver';
 import { QspTreeSitterParser, extractSymbols } from '../src/parser/treeSitter';
+import { extractErrors } from '../src/parser/extractErrors';
 import type { DocumentSymbols } from '../src/parser/symbolTable';
 import { buildLocationIndex } from '../src/common/locations';
 import { computeDiagnostics, type DiagnosticSettings } from '../src/server/diagnostics';
@@ -43,7 +44,7 @@ export function parseAndExtract(
   code: string,
   uri = 'test://t',
 ): { symbols: DocumentSymbols; tree: ReturnType<QspTreeSitterParser['parse']> } {
-  const tree = parser.parse(uri, code)!;
+  const tree = parser.parseOnce(code)!;
   const { symbols } = extractSymbols(tree, uri);
   return { symbols, tree };
 }
@@ -97,14 +98,14 @@ export function runDiagnostics(
   uri = 'test://diag',
 ): Diagnostic[] {
   const doc = TextDocument.create(uri, 'qsp', 1, code);
-  const tree = parser.parse(uri, code)!;
+  const tree = parser.parseOnce(code)!;
   const { symbols } = extractSymbols(tree, uri);
   const locationIndex = buildLocationIndex(code);
   const settings = { ...ALL_DIAGS_OFF, ...overrides };
   const callTypes = collectCallTypesPerTarget([symbols]);
   return computeDiagnostics(
-    doc, uri, locationIndex, settings, parser, callTypes, symbols,
-    undefined, undefined, undefined, [], parseSuppressions(code, locationIndex),
+    doc, uri, locationIndex, settings, callTypes, symbols,
+    extractErrors(tree), undefined, undefined, [], parseSuppressions(code, locationIndex),
   );
 }
 
@@ -173,15 +174,15 @@ export function runMultiFileDiagnostics(
   const settings = { ...ALL_DIAGS_OFF, ...overrides };
   const perFile = files.map(({ uri, code }) => {
     const doc = TextDocument.create(uri, 'qsp', 1, code);
-    const tree = parser.parse(uri, code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(tree, uri);
     const locationIndex = buildLocationIndex(code);
-    return { uri, code, doc, symbols, locationIndex };
+    return { uri, code, doc, symbols, locationIndex, errors: extractErrors(tree) };
   });
   const callTypes = collectCallTypesPerTarget(perFile.map(f => f.symbols));
-  return perFile.map(({ uri, doc, symbols, locationIndex }) => ({
+  return perFile.map(({ uri, doc, symbols, locationIndex, errors }) => ({
     uri,
-    diagnostics: computeDiagnostics(doc, uri, locationIndex, settings, parser, callTypes, symbols),
+    diagnostics: computeDiagnostics(doc, uri, locationIndex, settings, callTypes, symbols, errors),
   }));
 }
 

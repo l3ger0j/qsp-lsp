@@ -956,7 +956,7 @@ describe('variable reference detection — comprehensive', () => {
   // ── Prefix unification ($x, #x, %x, x → same variable) ──────────
 
   it('$x and x point to the same variable', () => {
-    const tree = parser.parse('test://dollar', `# test\nx = 5\npl $x\n---\n`);
+    const tree = parser.parseOnce(`# test\nx = 5\npl $x\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://dollar');
     const locSyms = symbols.getLocation('test')!;
     // Both x = 5 and $x should merge into key 'x'
@@ -969,21 +969,21 @@ describe('variable reference detection — comprehensive', () => {
   });
 
   it('#x and x point to the same variable', () => {
-    const tree = parser.parse('test://hash', `# test\nx = 5\npl #x\n---\n`);
+    const tree = parser.parseOnce(`# test\nx = 5\npl #x\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://hash');
     const sym = symbols.getLocation('test')!.variables.get('x')!;
     expect(sym.references).toHaveLength(2);
   });
 
   it('%x and x point to the same variable', () => {
-    const tree = parser.parse('test://pct', `# test\nx = 5\npl %x\n---\n`);
+    const tree = parser.parseOnce(`# test\nx = 5\npl %x\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://pct');
     const sym = symbols.getLocation('test')!.variables.get('x')!;
     expect(sym.references).toHaveLength(2);
   });
 
   it('all prefixes ($, #, %) merge with unprefixed', () => {
-    const tree = parser.parse('test://all-prefix', `# test\nmyvar = 1\npl $myvar\npl #myvar\npl %myvar\n---\n`);
+    const tree = parser.parseOnce(`# test\nmyvar = 1\npl $myvar\npl #myvar\npl %myvar\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://all-prefix');
     const sym = symbols.getLocation('test')!.variables.get('myvar')!;
     expect(sym.references).toHaveLength(4);
@@ -993,7 +993,7 @@ describe('variable reference detection — comprehensive', () => {
   // ── Assignment detection ─────────────────────────────────────────
 
   it('simple assignment is a definition', () => {
-    const tree = parser.parse('test://assign', `# test\nx = 10\n---\n`);
+    const tree = parser.parseOnce(`# test\nx = 10\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://assign');
     const sym = symbols.getLocation('test')!.variables.get('x')!;
     expect(sym.definition).toBeDefined();
@@ -1001,14 +1001,14 @@ describe('variable reference detection — comprehensive', () => {
   });
 
   it('compound assignment (+=) is NOT a definition', () => {
-    const tree = parser.parse('test://compound', `# test\nx += 1\n---\n`);
+    const tree = parser.parseOnce(`# test\nx += 1\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://compound');
     const sym = symbols.getLocation('test')!.variables.get('x')!;
     expect(sym.definition).toBeUndefined();
   });
 
   it('reading a variable without assignment is NOT a definition', () => {
-    const tree = parser.parse('test://read-only', `# test\npl x\n---\n`);
+    const tree = parser.parseOnce(`# test\npl x\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://read-only');
     const sym = symbols.getLocation('test')!.variables.get('x')!;
     expect(sym.definition).toBeUndefined();
@@ -1016,7 +1016,7 @@ describe('variable reference detection — comprehensive', () => {
   });
 
   it('first assignment sets definition, later assignments are references', () => {
-    const tree = parser.parse('test://multi-assign', `# test\nx = 1\nx = 2\npl x\n---\n`);
+    const tree = parser.parseOnce(`# test\nx = 1\nx = 2\npl x\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://multi-assign');
     const sym = symbols.getLocation('test')!.variables.get('x')!;
     expect(sym.definition).toBeDefined();
@@ -1027,7 +1027,7 @@ describe('variable reference detection — comprehensive', () => {
   // ── LOCAL declarations ───────────────────────────────────────────
 
   it('LOCAL statement marks variable as local and defined', () => {
-    const tree = parser.parse('test://local', `# test\nlocal x = 5\n---\n`);
+    const tree = parser.parseOnce(`# test\nlocal x = 5\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://local');
     const sym = symbols.getLocation('test')!.findVariable('x')!;
     expect(sym.isLocal).toBe(true);
@@ -1035,7 +1035,7 @@ describe('variable reference detection — comprehensive', () => {
   });
 
   it('LOCAL without assignment still marks as definition', () => {
-    const tree = parser.parse('test://local-noassign', `# test\nlocal x\npl x\n---\n`);
+    const tree = parser.parseOnce(`# test\nlocal x\npl x\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://local-noassign');
     const sym = symbols.getLocation('test')!.findVariable('x')!;
     expect(sym.isLocal).toBe(true);
@@ -1050,7 +1050,7 @@ describe('variable reference detection — comprehensive', () => {
     // pre-declaration global with the bare read, and a fresh local
     // owned by the declaration), not be conflated by an
     // upgrade-after-the-fact.
-    const tree = parser.parse('test://local-late', `# test\npl x\nlocal x = 5\n---\n`);
+    const tree = parser.parseOnce(`# test\npl x\nlocal x = 5\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://local-late');
     const loc = symbols.getLocation('test')!;
     const global = loc.variables.get('x')!;
@@ -1065,7 +1065,7 @@ describe('variable reference detection — comprehensive', () => {
   });
 
   it('local vars in different locations are independent symbols', () => {
-    const tree = parser.parse('test://local-scope', `# loc1\nlocal x = 1\n---\n# loc2\nlocal x = 2\n---\n`);
+    const tree = parser.parseOnce(`# loc1\nlocal x = 1\n---\n# loc2\nlocal x = 2\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://local-scope');
     const loc1 = symbols.getLocation('loc1')!;
     const loc2 = symbols.getLocation('loc2')!;
@@ -1078,7 +1078,7 @@ describe('variable reference detection — comprehensive', () => {
   });
 
   it('findVariableReferences scopes local vars to their location', () => {
-    const tree = parser.parse('test://ref-scope', `# loc1\nlocal x = 1\npl x\n---\n# loc2\nlocal x = 2\npl x\n---\n`);
+    const tree = parser.parseOnce(`# loc1\nlocal x = 1\npl x\n---\n# loc2\nlocal x = 2\npl x\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://ref-scope');
     // From loc1's perspective, only loc1's references should be returned
     const refs1 = symbols.findVariableReferences('x', 'loc1');
@@ -1091,7 +1091,7 @@ describe('variable reference detection — comprehensive', () => {
   });
 
   it('findVariableReferences returns all refs for global vars', () => {
-    const tree = parser.parse('test://global-ref', `# loc1\nx = 1\n---\n# loc2\npl x\n---\n`);
+    const tree = parser.parseOnce(`# loc1\nx = 1\n---\n# loc2\npl x\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://global-ref');
     const refs = symbols.findVariableReferences('x', 'loc1');
     expect(refs).toHaveLength(2); // both locations
@@ -1100,7 +1100,7 @@ describe('variable reference detection — comprehensive', () => {
   // ── Array variables ──────────────────────────────────────────────
 
   it('array variable with index is tracked', () => {
-    const tree = parser.parse('test://arr', `# test\narr[0] = 1\npl arr[1]\n---\n`);
+    const tree = parser.parseOnce(`# test\narr[0] = 1\npl arr[1]\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://arr');
     const sym = symbols.getLocation('test')!.variables.get('arr')!;
     expect(sym.definition).toBeDefined();
@@ -1108,7 +1108,7 @@ describe('variable reference detection — comprehensive', () => {
   });
 
   it('$arr[] and arr[] point to the same variable', () => {
-    const tree = parser.parse('test://arr-prefix', `# test\narr[0] = 1\npl $arr[0]\n---\n`);
+    const tree = parser.parseOnce(`# test\narr[0] = 1\npl $arr[0]\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://arr-prefix');
     const sym = symbols.getLocation('test')!.variables.get('arr')!;
     expect(sym.references).toHaveLength(2);
@@ -1117,7 +1117,7 @@ describe('variable reference detection — comprehensive', () => {
   // ── Cross-location variable references ───────────────────────────
 
   it('variable defined in one location and read in another', () => {
-    const tree = parser.parse('test://cross-loc', `# loc1\nglobal_var = 10\n---\n# loc2\npl global_var\n---\n`);
+    const tree = parser.parseOnce(`# loc1\nglobal_var = 10\n---\n# loc2\npl global_var\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://cross-loc');
     const loc1 = symbols.getLocation('loc1')!;
     const loc2 = symbols.getLocation('loc2')!;
@@ -1127,7 +1127,7 @@ describe('variable reference detection — comprehensive', () => {
   });
 
   it('findVariableReferences finds refs across all locations', () => {
-    const tree = parser.parse('test://find-var', `# loc1\nx = 1\n---\n# loc2\npl x\n---\n`);
+    const tree = parser.parseOnce(`# loc1\nx = 1\n---\n# loc2\npl x\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://find-var');
     const refs = symbols.findVariableReferences('x');
     expect(refs).toHaveLength(2);
@@ -1136,7 +1136,7 @@ describe('variable reference detection — comprehensive', () => {
   // ── Variable refs from string arguments ──────────────────────────
 
   it('setvar defines a variable from string arg', () => {
-    const tree = parser.parse('test://setvar-def', `# test\nsetvar '$myvar', 5\npl myvar\n---\n`);
+    const tree = parser.parseOnce(`# test\nsetvar '$myvar', 5\npl myvar\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://setvar-def');
     const sym = symbols.getLocation('test')!.variables.get('myvar')!;
     expect(sym.definition).toBeDefined();
@@ -1144,7 +1144,7 @@ describe('variable reference detection — comprehensive', () => {
   });
 
   it('killvar references a variable from string arg', () => {
-    const tree = parser.parse('test://killvar-ref', `# test\nx = 1\nkillvar '$x'\n---\n`);
+    const tree = parser.parseOnce(`# test\nx = 1\nkillvar '$x'\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://killvar-ref');
     const sym = symbols.getLocation('test')!.variables.get('x')!;
     expect(sym.definition).toBeDefined(); // x = 1
@@ -1152,7 +1152,7 @@ describe('variable reference detection — comprehensive', () => {
   });
 
   it('arrsize references a variable from string arg', () => {
-    const tree = parser.parse('test://arrsize-ref', `# test\narr[0] = 1\npl arrsize('$arr')\n---\n`);
+    const tree = parser.parseOnce(`# test\narr[0] = 1\npl arrsize('$arr')\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://arrsize-ref');
     const sym = symbols.getLocation('test')!.variables.get('arr')!;
     expect(sym.definition).toBeDefined();
@@ -1160,7 +1160,7 @@ describe('variable reference detection — comprehensive', () => {
   });
 
   it('copyarr: first arg is definition, second is reference', () => {
-    const tree = parser.parse('test://copyarr', `# test\nsrc[0] = 1\ncopyarr '$dest', '$src'\n---\n`);
+    const tree = parser.parseOnce(`# test\nsrc[0] = 1\ncopyarr '$dest', '$src'\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://copyarr');
     const srcSym = symbols.getLocation('test')!.variables.get('src')!;
     const destSym = symbols.getLocation('test')!.variables.get('dest')!;
@@ -1169,21 +1169,21 @@ describe('variable reference detection — comprehensive', () => {
   });
 
   it('string arg without prefix works for variable ref', () => {
-    const tree = parser.parse('test://no-prefix-str', `# test\narr[0] = 1\npl arrsize('arr')\n---\n`);
+    const tree = parser.parseOnce(`# test\narr[0] = 1\npl arrsize('arr')\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://no-prefix-str');
     const sym = symbols.getLocation('test')!.variables.get('arr')!;
     expect(sym.references).toHaveLength(2);
   });
 
   it('max with single arg references a variable', () => {
-    const tree = parser.parse('test://max-1', `# test\narr[0] = 5\npl max('$arr')\n---\n`);
+    const tree = parser.parseOnce(`# test\narr[0] = 5\npl max('$arr')\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://max-1');
     const sym = symbols.getLocation('test')!.variables.get('arr')!;
     expect(sym.references).toHaveLength(2);
   });
 
   it('max with two args does NOT reference a variable', () => {
-    const tree = parser.parse('test://max-2', `# test\npl max(1, 2)\n---\n`);
+    const tree = parser.parseOnce(`# test\npl max(1, 2)\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://max-2');
     const locSyms = symbols.getLocation('test')!;
     // No variable should be created from max(1,2)
@@ -1193,14 +1193,14 @@ describe('variable reference detection — comprehensive', () => {
   // ── Interpolated strings should NOT create refs ──────────────────
 
   it('does NOT create location ref from interpolated string', () => {
-    const tree = parser.parse('test://interp', `# test\ngosub '<<$name>>'\n---\n`);
+    const tree = parser.parseOnce(`# test\ngosub '<<$name>>'\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://interp');
     const locSyms = symbols.getLocation('test')!;
     expect(locSyms.locationRefs.size).toBe(0);
   });
 
   it('tracks variable ref inside interpolated string arg', () => {
-    const tree = parser.parse('test://interp-var', `# test\nkillvar '<<$name>>'\n---\n`);
+    const tree = parser.parseOnce(`# test\nkillvar '<<$name>>'\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://interp-var');
     const locSyms = symbols.getLocation('test')!;
     // $name inside <<>> is parsed as ml_variable_ref — correctly tracked
@@ -1211,7 +1211,7 @@ describe('variable reference detection — comprehensive', () => {
   // ── Multiple variables in a single assignment ────────────────────
 
   it('handles multiple variable assignment (x, y = 1, 2)', () => {
-    const tree = parser.parse('test://multi-var', `# test\nx, y = 1, 2\npl x\npl y\n---\n`);
+    const tree = parser.parseOnce(`# test\nx, y = 1, 2\npl x\npl y\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://multi-var');
     const locSyms = symbols.getLocation('test')!;
     const xSym = locSyms.variables.get('x')!;
@@ -1225,7 +1225,7 @@ describe('variable reference detection — comprehensive', () => {
   // ── Variable in expression contexts ──────────────────────────────
 
   it('tracks variable in condition expression', () => {
-    const tree = parser.parse('test://cond', `# test\nif x > 0: pl 'yes'\n---\n`);
+    const tree = parser.parseOnce(`# test\nif x > 0: pl 'yes'\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://cond');
     const sym = symbols.getLocation('test')!.variables.get('x')!;
     expect(sym.references).toHaveLength(1);
@@ -1233,7 +1233,7 @@ describe('variable reference detection — comprehensive', () => {
   });
 
   it('tracks variable in loop condition', () => {
-    const tree = parser.parse('test://loop', `# test\ni = 0\nloop while i < 10:\ni += 1\nend\n---\n`);
+    const tree = parser.parseOnce(`# test\ni = 0\nloop while i < 10:\ni += 1\nend\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://loop');
     const sym = symbols.getLocation('test')!.variables.get('i')!;
     expect(sym.definition).toBeDefined();
@@ -1241,14 +1241,14 @@ describe('variable reference detection — comprehensive', () => {
   });
 
   it('tracks variable used as function argument', () => {
-    const tree = parser.parse('test://funcarg', `# test\nx = 5\npl str(x)\n---\n`);
+    const tree = parser.parseOnce(`# test\nx = 5\npl str(x)\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://funcarg');
     const sym = symbols.getLocation('test')!.variables.get('x')!;
     expect(sym.references).toHaveLength(2);
   });
 
   it('tracks variable used in array index', () => {
-    const tree = parser.parse('test://idx', `# test\ni = 0\npl arr[i]\n---\n`);
+    const tree = parser.parseOnce(`# test\ni = 0\npl arr[i]\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://idx');
     const iSym = symbols.getLocation('test')!.variables.get('i')!;
     expect(iSym.references).toHaveLength(2);
@@ -1259,7 +1259,7 @@ describe('variable reference detection — comprehensive', () => {
   // ── Built-in variables should still be tracked ───────────────────
 
   it('does not track built-in $curloc as variable (parsed as func call)', () => {
-    const tree = parser.parse('test://builtin', `# test\npl $curloc\n---\n`);
+    const tree = parser.parseOnce(`# test\npl $curloc\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://builtin');
     // $curloc is parsed by tree-sitter as na_func_call, not variable_ref
     expect(symbols.getLocation('test')!.variables.has('curloc')).toBe(false);
@@ -1268,7 +1268,7 @@ describe('variable reference detection — comprehensive', () => {
   // ── Variable in nested scopes ────────────────────────────────────
 
   it('tracks variables inside act blocks', () => {
-    const tree = parser.parse('test://act-var', `# test\nact 'Go':\n  local x = 1\n  pl x\nend\n---\n`);
+    const tree = parser.parseOnce(`# test\nact 'Go':\n  local x = 1\n  pl x\nend\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://act-var');
     const sym = symbols.getLocation('test')!.findVariable('x')!;
     expect(sym.isLocal).toBe(true);
@@ -1277,7 +1277,7 @@ describe('variable reference detection — comprehensive', () => {
   });
 
   it('tracks variables inside nested if/loop blocks', () => {
-    const tree = parser.parse('test://nested-var', `# test\nif 1:\n  loop while 1:\n    x = 1\n  end\nend\n---\n`);
+    const tree = parser.parseOnce(`# test\nif 1:\n  loop while 1:\n    x = 1\n  end\nend\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://nested-var');
     const sym = symbols.getLocation('test')!.variables.get('x')!;
     expect(sym.definition).toBeDefined();
@@ -1286,7 +1286,7 @@ describe('variable reference detection — comprehensive', () => {
   // ── Local variable propagation ───────────────────────────────────
 
   it('local vars propagate into nested if/loop scopes', () => {
-    const tree = parser.parse('test://prop', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if 1:
   pl x
@@ -1303,7 +1303,7 @@ end
   });
 
   it('local vars propagate through nested if/loop levels', () => {
-    const tree = parser.parse('test://deep', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if 1:
   loop while 1:
@@ -1320,7 +1320,7 @@ end
   });
 
   it('local vars do NOT propagate into act blocks', () => {
-    const tree = parser.parse('test://act-iso', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 act 'Go':
   pl x
@@ -1337,7 +1337,7 @@ end
   });
 
   it('local vars do NOT propagate into act blocks (inline)', () => {
-    const tree = parser.parse('test://act-sl-iso', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 act 'Go': pl x
 ---
@@ -1351,7 +1351,7 @@ act 'Go': pl x
   });
 
   it('loop header LOCAL scopes to the loop body', () => {
-    const tree = parser.parse('test://loop-hdr', `# test
+    const tree = parser.parseOnce(`# test
 loop local x = 0 while x < 10 step x += 1:
   pl x
 end
@@ -1367,7 +1367,7 @@ end
   });
 
   it('loop header LOCAL does not leak to parent scope', () => {
-    const tree = parser.parse('test://loop-leak', `# test
+    const tree = parser.parseOnce(`# test
 loop local x = 0 while x < 10 step x += 1:
   pl x
 end
@@ -1382,7 +1382,7 @@ pl x
   });
 
   it('single-line loop creates a scope', () => {
-    const tree = parser.parse('test://loop-sl', `# test
+    const tree = parser.parseOnce(`# test
 loop local i = 0 while i < 3 step i += 1: pl i
 pl i
 ---
@@ -1394,7 +1394,7 @@ pl i
   });
 
   it('single-line if creates a scope', () => {
-    const tree = parser.parse('test://if-sl', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if 1: pl x
 ---
@@ -1408,7 +1408,7 @@ if 1: pl x
   });
 
   it('elseif and else get their own scopes', () => {
-    const tree = parser.parse('test://elif', `# test
+    const tree = parser.parseOnce(`# test
 if 1:
   local a = 1
 elseif 1:
@@ -1427,7 +1427,7 @@ end
   });
 
   it('locals defined inside act propagate into nested if/loop', () => {
-    const tree = parser.parse('test://act-inner', `# test
+    const tree = parser.parseOnce(`# test
 act 'Go':
   local y = 1
   if 1:
@@ -1446,7 +1446,7 @@ end
   });
 
   it('act references globals but can shadow with own locals', () => {
-    const tree = parser.parse('test://act-shadow', `# test
+    const tree = parser.parseOnce(`# test
 x = 1
 act 'Go':
   pl x
@@ -1471,7 +1471,7 @@ end
   });
 
   it('local vars propagate into all if/elseif/else branches', () => {
-    const tree = parser.parse('test://all-branches', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if 1:
   pl x
@@ -1492,7 +1492,7 @@ end
   });
 
   it('local vars propagate into single-line if body', () => {
-    const tree = parser.parse('test://sl-if-prop', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if 1: pl x
 ---
@@ -1505,7 +1505,7 @@ if 1: pl x
   });
 
   it('local vars propagate into single-line loop body', () => {
-    const tree = parser.parse('test://sl-loop-prop', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 loop while 1: pl x
 ---
@@ -1518,7 +1518,7 @@ loop while 1: pl x
   });
 
   it('local vars propagate into multiline if body', () => {
-    const tree = parser.parse('test://ml-if-prop', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if 1:
   pl x
@@ -1533,7 +1533,7 @@ end
   });
 
   it('local vars propagate into multiline loop body', () => {
-    const tree = parser.parse('test://ml-loop-prop', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 loop while 1:
   pl x
@@ -1548,7 +1548,7 @@ end
   });
 
   it('re-declaring LOCAL in nested scope shadows the parent local', () => {
-    const tree = parser.parse('test://shadow', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if 1:
   local x = 2
@@ -1570,7 +1570,7 @@ pl x
   });
 
   it('re-declaring LOCAL in nested loop shadows the parent local', () => {
-    const tree = parser.parse('test://shadow-loop', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 loop while 1:
   local x = 2
@@ -1591,7 +1591,7 @@ pl x
   it('local in if-body is not visible after end (block form)', () => {
     // `local y` is scoped to the if-body; the reference after `end`
     // should resolve to a separate global symbol.
-    const tree = parser.parse('test://branch-after-end', `# test
+    const tree = parser.parseOnce(`# test
 if 1:
   local y = 1
 end
@@ -1610,7 +1610,7 @@ pl y
   it('local in if-body is not visible in else-branch (block form)', () => {
     // `local y` in the if-branch is a separate symbol from the `y = 2`
     // in the else-branch (global write — no outer local to retag onto).
-    const tree = parser.parse('test://branch-isolation-else', `# test
+    const tree = parser.parseOnce(`# test
 if 1:
   local y = 1
 else
@@ -1628,7 +1628,7 @@ end
   });
 
   it('local in if-body is not visible in elseif-branch (block form)', () => {
-    const tree = parser.parse('test://branch-isolation-elseif', `# test
+    const tree = parser.parseOnce(`# test
 if 1:
   local y = 1
 elseif 1:
@@ -1646,7 +1646,7 @@ end
 
   it('locals in sibling elseif-branches are independent symbols', () => {
     // Each `local y` lives in its own elseif scope — two distinct syms.
-    const tree = parser.parse('test://sibling-elseif', `# test
+    const tree = parser.parseOnce(`# test
 if 1:
   local y = 1
 elseif 1:
@@ -1662,7 +1662,7 @@ end
   });
 
   it('local in if-body is not visible after end (inline form)', () => {
-    const tree = parser.parse('test://branch-inline-after-end', `# test
+    const tree = parser.parseOnce(`# test
 if 1: local y = 1
 pl y
 ---
@@ -1677,7 +1677,7 @@ pl y
 
   it('locals in inline if/else branches are independent symbols', () => {
     // Single-line form: `if 1: local y = 1 else local y = 2`
-    const tree = parser.parse('test://branch-inline-sibling', `# test
+    const tree = parser.parseOnce(`# test
 if 1: local y = 1 else local y = 2
 ---
 `);
@@ -1694,7 +1694,7 @@ if 1: local y = 1 else local y = 2
     // loop body — so loop-body locals must still propagate into it.
     // This was broken when passedBranch was a flat boolean that blocked
     // ANY enclosing scope once an else/elseif was crossed.
-    const tree = parser.parse('test://loop-else-visibility', `# test
+    const tree = parser.parseOnce(`# test
 loop while 1:
   local y = 1
   if 1:
@@ -1718,7 +1718,7 @@ end
     // `local y` in outer if-body (scopeKey = the outer if_block's).
     // Consumer is in the else-branch of a NESTED inner if — the inner
     // else should not block the outer if-body binding.
-    const tree = parser.parse('test://outer-if-nested-else', `# test
+    const tree = parser.parseOnce(`# test
 if 1:
   local y = 1
   if 2:
@@ -1741,7 +1741,7 @@ end
 
   it('local in act-body is not visible after end (block form)', () => {
     // act_block is isolating — `local y` cannot escape it.
-    const tree = parser.parse('test://act-after-end', `# test
+    const tree = parser.parseOnce(`# test
 act 'A':
   local y = 1
 end
@@ -1757,7 +1757,7 @@ pl y
   });
 
   it('local in act-body is not visible after (inline form)', () => {
-    const tree = parser.parse('test://act-inline-after', `# test
+    const tree = parser.parseOnce(`# test
 act 'A': local y = 1
 pl y
 ---
@@ -1773,7 +1773,7 @@ pl y
   it('outer local is not visible inside act-body (isolation boundary)', () => {
     // act is isolating: the bare `y = 2` inside cannot see the outer
     // `local y`, so it stays global (two separate symbols).
-    const tree = parser.parse('test://act-isolation-outer', `# test
+    const tree = parser.parseOnce(`# test
 local y = 1
 act 'A':
   y = 2
@@ -1790,7 +1790,7 @@ end
   });
 
   it('locals in sibling act-bodies are independent (both isolated)', () => {
-    const tree = parser.parse('test://act-sibling', `# test
+    const tree = parser.parseOnce(`# test
 act 'A':
   local y = 1
 end
@@ -1811,7 +1811,7 @@ end
   it('local in loop-body (not header) is not visible after end', () => {
     // loop_block is non-isolating but still scope-forming; a `local`
     // declared in the body is confined to the loop scope.
-    const tree = parser.parse('test://loop-body-leak', `# test
+    const tree = parser.parseOnce(`# test
 loop while 1:
   local y = 1
 end
@@ -1827,7 +1827,7 @@ pl y
   });
 
   it('local in loop-body (not header) is not visible after end (inline form)', () => {
-    const tree = parser.parse('test://loop-body-inline-leak', `# test
+    const tree = parser.parseOnce(`# test
 loop while 1: local y = 1
 pl y
 ---
@@ -1853,7 +1853,7 @@ describe('localsInScope on locationRef call sites', () => {
   });
 
   it('gs with locals records localsInScope', () => {
-    const tree = parser.parse('test://locals-gs', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 local y = 2
 gs 'helper'
@@ -1870,7 +1870,7 @@ gs 'helper'
   });
 
   it('func with locals records localsInScope', () => {
-    const tree = parser.parse('test://locals-func', `# test
+    const tree = parser.parseOnce(`# test
 local x = 5
 $r = func('helper')
 ---
@@ -1884,7 +1884,7 @@ $r = func('helper')
   });
 
   it('@@ user call records localsInScope', () => {
-    const tree = parser.parse('test://locals-at', `# test
+    const tree = parser.parseOnce(`# test
 local z = 10
 @@helper
 ---
@@ -1898,7 +1898,7 @@ local z = 10
   });
 
   it('@ user func call records localsInScope', () => {
-    const tree = parser.parse('test://locals-at2', `# test
+    const tree = parser.parseOnce(`# test
 local a = 1
 $r = @helper()
 ---
@@ -1912,7 +1912,7 @@ $r = @helper()
   });
 
   it('gs with parens and extra params records localsInScope', () => {
-    const tree = parser.parse('test://locals-gs-paren', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 gs('helper', x, 42)
 ---
@@ -1925,7 +1925,7 @@ gs('helper', x, 42)
   });
 
   it('gs with extra bare params records localsInScope', () => {
-    const tree = parser.parse('test://locals-gs-args', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 gs 'helper', x, 42
 ---
@@ -1937,7 +1937,7 @@ gs 'helper', x, 42
   });
 
   it('func with extra params records localsInScope', () => {
-    const tree = parser.parse('test://locals-func-args', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 $r = func('helper', x, 42)
 ---
@@ -1949,7 +1949,7 @@ $r = func('helper', x, 42)
   });
 
   it('@@ with extra params records localsInScope', () => {
-    const tree = parser.parse('test://locals-at-args', `# test
+    const tree = parser.parseOnce(`# test
 local z = 10
 @@helper z, 42
 ---
@@ -1961,7 +1961,7 @@ local z = 10
   });
 
   it('@@ with parens records localsInScope', () => {
-    const tree = parser.parse('test://locals-at-paren', `# test
+    const tree = parser.parseOnce(`# test
 local z = 10
 @@helper(z, 42)
 ---
@@ -1973,7 +1973,7 @@ local z = 10
   });
 
   it('@ with bare args records localsInScope', () => {
-    const tree = parser.parse('test://locals-at2-bare', `# test
+    const tree = parser.parseOnce(`# test
 local a = 1
 $r = @helper a, 42
 ---
@@ -1985,7 +1985,7 @@ $r = @helper a, 42
   });
 
   it('@ with extra params records localsInScope', () => {
-    const tree = parser.parse('test://locals-at2-args', `# test
+    const tree = parser.parseOnce(`# test
 local a = 1
 $r = @helper(a, 42)
 ---
@@ -1997,7 +1997,7 @@ $r = @helper(a, 42)
   });
 
   it('localsInScope reflects scope at call site, not outer scope', () => {
-    const tree = parser.parse('test://locals-scope', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 act 'a':
   local y = 2
@@ -2016,7 +2016,7 @@ end
   });
 
   it('no locals → empty localsInScope', () => {
-    const tree = parser.parse('test://locals-none', `# test
+    const tree = parser.parseOnce(`# test
 gs 'helper'
 ---
 `);
@@ -2029,7 +2029,7 @@ gs 'helper'
   });
 
   it('goto does NOT propagate locals', () => {
-    const tree = parser.parse('test://locals-goto', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 goto 'other'
 ---
@@ -2042,7 +2042,7 @@ goto 'other'
   });
 
   it('xgt does NOT propagate locals', () => {
-    const tree = parser.parse('test://locals-xgt', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 xgt 'other'
 ---
@@ -2055,7 +2055,7 @@ xgt 'other'
   });
 
   it('locals from if scope propagate to gs call inside', () => {
-    const tree = parser.parse('test://locals-if', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if 1:
   local y = 2
@@ -2072,7 +2072,7 @@ end
   });
 
   it('loc operator records localsInScope', () => {
-    const tree = parser.parse('test://locals-loc', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if loc 'helper':
   pl 'exists'
@@ -2096,7 +2096,7 @@ describe('dynamic/dyneval code blocks inherit locals', () => {
   });
 
   it('dynamic code block is walked (variables are tracked)', () => {
-    const tree = parser.parse('test://dyn1', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 dynamic {
   pl x
@@ -2114,7 +2114,7 @@ dynamic {
   });
 
   it('dyneval code block is walked (variables are tracked)', () => {
-    const tree = parser.parse('test://dyn2', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 $r = dyneval({
   $result = x
@@ -2130,7 +2130,7 @@ $r = dyneval({
   });
 
   it('dynamic with parens code block is walked', () => {
-    const tree = parser.parse('test://dyn-paren', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 dynamic({
   pl x
@@ -2146,7 +2146,7 @@ dynamic({
   });
 
   it('dyneval without parens code block is walked', () => {
-    const tree = parser.parse('test://dyn-bare', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 dyneval {
   $result = x
@@ -2162,7 +2162,7 @@ dyneval {
   });
 
   it('dynamic code block with extra params is walked', () => {
-    const tree = parser.parse('test://dyn-extra1', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 dynamic { pl x }, x, 42
 ---
@@ -2176,7 +2176,7 @@ dynamic { pl x }, x, 42
   });
 
   it('dyneval code block with extra params is walked', () => {
-    const tree = parser.parse('test://dyn-extra2', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 $r = dyneval({ $result = x }, x, 42)
 ---
@@ -2190,7 +2190,7 @@ $r = dyneval({ $result = x }, x, 42)
   });
 
   it('dynamic code block does NOT inherit locals across act boundary', () => {
-    const tree = parser.parse('test://dyn3', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 act 'a':
   dynamic {
@@ -2211,7 +2211,7 @@ end
   });
 
   it('gs code block argument is consumed, not walked', () => {
-    const tree = parser.parse('test://gs-cb', `# test
+    const tree = parser.parseOnce(`# test
 gs {helper}
 ---
 `);
@@ -2232,7 +2232,7 @@ describe('dynamic/dyneval via variable holding code block', () => {
   });
 
   it('propagates caller locals into block assigned to variable', () => {
-    const tree = parser.parse('test://vd1', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 $code = {
   pl x
@@ -2263,7 +2263,7 @@ ${form}{
 dynamic $code
 ---
 `;
-      const tree = parser.parse(`test://form`, src);
+      const tree = parser.parseOnce(src);
       const { symbols } = extractSymbols(tree!, 'test://form');
       const loc = symbols.getLocation('test')!;
       const xSym = loc.findVariable('x');
@@ -2273,7 +2273,7 @@ dynamic $code
   });
 
   it('works with parallel multi-assignment', () => {
-    const tree = parser.parse('test://vd-multi', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 local y = 2
 $a, $b = { pl x }, { pl y }
@@ -2290,7 +2290,7 @@ dynamic $b
   });
 
   it('works with dyneval(var, ...) and extra params', () => {
-    const tree = parser.parse('test://vd-dyneval', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 $code = {
   $result = x
@@ -2305,7 +2305,7 @@ $r = dyneval($code, 42)
   });
 
   it('propagates across multiple call sites — merges all caller locals', () => {
-    const tree = parser.parse('test://vd-multi-call', `# test
+    const tree = parser.parseOnce(`# test
 $code = {
   pl x
   pl y
@@ -2331,7 +2331,7 @@ end
   });
 
   it('propagates gs call inside var-mediated block', () => {
-    const tree = parser.parse('test://vd-gs', `# main
+    const tree = parser.parseOnce(`# main
 local x = 5
 $code = {
   gs 'helper'
@@ -2352,7 +2352,7 @@ pl x
   });
 
   it('does not propagate when variable has no static code-block binding', () => {
-    const tree = parser.parse('test://vd-none', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 dynamic $code
 ---
@@ -2364,7 +2364,7 @@ dynamic $code
   });
 
   it('skips indexed-variable assignments (conservative)', () => {
-    const tree = parser.parse('test://vd-idx', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 $code[0] = {
   pl x
@@ -2379,7 +2379,7 @@ dynamic $code
   });
 
   it('tracks global vars with multiple code-block assignments (universal-AND target set)', () => {
-    const tree = parser.parse('test://vd-ambig', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 $code = { pl 'a' }
 $code = { pl x }
@@ -2409,7 +2409,7 @@ dynamic $code
     // separate scope-forming node — the if-branch local is NOT visible
     // from the sibling else-branch).  Global writes are always visible,
     // so the top-level `dynamic $code` tracks 1 code-block binding.
-    const tree = parser.parse('test://vd-mix', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if 1:
   local $code = { pl x }
@@ -2428,7 +2428,7 @@ dynamic $code
     // Each `local $code` lives inside its own if-branch scope; neither
     // is visible at the top-level `dynamic $code` after `end`.
     // Result: zero visible code-block bindings → no tracking.
-    const tree = parser.parse('test://vd-local-multi', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if 1:
   local $code = { pl x }
@@ -2446,7 +2446,7 @@ dynamic $code
   it('tracks per-scope when local binding is visible at call site', () => {
     // With the `dynamic $code` INSIDE the same if-branch, the local
     // binding IS visible → tracked.
-    const tree = parser.parse('test://vd-local-inner', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if 1:
   local $code = { pl x }
@@ -2462,7 +2462,7 @@ end
   });
 
   it('still walks unused code-block assignments for diagnostics', () => {
-    const tree = parser.parse('test://vd-unused', `# test
+    const tree = parser.parseOnce(`# test
 $code = {
   pl y
 }
@@ -2479,7 +2479,7 @@ $code = {
   });
 
   it('still walks multi-assigned blocks (diagnostics preserved, all targets tracked)', () => {
-    const tree = parser.parse('test://vd-ambig-walk', `# test
+    const tree = parser.parseOnce(`# test
 $code = { pl aaa }
 $code = { pl bbb }
 dynamic $code
@@ -2496,7 +2496,7 @@ dynamic $code
   });
 
   it('registers untracked call with reason multiple-assignments', () => {
-    const tree = parser.parse('test://vd-ut-multi', `# test
+    const tree = parser.parseOnce(`# test
 $code = { pl 1 }
 $code = { pl 2 }
 dynamic $code
@@ -2510,7 +2510,7 @@ dynamic $code
   });
 
   it('registers untracked call with reason complex-expression for arrays', () => {
-    const tree = parser.parse('test://vd-ut-arr', `# test
+    const tree = parser.parseOnce(`# test
 dynamic $code[0]
 ---
 `);
@@ -2521,7 +2521,7 @@ dynamic $code[0]
   });
 
   it('registers untracked call for binary expression first-arg', () => {
-    const tree = parser.parse('test://vd-ut-expr', `# test
+    const tree = parser.parseOnce(`# test
 dynamic $a + $b
 ---
 `);
@@ -2532,7 +2532,7 @@ dynamic $a + $b
   });
 
   it('no untracked diagnostic for plain code-block literal', () => {
-    const tree = parser.parse('test://vd-ut-lit', `# test
+    const tree = parser.parseOnce(`# test
 dynamic {
   pl 1
 }
@@ -2544,7 +2544,7 @@ dynamic {
   });
 
   it('no untracked diagnostic for successfully resolved variable', () => {
-    const tree = parser.parse('test://vd-ut-ok', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 $code = { pl x }
 dynamic $code
@@ -2558,7 +2558,7 @@ dynamic $code
 
   // ── Multi-target tracking (resolvedDynamicBlocks.blockLocs[]) ──
   it('resolvedDynamicBlocks records all targets for multiple-assignments', () => {
-    const tree = parser.parse('test://vd-mt-multi-assign', `# test
+    const tree = parser.parseOnce(`# test
 $code = { x = 1 }
 $code = { x = 2 }
 dynamic $code
@@ -2577,7 +2577,7 @@ dynamic $code
   });
 
   it('resolvedDynamicBlocks records all targets for cross-branch local bindings', () => {
-    const tree = parser.parse('test://vd-mt-multi-local', `# test
+    const tree = parser.parseOnce(`# test
 local $code
 if 1:
   $code = { x = 1 }
@@ -2603,7 +2603,7 @@ y = dyneval($code)
     // last-write-wins, no `multiple-local-bindings` info — but BOTH
     // blocks must still be tracked so each body is analysed and
     // universal-AND can apply.
-    const tree = parser.parse('test://vd-mt-seq', `# test
+    const tree = parser.parseOnce(`# test
 local $code = { x = 1 }
 $code = { x = 2 }
 dynamic $code
@@ -2625,7 +2625,7 @@ dynamic $code
     // earlier global write is shadowed.  The resolver must drop the
     // global candidate and treat the call as a clean single-target
     // dispatch (no `multiple-assignments` info).
-    const tree = parser.parse('test://vd-mt-mixed', `# test
+    const tree = parser.parseOnce(`# test
 $code = { x = 1 }
 local $code = { x = 2 }
 y = dyneval($code)
@@ -2644,7 +2644,7 @@ y = dyneval($code)
     // call site; the call still has TWO local candidates from
     // distinct branches → `multiple-local-bindings`, not
     // `multiple-assignments`, and global is dropped.
-    const tree = parser.parse('test://vd-shadow-cross', `# test
+    const tree = parser.parseOnce(`# test
 $code = { x = 0 }
 if y > 0:
   local $code = { x = 1 }
@@ -2667,7 +2667,7 @@ dynamic $code
   it('shadowing inside a branch: local shadows enclosing-loc global at the inner call', () => {
     // The call site is INSIDE the branch where `local $code` is
     // declared, so the local is visible AND shadows the global.
-    const tree = parser.parse('test://vd-shadow-inner', `# test
+    const tree = parser.parseOnce(`# test
 $code = { x = 0 }
 if y > 0:
   local $code = { x = 1 }
@@ -2686,7 +2686,7 @@ end
     // Writer uses `$` prefix; dispatcher uses bare name.  Both map to
     // the same `code` bucket in `variableBindings`, so resolution
     // works regardless of which prefix is on the call site.
-    const tree = parser.parse('test://vd-mixprefix', `# test
+    const tree = parser.parseOnce(`# test
 $code = { x = 1 }
 dynamic code
 ---
@@ -2698,7 +2698,7 @@ dynamic code
   });
 
   it('resolvedDynamicBlocks single-target dispatch uses 1-element blockLocs', () => {
-    const tree = parser.parse('test://vd-mt-single', `# test
+    const tree = parser.parseOnce(`# test
 $code = { x = 1 }
 dynamic $code
 ---
@@ -2710,7 +2710,7 @@ dynamic $code
   });
 
   it('resolvedDynamicBlocks captures argCount on multi-target dispatches', () => {
-    const tree = parser.parse('test://vd-mt-args', `# test
+    const tree = parser.parseOnce(`# test
 $code = { x = 1 }
 $code = { x = 2 }
 dynamic $code, 99, 100
@@ -2724,7 +2724,7 @@ dynamic $code, 99, 100
   });
 
   it('propagates transitively through chained var-mediated dynamic', () => {
-    const tree = parser.parse('test://vd-chain', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 $inner = {
   pl x
@@ -2747,7 +2747,7 @@ dynamic $outer
   });
 
   it('transitive chain reaches gs inside nested var-mediated block', () => {
-    const tree = parser.parse('test://vd-chain-gs', `# main
+    const tree = parser.parseOnce(`# main
 local x = 5
 $inner = {
   gs 'helper'
@@ -2771,7 +2771,7 @@ pl x
   // ── variableBindings persistent store ──
 
   it('records code-block binding in variableBindings store', () => {
-    const tree = parser.parse('test://vb-cb', `# test
+    const tree = parser.parseOnce(`# test
 $fn = {
   pl 1
 }
@@ -2790,7 +2790,7 @@ $fn = {
   });
 
   it('records string literal binding in variableBindings store', () => {
-    const tree = parser.parse('test://vb-str', `# test
+    const tree = parser.parseOnce(`# test
 $name = 'hello'
 ---
 `);
@@ -2804,7 +2804,7 @@ $name = 'hello'
   });
 
   it('records number literal binding in variableBindings store', () => {
-    const tree = parser.parse('test://vb-num', `# test
+    const tree = parser.parseOnce(`# test
 #count = 42
 ---
 `);
@@ -2818,7 +2818,7 @@ $name = 'hello'
   });
 
   it('classifies interpolated strings as other, not string', () => {
-    const tree = parser.parse('test://vb-interp', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 $greeting = 'hi <<x>>'
 ---
@@ -2831,7 +2831,7 @@ $greeting = 'hi <<x>>'
   });
 
   it('marks local assignments in variableBindings', () => {
-    const tree = parser.parse('test://vb-local', `# test
+    const tree = parser.parseOnce(`# test
 local $fn = { pl 1 }
 $fn2 = { pl 2 }
 ---
@@ -2846,7 +2846,7 @@ $fn2 = { pl 2 }
     // `$x += 'y'` does NOT mean $x == 'y' afterwards — it means
     // $x == <prev $x> & 'y'.  We cannot statically know the post-state
     // from the RHS alone, so these must be classified as opaque.
-    const tree = parser.parse('test://vb-compound', `# test
+    const tree = parser.parseOnce(`# test
 $s = 'start'
 $s += 'more'
 #n = 1
@@ -2871,7 +2871,7 @@ $s += 'more'
 
   it('captures RHS source snippet on opaque (other) bindings', () => {
     // Every binding carries the full source statement in `stmtText`.
-    const tree = parser.parse('test://vb-other-text', `# test
+    const tree = parser.parseOnce(`# test
 x = [1, 2, 3]
 $y = ['hi', 'there']
 z = (10, 20)
@@ -2897,7 +2897,7 @@ $greet = 'hi <<name>>'
   });
 
   it('captures RHS snippet on compound-operator bindings', () => {
-    const tree = parser.parse('test://vb-compound-text', `# test
+    const tree = parser.parseOnce(`# test
 $s = 'start'
 $s += 'more'
 #n = 1
@@ -2920,7 +2920,7 @@ $s += 'more'
     // elements structurally (no text-based length cap); capping happens
     // in the hover renderer.
     const big = Array.from({ length: 60 }, (_, i) => i).join(', ');
-    const tree = parser.parse('test://vb-snippet-cap', `# test
+    const tree = parser.parseOnce(`# test
 multi = [
   1,
   2,
@@ -2952,7 +2952,7 @@ huge = [${big}]
     // `$a += $b` is not a var-ref alias (post-state of $a includes the
     // previous $a concatenated with $b's value), so `dynamic $a` must
     // NOT resolve to any code-block reachable via $b.
-    const tree = parser.parse('test://vb-compound-ref', `# test
+    const tree = parser.parseOnce(`# test
 $helper = { pl 'hi' }
 $other += $helper
 dynamic $other
@@ -2974,7 +2974,7 @@ dynamic $other
     // `dynamic $fn` at the top level (outside both acts) has neither
     // binding visible — result: no dynamic tracking, and no cross-act
     // pollution of locals.
-    const tree = parser.parse('test://vb-scope-act', `# test
+    const tree = parser.parseOnce(`# test
 act 'A':
   local $fn = { pl 'inside A' }
 end
@@ -3000,7 +3000,7 @@ dynamic $fn
   });
 
   it('scope-aware: local inside act only resolves dynamic at same act', () => {
-    const tree = parser.parse('test://vb-scope-act-in', `# test
+    const tree = parser.parseOnce(`# test
 act 'A':
   local x = 1
   local $fn = { pl x }
@@ -3021,7 +3021,7 @@ end
   it('scope-aware: global binding is visible everywhere across isolation', () => {
     // Plain `$fn = {…}` at top level is GLOBAL; visible from inside
     // any nested act block despite the isolation boundary.
-    const tree = parser.parse('test://vb-scope-glob', `# test
+    const tree = parser.parseOnce(`# test
 $fn = { pl 'top' }
 act 'A':
   dynamic $fn
@@ -3037,7 +3037,7 @@ end
     // `local $fn = {…}` inside act A is not visible to a top-level
     // dynamic after the act ends.  If there's ALSO a global binding,
     // only the global resolves at the top-level call site.
-    const tree = parser.parse('test://vb-scope-shadow', `# test
+    const tree = parser.parseOnce(`# test
 $fn = { pl 'global' }
 act 'A':
   local $fn = { pl 'act-local' }
@@ -3057,7 +3057,7 @@ dynamic $fn
     // With old flat resolution, local-in-act + global would be "mixed
     // local + global" → ambiguous.  With scope-awareness the local is
     // not visible at the top-level call site; only the global is seen.
-    const tree = parser.parse('test://vb-scope-no-ambig', `# test
+    const tree = parser.parseOnce(`# test
 $fn = { pl 'global1' }
 act 'A':
   local $fn = { pl 'act-local' }
@@ -3074,7 +3074,7 @@ dynamic $fn
   it('scope-aware: two global code-block bindings remain ambiguous', () => {
     // Scope-awareness does not change the rule that two GLOBAL defs
     // in the same location are ambiguous.
-    const tree = parser.parse('test://vb-scope-two-globals', `# test
+    const tree = parser.parseOnce(`# test
 $fn = { pl 'one' }
 $fn = { pl 'two' }
 dynamic $fn
@@ -3087,7 +3087,7 @@ dynamic $fn
   });
 
   it('scope-aware: bindings record scopeKey and isolationKey', () => {
-    const tree = parser.parse('test://vb-scope-meta', `# test
+    const tree = parser.parseOnce(`# test
 $top = { pl 'top' }
 act 'A':
   local $inner = { pl 'inner' }
@@ -3119,7 +3119,7 @@ end
   // ── document-wide globalBindings index ──
 
   it('globalBindings: collects non-local bindings across all locations', () => {
-    const tree = parser.parse('test://gb-doc', `# loc_a
+    const tree = parser.parseOnce(`# loc_a
 $fn = { pl 'a' }
 #count = 1
 ---
@@ -3148,7 +3148,7 @@ $name = 'bob'
   });
 
   it('globalBindings: excludes local bindings', () => {
-    const tree = parser.parse('test://gb-local', `# test
+    const tree = parser.parseOnce(`# test
 local $fn = { pl 'local' }
 $other = 'global'
 ---
@@ -3165,7 +3165,7 @@ $other = 'global'
 $fn = 'value'
 ---
 `;
-    const tree = parser.parse('test://gb-reb', source);
+    const tree = parser.parseOnce(source);
     const { symbols: s1 } = extractSymbols(tree!, 'test://gb-reb');
     expect(s1.globalBindings.get('fn')).toHaveLength(1);
     // Re-run on a FRESH symbols table — should still be 1 (not 2).
@@ -3176,7 +3176,7 @@ $fn = 'value'
   // ── side-effect writes (setvar / scanstr / unpackarr / copyarr / sortarr / killvar) ──
 
   it('side-effect: setvar records an other-kind binding', () => {
-    const tree = parser.parse('test://se-setvar', `# test
+    const tree = parser.parseOnce(`# test
 setvar '$fn', 'hello'
 ---
 `);
@@ -3189,7 +3189,7 @@ setvar '$fn', 'hello'
   });
 
   it('side-effect: scanstr records an other-kind binding (base-keyed storage)', () => {
-    const tree = parser.parse('test://se-scan', `# test
+    const tree = parser.parseOnce(`# test
 scanstr '$fn', 'foo'
 ---
 `);
@@ -3213,7 +3213,7 @@ scanstr '$fn', 'foo'
     // BUT the literal prefix the user typed in the string is still
     // surfaced on `sym.prefixes` so the `mixedVariablePrefixes`
     // diagnostic can flag inconsistent prefix usage uniformly.
-    const tree = parser.parse('test://prefix-uniform', `# t
+    const tree = parser.parseOnce(`# t
 killvar '$a'
 killvar '#b'
 killvar '%c'
@@ -3250,7 +3250,7 @@ x = arrsize('$arr')
   });
 
   it('side-effect: unpackarr records an other-kind binding', () => {
-    const tree = parser.parse('test://se-unp', `# test
+    const tree = parser.parseOnce(`# test
 unpackarr 'arr', 1, 2, 3
 ---
 `);
@@ -3262,7 +3262,7 @@ unpackarr 'arr', 1, 2, 3
   });
 
   it('side-effect: copyarr destination records an other-kind binding', () => {
-    const tree = parser.parse('test://se-cp', `# test
+    const tree = parser.parseOnce(`# test
 copyarr 'dst', 'src'
 ---
 `);
@@ -3278,7 +3278,7 @@ copyarr 'dst', 'src'
   });
 
   it('side-effect: sortarr records an other-kind binding (permutation)', () => {
-    const tree = parser.parse('test://se-sort', `# test
+    const tree = parser.parseOnce(`# test
 sortarr 'arr'
 ---
 `);
@@ -3290,7 +3290,7 @@ sortarr 'arr'
   });
 
   it('side-effect: killvar records an other-kind binding with isValueBearing=false', () => {
-    const tree = parser.parse('test://se-kv', `# test
+    const tree = parser.parseOnce(`# test
 killvar 'arr'
 ---
 `);
@@ -3304,7 +3304,7 @@ killvar 'arr'
   });
 
   it('side-effect: sortarr binding also has isValueBearing=false (no produced value)', () => {
-    const tree = parser.parse('test://se-sort-nodelete', `# test
+    const tree = parser.parseOnce(`# test
 sortarr 'arr'
 ---
 `);
@@ -3315,7 +3315,7 @@ sortarr 'arr'
   });
 
   it('side-effect: killvar without arg records no bindings', () => {
-    const tree = parser.parse('test://se-kv-all', `# test
+    const tree = parser.parseOnce(`# test
 killvar
 ---
 `);
@@ -3325,7 +3325,7 @@ killvar
   });
 
   it('side-effect: indexed name strips [index] for binding key', () => {
-    const tree = parser.parse('test://se-idx', `# test
+    const tree = parser.parseOnce(`# test
 setvar 'arr[0]', 'value'
 ---
 `);
@@ -3338,7 +3338,7 @@ setvar 'arr[0]', 'value'
   });
 
   it('side-effect: side-effect writes co-exist with direct assignments', () => {
-    const tree = parser.parse('test://se-mix', `# test
+    const tree = parser.parseOnce(`# test
 $fn = 'literal'
 setvar '$fn', 'runtime'
 ---
@@ -3353,7 +3353,7 @@ setvar '$fn', 'runtime'
   });
 
   it('side-effect: surfaces in document-wide globalBindings index', () => {
-    const tree = parser.parse('test://se-glob', `# test
+    const tree = parser.parseOnce(`# test
 setvar '$fn', 'hello'
 ---
 `);
@@ -3368,7 +3368,7 @@ setvar '$fn', 'hello'
     // User rule: "only variable for code block is local — other
     // variables don't matter".  A string assignment to the same var
     // must NOT disqualify the code-block binding.
-    const tree = parser.parse('test://vb-mixed', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 $fn = {
   pl x
@@ -3392,7 +3392,7 @@ dynamic $fn
   });
 
   it('two globally-assigned code-blocks ARE still ambiguous even if mixed with literals', () => {
-    const tree = parser.parse('test://vb-two-cb', `# test
+    const tree = parser.parseOnce(`# test
 $fn = { pl 1 }
 $fn = 'text'
 $fn = { pl 2 }
@@ -3406,7 +3406,7 @@ dynamic $fn
   });
 
   it('records multi-assignment parallel bindings separately', () => {
-    const tree = parser.parse('test://vb-par', `# test
+    const tree = parser.parseOnce(`# test
 $a, $b = { pl 1 }, 'hello'
 ---
 `);
@@ -3419,7 +3419,7 @@ $a, $b = { pl 1 }, 'hello'
   // ── var-ref bindings (reassignments between variables) ──
 
   it('records var-ref binding when RHS is a bare variable reference', () => {
-    const tree = parser.parse('test://vb-ref', `# test
+    const tree = parser.parseOnce(`# test
 $src = { pl 1 }
 local $alias = $src
 ---
@@ -3436,7 +3436,7 @@ local $alias = $src
   });
 
   it('dynamic <var-ref> resolves transitively to the source code-block', () => {
-    const tree = parser.parse('test://vb-chain', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 $src = {
   pl x
@@ -3461,7 +3461,7 @@ dynamic $alias
   });
 
   it('var-ref chains of length ≥ 2 still resolve', () => {
-    const tree = parser.parse('test://vb-chain2', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 $src = { pl x }
 set $mid = $src
@@ -3480,7 +3480,7 @@ dynamic $alias
   it('cyclic var-refs are handled without infinite recursion', () => {
     // $a = $b, $b = $a — pathological but must not hang/crash.
     // Neither has a code-block, so nothing should be tracked.
-    const tree = parser.parse('test://vb-cycle', `# test
+    const tree = parser.parseOnce(`# test
 set $a = $b
 set $b = $a
 dynamic $a
@@ -3495,7 +3495,7 @@ dynamic $a
   });
 
   it('var-ref to a source with 2 global code-blocks inherits ambiguity', () => {
-    const tree = parser.parse('test://vb-amb', `# test
+    const tree = parser.parseOnce(`# test
 $src = { pl 1 }
 $src = { pl 2 }
 set $alias = $src
@@ -3511,7 +3511,7 @@ dynamic $alias
   });
 
   it('self-reference (set $a = $a) is tolerated', () => {
-    const tree = parser.parse('test://vb-self', `# test
+    const tree = parser.parseOnce(`# test
 $a = { pl 1 }
 set $a = $a
 dynamic $a
@@ -4065,7 +4065,7 @@ describe('integration: mixed variable prefix tracking', () => {
   });
 
   function getPrefixes(code: string): Map<string, Set<string>> {
-    const tree = parser.parse('test://prefix-mix', code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(tree, 'test://prefix-mix');
     const result = new Map<string, Set<string>>();
     for (const [, locSyms] of symbols.locations) {
@@ -4170,7 +4170,7 @@ describe('integration: mixed variable prefix tracking', () => {
   // ── Multiple locations: per-location tracking + cross-location aggregation ──
 
   it('tracks prefixes per location in symbol table', () => {
-    const tree = parser.parse('test://prefix-multi', `# loc1\na = 1\n---\n# loc2\npl $a\n---\n`)!;
+    const tree = parser.parseOnce(`# loc1\na = 1\n---\n# loc2\npl $a\n---\n`)!;
     const { symbols } = extractSymbols(tree, 'test://prefix-multi');
     const loc1 = symbols.getLocation('loc1')!;
     const loc2 = symbols.getLocation('loc2')!;
@@ -4179,7 +4179,7 @@ describe('integration: mixed variable prefix tracking', () => {
   });
 
   it('cross-location aggregation detects mixed prefixes', () => {
-    const tree = parser.parse('test://prefix-cross', `# loc1\na = 1\n---\n# loc2\npl $a\n---\n`)!;
+    const tree = parser.parseOnce(`# loc1\na = 1\n---\n# loc2\npl $a\n---\n`)!;
     const { symbols } = extractSymbols(tree, 'test://prefix-cross');
     // Aggregate prefixes across all locations (like the server does)
     const global = new Map<string, Set<string>>();
@@ -4195,7 +4195,7 @@ describe('integration: mixed variable prefix tracking', () => {
   });
 
   it('cross-location: no mix when same prefix in all locations', () => {
-    const tree = parser.parse('test://prefix-same', `# loc1\n$a = 'x'\n---\n# loc2\npl $a\n---\n`)!;
+    const tree = parser.parseOnce(`# loc1\n$a = 'x'\n---\n# loc2\npl $a\n---\n`)!;
     const { symbols } = extractSymbols(tree, 'test://prefix-same');
     const global = new Map<string, Set<string>>();
     for (const [, locSyms] of symbols.locations) {
@@ -4210,7 +4210,7 @@ describe('integration: mixed variable prefix tracking', () => {
   });
 
   it('cross-location: detects three-way mix across locations', () => {
-    const tree = parser.parse('test://prefix-3way', `# loc1\na = 1\n---\n# loc2\npl $a\n---\n# loc3\nx = #a\n---\n`)!;
+    const tree = parser.parseOnce(`# loc1\na = 1\n---\n# loc2\npl $a\n---\n# loc3\nx = #a\n---\n`)!;
     const { symbols } = extractSymbols(tree, 'test://prefix-3way');
     const global = new Map<string, Set<string>>();
     for (const [, locSyms] of symbols.locations) {
@@ -4557,7 +4557,7 @@ describe('variable rename scoping', () => {
     cursorLine: number,
     cursorCol: number,
   ): { locName: string; line: number }[] {
-    const tree = parser.parse('test://rename', code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(tree, 'test://rename');
 
     // Find the exact variable symbol at cursor
@@ -4795,7 +4795,7 @@ describe('find all references scoping', () => {
     cursorLine: number,
     cursorCol: number,
   ): { locName: string; line: number }[] {
-    const tree = parser.parse('test://refs', code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(tree, 'test://refs');
 
     const locSyms = symbols.getLocation(cursorLocName);
@@ -5527,7 +5527,7 @@ describe('variable go-to-definition', () => {
     cursorLine: number,
     cursorCol: number,
   ): { locName: string; line: number }[] {
-    const tree = parser.parse('test://gotoDef', code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(tree, 'test://gotoDef');
 
     const locSyms = symbols.getLocation(cursorLocName);
@@ -5672,7 +5672,7 @@ describe('duplicate local declarations in same scope', () => {
   });
 
   it('second LOCAL declaration does not create a new symbol — same QspSymbol is reused', () => {
-    const tree = parser.parse('test://dup', `# main
+    const tree = parser.parseOnce(`# main
 local x = 1
 pl x
 local x = 2
@@ -5701,7 +5701,7 @@ pl x
     // line2: pl x
     // line3: local x = 2
     // line4: pl x
-    const tree = parser.parse('test://dup', `# main
+    const tree = parser.parseOnce(`# main
 local x = 1
 pl x
 local x = 2
@@ -5717,7 +5717,7 @@ pl x
 
   it('rename captures all references including both LOCAL declarations', () => {
     // Use the collectRenameRefs helper from the rename tests
-    const tree = parser.parse('test://dup', `# main
+    const tree = parser.parseOnce(`# main
 local x = 1
 pl x
 local x = 2
@@ -5738,7 +5738,7 @@ pl x
     // Structural sanity: when both `local x = N` lines are the only
     // refs, none of them is a proper-usage read.  The unused-variable
     // diagnostic relies on this property to flag the symbol.
-    const tree = parser.parse('test://dup', `# main
+    const tree = parser.parseOnce(`# main
 local x = 1
 local x = 2
 ---
@@ -5754,7 +5754,7 @@ local x = 2
   });
 
   it('propagation works correctly with duplicate LOCAL declarations', () => {
-    const tree = parser.parse('test://dup', `# caller
+    const tree = parser.parseOnce(`# caller
 local x = 1
 local x = 2
 gs 'helper'

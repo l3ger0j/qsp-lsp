@@ -16,7 +16,6 @@ import {
   type LocationEntry,
   type QspSymbol,
   type SyntaxError,
-  type QspTreeSitterParser,
 } from '../parser';
 import {
   type SymbolAggregates,
@@ -86,10 +85,10 @@ export function computeDiagnostics(
   docUri: string,
   locationIndex: LocationEntry[],
   diagnosticSettings: DiagnosticSettings,
-  tsParser: QspTreeSitterParser,
   callTypesPerTarget: Map<string, { name: string; types: Set<string> }>,
   symbols?: DocumentSymbols,
-  preExtractedErrors?: SyntaxError[],
+  /** The file's syntax errors; undefined without a parser (regex-only symbols). */
+  syntaxErrors?: SyntaxError[],
   projectAgg?: ProjectAggregates | null,
   cachedFileAgg?: SymbolAggregates,
   projectDocs: DocumentSymbols[] = [],
@@ -110,7 +109,7 @@ export function computeDiagnostics(
   }
 
   // ── Document-structure diagnostics ──────────────────────────────
-  checkSyntaxErrors(ctx, docUri, locationIndex, tsParser, preExtractedErrors, symbols);
+  checkSyntaxErrors(ctx, docUri, locationIndex, syntaxErrors, symbols);
   if (diagnosticSettings.duplicateLocations) {
     checkDuplicateLocations(ctx, locationIndex, docUri, projectAgg, libraryOf);
   }

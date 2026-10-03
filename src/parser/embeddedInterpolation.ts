@@ -106,14 +106,12 @@ export function interpolationNeedsDecode(
  * symbols this function produces are net-new, not duplicates.
  *
  * `parseFn` is required; without it the pass is a no-op.
- * `reusedLocations` mirrors the exec pass's skip set.
  */
 export function extractEmbeddedInterpolations(
   tree: Parser.Tree,
   docUri: string,
   symbols: DocumentSymbols,
   parseFn?: (text: string) => Parser.Tree | null,
-  reusedLocations?: ReadonlySet<string>,
 ): void {
   if (!parseFn) return;
 
@@ -129,8 +127,6 @@ export function extractEmbeddedInterpolations(
     if (!nameNode) continue;
 
     const locName = nameNode.text.trim();
-    if (reusedLocations?.has(locName.toLowerCase())) continue;
-
     const locSymbols = symbols.getLocation(locName);
     if (!locSymbols) continue;
 

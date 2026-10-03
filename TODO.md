@@ -112,8 +112,8 @@ back instead of analysing them, keyed the same way in memory and on disk.
 On a 20 MB game of 600 locations in 10 files, 22.6 s of file analysis
 became 1.8 s, and the stored diagnostics appear after 5.4 s instead of
 36 s (fully checked at 16.7 s). Closing an unchanged file keeps the
-editor's analysis; opening a large one (past 500 KB) reuses a stored
-analysis and parses nothing: a location is parsed when its semantic tokens
+editor's analysis; opening one reuses a stored analysis and parses
+nothing: a location is parsed when its semantic tokens
 are asked for, the visible lines through a range request, the rest by the
 full request a slice at a time. A 12.8 M-character file shows diagnostics
 after 3.1 s instead of 23 s; its full tokens take 6.9 s in slices after
@@ -123,19 +123,15 @@ tree they came from: scopes are keyed by position, and the variable checks
 run on scope paths recorded at extraction, so every file gets the same
 warnings open or closed.
 
-Still, a file is analysed one of three ways: the project scan (closed
-files), the editor's whole-file parse (open, under 500 KB) and the editor's
-per-location parse (open, 500 KB and up). The goal is that "open" only
-changes where the text comes from and how soon it is analysed. Next, in
-order:
+Every file is now analysed one way, location by location, open or closed:
+"open" only changes where the text comes from and how soon it is analysed.
+Next, in order:
 - **Memory.** Read-back analyses hold more than fresh ones: for a
   12.8 M-character file 336 MB against 215 MB (heap after a full GC). v8
   writes each string occurrence out in full; interning on read
   (`internStrings` in `nodeCache.ts`) brings it to 274 MB, for 0.8 s more
   on a 2.5 s read. The rest is object layout: read-back objects and arrays
   take more room than the ones the analysis built.
-- **One path.** The project scan and the editor share one analysis per
-  file; small open files use it too, with the whole-file tree made on demand.
 - **A second hash: a file's interface.** What other files can see of a file
   (its location names, the globals it reads and writes, the calls it makes)
   hashed apart from its text, so an edit that leaves the interface alone
@@ -157,8 +153,7 @@ order:
   every position, positions and names in flat arrays, read with
   `JSON.parse` or straight into typed arrays. It could remove the remaining
   60 MB of layout overhead and the 0.8 s of interning and make reads faster,
-  but it is bound to the symbol types: do it once **One path** has settled
-  them.
+  but it is bound to the symbol types.
 - **The MCP server and VS Code for the Web** run without a cache:
   `QspHost` takes a `cacheDir` already, the MCP server would need a folder
   (e.g. under the user's cache directory); the browser would need IndexedDB.

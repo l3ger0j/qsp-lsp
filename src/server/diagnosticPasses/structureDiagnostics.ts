@@ -10,12 +10,10 @@
 
 import { DiagnosticSeverity } from 'vscode-languageserver';
 import {
-  extractErrors,
   findLocationAtLine,
   type DocumentSymbols,
   type LocationEntry,
   type SyntaxError,
-  type QspTreeSitterParser,
 } from '../../parser';
 import type { ProjectAggregates } from '../aggregation';
 import { uriBasename } from '../helpers';
@@ -30,17 +28,12 @@ export function checkSyntaxErrors(
   ctx: DiagnosticCtx,
   docUri: string,
   locationIndex: LocationEntry[],
-  tsParser: QspTreeSitterParser,
-  preExtractedErrors?: SyntaxError[],
+  fileErrors: SyntaxError[] | undefined,
   symbols?: DocumentSymbols,
 ): void {
   const maxPerLoc = ctx.settings.maxErrorsPerLocation;
 
-  let syntaxErrors: SyntaxError[] | null = preExtractedErrors ?? null;
-  if (!syntaxErrors && tsParser.isReady) {
-    const tree = tsParser.getTree(docUri);
-    if (tree) syntaxErrors = extractErrors(tree);
-  }
+  let syntaxErrors = fileErrors;
   if (!syntaxErrors) return;
 
   // Merge in errors from embedded `<a href="exec:CODE">` link bodies.

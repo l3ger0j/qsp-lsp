@@ -15,7 +15,6 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { SemanticTokenTypes, SemanticTokensBuilder } from 'vscode-languageserver';
 import { QspTreeSitterParser } from '../src/parser/treeSitter';
 import {
-  buildSemanticTokens,
   collectSemanticTokenTuples,
   TOKEN_TYPES,
 } from '../src/server/semanticTokens';
@@ -34,7 +33,7 @@ interface Token {
 
 /** Run the semantic-token emitter and return tokens with resolved type names. */
 function tokensFor(src: string): Token[] {
-  const tree = parser.parse('test://semexec', src)!;
+  const tree = parser.parseOnce(src)!;
   const tuples = collectSemanticTokenTuples(tree, undefined, (t) => parser.parseOnce(t));
   const out: Token[] = [];
   const lines = src.split('\n');
@@ -250,7 +249,7 @@ describe('semantic tokens: exec-body highlighting', () => {
       `# home\n`
       + `pl '<a href="exec:gs ''target''">x</a>'\n`
       + `---\n`;
-    const tree = parser.parse('test://semexec', src)!;
+    const tree = parser.parseOnce(src)!;
     // Call without parseFn — exec bodies should NOT be sub-parsed.
     const tuples = collectSemanticTokenTuples(tree);
     let hasGsType = false;
@@ -305,8 +304,11 @@ describe('semantic tokens: exec-body highlighting', () => {
       + `pl 'You picked up a <a href="exec:gs ''dest''">torch</a>.'\n`
       + `---\n`
       + `# dest\n---\n`;
-    const tree = parser.parse('test://semexec', src)!;
-    const built = buildSemanticTokens(tree, undefined, (t) => parser.parseOnce(t));
+    const tree = parser.parseOnce(src)!;
+    const builder = new SemanticTokensBuilder();
+    const tuples = collectSemanticTokenTuples(tree, undefined, (t) => parser.parseOnce(t));
+    for (let i = 0; i < tuples.length; i += 5) builder.push(tuples[i], tuples[i + 1], tuples[i + 2], tuples[i + 3], tuples[i + 4]);
+    const built = builder.build();
     // Decode the LSP delta encoding back to absolute (line, char).
     // Per the LSP spec: each token is 5 numbers — deltaLine, deltaStart
     // (relative to previous token's start, OR absolute when deltaLine

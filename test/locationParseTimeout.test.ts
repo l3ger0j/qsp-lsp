@@ -30,25 +30,11 @@ import {
   type InitializeParams,
   type PublishDiagnosticsParams,
 } from 'vscode-languageserver-protocol';
-import { QspTreeSitterParser, fullParseTimeoutMicros } from '../src/parser/treeSitter';
+import { QspTreeSitterParser } from '../src/parser/treeSitter';
 import { createQspServer } from '../src/server/common';
 import { ProjectModeService } from '../src/server/projectMode';
 import type { DocumentState } from '../src/server/lspFeatures';
 import { initParser, loadWasm } from './testHelpers';
-
-describe('fullParseTimeoutMicros', () => {
-  it('stays well under the old 30 s for a file just below the per-location threshold', () => {
-    expect(fullParseTimeoutMicros(499_999)).toBeLessThan(10_000_000);
-  });
-
-  it('leaves room for a normal ~8 µs/char parse of that file', () => {
-    expect(fullParseTimeoutMicros(499_999)).toBeGreaterThanOrEqual(499_999 * 8 * 1.5);
-  });
-
-  it('has a floor for small files', () => {
-    expect(fullParseTimeoutMicros(10)).toBe(2_000_000);
-  });
-});
 
 // `start` calls `second`.
 const TEXT = `# start\ngt 'second'\n---\n# second\npl 1\n---\n# third\npl 2\n---\n`;

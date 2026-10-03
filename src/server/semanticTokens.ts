@@ -8,7 +8,6 @@
  */
 import type Parser from 'web-tree-sitter';
 import {
-  SemanticTokensBuilder,
   SemanticTokensLegend,
   SemanticTokenTypes,
   SemanticTokenModifiers,
@@ -404,26 +403,6 @@ function emitSemanticTokens(
 }
 
 /**
- * Build a SemanticTokensBuilder result from a tree-sitter parse tree.
- * Used for full-file (non-per-location) mode.
- *
- * `parseFn`, when supplied, enables semantic highlighting inside
- * `<a href="exec:…">` link bodies embedded in string literals.
- */
-export function buildSemanticTokens(
-  tree: Parser.Tree,
-  gotoTargets?: ReadonlySet<string>,
-  parseFn?: SemanticParseFn,
-): { data: number[] } {
-  const builder = new SemanticTokensBuilder();
-  const tuples = collectSemanticTokenTuples(tree, gotoTargets, parseFn);
-  for (let i = 0; i < tuples.length; i += 5) {
-    builder.push(tuples[i], tuples[i + 1], tuples[i + 2], tuples[i + 3], tuples[i + 4]);
-  }
-  return builder.build();
-}
-
-/**
  * Collect semantic tokens as a flat tuple array [line, char, len, type, mod, ...],
  * sorted by (line, char) so they can be fed straight into a
  * `SemanticTokensBuilder` (which delta-encodes and requires ascending
@@ -431,8 +410,8 @@ export function buildSemanticTokens(
  * link bodies) emit at any column without interleaving carefully with
  * the surrounding string tokens.
  *
- * Positions are tree-local (line 0 = root of the tree).
- * Used for per-location caching in large files.
+ * Positions are tree-local (line 0 = root of the tree): a location's own
+ * lines, as the per-location cache keeps them.
  *
  * `parseFn`, when supplied, enables semantic highlighting inside
  * `<a href="exec:…">` link bodies embedded in string literals.

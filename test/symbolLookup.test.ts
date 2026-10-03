@@ -12,7 +12,7 @@ describe('findSymbolAtPosition coverage', () => {
   });
 
   it('should find location definition at # header', () => {
-    const tree = parser.parse('test://sym-locdef', `# MyRoom
+    const tree = parser.parseOnce(`# MyRoom
 pl 'hello'
 ---
 `);
@@ -25,7 +25,7 @@ pl 'hello'
   });
 
   it('should find location ref inside goto string', () => {
-    const tree = parser.parse('test://sym-locref', `# main
+    const tree = parser.parseOnce(`# main
 goto 'room1'
 ---
 # room1
@@ -41,7 +41,7 @@ pl 'x'
   });
 
   it('should find label definition at : label', () => {
-    const tree = parser.parse('test://sym-lbldef', `# main
+    const tree = parser.parseOnce(`# main
 :myLabel
 pl 'hello'
 ---
@@ -55,7 +55,7 @@ pl 'hello'
   });
 
   it('should find label ref inside jump string', () => {
-    const tree = parser.parse('test://sym-lblref', `# main
+    const tree = parser.parseOnce(`# main
 :target
 jump 'target'
 ---
@@ -69,7 +69,7 @@ jump 'target'
   });
 
   it('should handle duplicate labels by recording both references', () => {
-    const tree = parser.parse('test://dup-label', `# main
+    const tree = parser.parseOnce(`# main
 :myLabel
 pl 'first'
 :myLabel
@@ -88,97 +88,6 @@ pl 'second'
 });
 
 // ──────────────────────────────────────────────────────────────────────
-// Error classification (refineErrorNode)
-// ──────────────────────────────────────────────────────────────────────
-
-describe('incremental symbol reuse', () => {
-  const parser = new QspTreeSitterParser();
-
-  beforeAll(async () => {
-    await parser.init(async () => fs.readFileSync(WASM_PATH));
-  });
-
-  it('should detect new variables when location content changes', () => {
-    const uri = 'test://reuse-detect';
-    const text1 = `# loc1\nx = 1\n---\n`;
-    const tree1 = parser.parse(uri, text1);
-    const { symbols: syms1 } = extractSymbols(tree1!, uri);
-    expect(syms1.getLocation('loc1')!.variables.has('z')).toBe(false);
-
-    // Add z to loc1
-    const text2 = `# loc1\nx = 1\nz = 99\n---\n`;
-    const tree2 = parser.parse(uri, text2);
-    const { symbols: syms2 } = extractSymbols(tree2!, uri, syms1, parser.lastEdit);
-
-    // z should be detected in loc1
-    expect(syms2.getLocation('loc1')!.variables.has('z')).toBe(true);
-    expect(syms2.getLocation('loc1')!.variables.has('x')).toBe(true);
-  });
-
-  it('should produce correct line numbers after content added above', () => {
-    const uri = 'test://reuse-shift';
-    const text1 = `# loc1\nx = 1\n---\n# loc2\ny = 2\n---\n`;
-    const tree1 = parser.parse(uri, text1);
-    const { symbols: syms1 } = extractSymbols(tree1!, uri);
-
-    // In text1, loc2's y is at line 4
-    expect(syms1.getLocation('loc2')!.variables.get('y')!.references[0].line).toBe(4);
-
-    // Add 2 lines to loc1 → loc2 shifts down by 2
-    const text2 = `# loc1\nx = 1\nz = 3\nw = 4\n---\n# loc2\ny = 2\n---\n`;
-    const tree2 = parser.parse(uri, text2);
-    const { symbols: syms2 } = extractSymbols(tree2!, uri, syms1, parser.lastEdit);
-
-    expect(syms2.locationDefs.size).toBe(2);
-    const ySym = syms2.getLocation('loc2')!.variables.get('y');
-    expect(ySym).toBeDefined();
-    expect(ySym!.references[0].line).toBe(6);
-  });
-
-  it('should produce equivalent results with and without previousSymbols', () => {
-    const uri1 = 'test://reuse-equiv-a';
-    const uri2 = 'test://reuse-equiv-b';
-    const text = `# loc1\nx = 1\n---\n# loc2\ny = 2\n---\n`;
-    const newText = `# loc1\nx = 1\nz = 3\n---\n# loc2\ny = 2\n---\n`;
-
-    // Path A: with previousSymbols
-    const treeA1 = parser.parse(uri1, text);
-    const { symbols: symsA1 } = extractSymbols(treeA1!, uri1);
-    const treeA2 = parser.parse(uri1, newText);
-    const { symbols: symsA } = extractSymbols(treeA2!, uri1, symsA1, parser.lastEdit);
-
-    // Path B: without previousSymbols (fresh parse)
-    const treeB = parser.parse(uri2, newText);
-    const { symbols: symsB } = extractSymbols(treeB!, uri2);
-
-    // Both should produce the same location structure
-    expect(symsA.locationDefs.size).toBe(symsB.locationDefs.size);
-    for (const [key] of symsB.locations) {
-      const locA = symsA.getLocation(key);
-      const locB = symsB.getLocation(key);
-      expect(locA).toBeDefined();
-      expect(locA!.variables.size).toBe(locB!.variables.size);
-    }
-  });
-
-  it('should reuse unchanged location and re-extract changed one', () => {
-    const uri = 'test://reuse-selective';
-    const text1 = `# loc1\nx = 1\n---\n# loc2\ny = 2\n---\n`;
-    const tree1 = parser.parse(uri, text1);
-    const { symbols: syms1 } = extractSymbols(tree1!, uri);
-
-    // Change only loc1
-    const text2 = `# loc1\nx = 1\nz = 3\n---\n# loc2\ny = 2\n---\n`;
-    const tree2 = parser.parse(uri, text2);
-    const { reusedLocations } = extractSymbols(tree2!, uri, syms1, parser.lastEdit);
-
-    // loc2 is after the edit → reused; loc1 overlaps the edit → re-extracted
-    expect(reusedLocations.has('loc2')).toBe(true);
-    expect(reusedLocations.has('loc1')).toBe(false);
-  });
-});
-
-// ──────────────────────────────────────────────────────────────────────
 // findVariableReferences
 // ──────────────────────────────────────────────────────────────────────
 
@@ -190,7 +99,7 @@ describe('findVariableReferences', () => {
   });
 
   it('should find global variable references across locations', () => {
-    const tree = parser.parse('test://varref-global', `# loc1
+    const tree = parser.parseOnce(`# loc1
 x = 1
 ---
 # loc2
@@ -203,7 +112,7 @@ pl x
   });
 
   it('should track variable used without definition', () => {
-    const tree = parser.parse('test://varref-nodef', `# test
+    const tree = parser.parseOnce(`# test
 pl myVar
 ---
 `);
@@ -216,7 +125,7 @@ pl myVar
   });
 
   it('should treat $name and name as same variable', () => {
-    const tree = parser.parse('test://varref-prefix', `# test
+    const tree = parser.parseOnce(`# test
 $x = 'hello'
 pl x
 ---
@@ -239,7 +148,7 @@ describe('findSymbolAtPosition — locationName scoping', () => {
   });
 
   it('should find symbol in the specified location only', () => {
-    const tree = parser.parse('test://scope-pos', `# loc1
+    const tree = parser.parseOnce(`# loc1
 act 'Action A': pl 'a'
 ---
 # loc2
@@ -258,7 +167,7 @@ act 'Action B': pl 'b'
   });
 
   it('should still find global location defs even when scoped', () => {
-    const tree = parser.parse('test://scope-global', `# MyLoc
+    const tree = parser.parseOnce(`# MyLoc
 pl 'x'
 ---
 `);
@@ -283,7 +192,7 @@ describe('findVariableAtPosition resolves correct scoped local', () => {
   });
 
   it('returns outer local when cursor is on usage outside inner scope', () => {
-    const tree = parser.parse('test://fvap1', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 pl x
 if 1:
@@ -307,7 +216,7 @@ end
   });
 
   it('returns the local definition symbol when cursor is on the LOCAL line', () => {
-    const tree = parser.parse('test://fvap2', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if 1:
   local x = 2
@@ -327,7 +236,7 @@ end
   });
 
   it('returns global variable when no locals exist', () => {
-    const tree = parser.parse('test://fvap3', `# test
+    const tree = parser.parseOnce(`# test
 x = 1
 pl x
 ---
@@ -340,7 +249,7 @@ pl x
   });
 
   it('falls back to findVariable when position is not on a reference', () => {
-    const tree = parser.parse('test://fvap4', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 ---
 `);
@@ -365,7 +274,7 @@ describe('findVariableReferences with exactSymbol', () => {
   });
 
   it('returns only the specified scoped local refs when exactSymbol provided', () => {
-    const tree = parser.parse('test://fvr-exact', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 pl x
 if 1:
@@ -404,7 +313,7 @@ end
     // genuine global, not the upcoming local.  Find-references must
     // therefore return two disjoint sets when the cursor lands on
     // either symbol — the global owns lines 2-3, the local owns 4-6.
-    const tree = parser.parse('test://global-then-local', `# test
+    const tree = parser.parseOnce(`# test
 x = 10
 pl x
 local x = 5
@@ -435,7 +344,7 @@ x = 20
   it('reads of a non-local name with a single global write site are tracked as globals', () => {
     // Simple: no `local x` anywhere → bare assignment is the one and
     // only global write site; reads aggregate onto the same symbol.
-    const tree = parser.parse('test://only-global', `# a
+    const tree = parser.parseOnce(`# a
 x = 1
 pl x
 ---
@@ -470,7 +379,7 @@ describe('copyWithLineShift preserves scope data', () => {
   });
 
   it('findVariable still resolves locals after copyWithLineShift', () => {
-    const tree = parser.parse('test://copy1', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if 1:
   pl x
@@ -489,7 +398,7 @@ end
   });
 
   it('findAllVariables returns all scoped locals after copyWithLineShift', () => {
-    const tree = parser.parse('test://copy2', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if 1:
   local x = 2
@@ -509,7 +418,7 @@ end
   });
 
   it('scopeParent, isolatedScopes, and localNames are copied', () => {
-    const tree = parser.parse('test://copy3', `# test
+    const tree = parser.parseOnce(`# test
 local y = 1
 act 'a':
   local z = 2
@@ -529,7 +438,7 @@ end
   });
 
   it('addLocationFrom preserves scope data through DocumentSymbols', () => {
-    const tree = parser.parse('test://copy4', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if 1:
   pl x
@@ -562,7 +471,7 @@ describe('getLocalsInScope', () => {
   });
 
   it('returns locals from current scope', () => {
-    const tree = parser.parse('test://gls1', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 local y = 2
 pl x + y
@@ -577,7 +486,7 @@ pl x + y
   });
 
   it('inherits locals from parent scope', () => {
-    const tree = parser.parse('test://gls2', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if 1:
   local y = 2
@@ -599,7 +508,7 @@ end
   });
 
   it('stops at isolation boundary (act)', () => {
-    const tree = parser.parse('test://gls3', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 act 'a':
   local y = 2
@@ -619,7 +528,7 @@ end
   });
 
   it('innermost scope shadows outer scope', () => {
-    const tree = parser.parse('test://gls4', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 if 1:
   local x = 2
@@ -638,7 +547,7 @@ end
   });
 
   it('works after copyWithLineShift', () => {
-    const tree = parser.parse('test://gls5', `# test
+    const tree = parser.parseOnce(`# test
 local a = 1
 if 1:
   local b = 2
@@ -653,7 +562,7 @@ end
   });
 
   it('returns empty map for scope with no locals', () => {
-    const tree = parser.parse('test://gls6', `# test
+    const tree = parser.parseOnce(`# test
 x = 1
 pl x
 ---
@@ -677,7 +586,7 @@ describe('copyWithLineShift lineShift=0 shares symbols', () => {
   });
 
   it('shares symbol objects (no deep copy) when lineShift is 0', () => {
-    const tree = parser.parse('test://zero1', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 pl x
 ---
@@ -694,7 +603,7 @@ pl x
   });
 
   it('does NOT share symbol objects when lineShift is non-zero', () => {
-    const tree = parser.parse('test://nonzero1', `# test
+    const tree = parser.parseOnce(`# test
 local x = 1
 pl x
 ---
@@ -722,7 +631,7 @@ describe('findSymbolAtPosition — comprehensive', () => {
   });
 
   it('should find action at cursor position inside string', () => {
-    const tree = parser.parse('test://pos-act', `# test\nact 'My Action':\n  pl 'hi'\nend\ndelact 'My Action'\n---\n`);
+    const tree = parser.parseOnce(`# test\nact 'My Action':\n  pl 'hi'\nend\ndelact 'My Action'\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://pos-act');
     // The action ref in delact is at line 4, inside the string
     const sym = symbols.findSymbolAtPosition(4, 9, 'test');
@@ -732,7 +641,7 @@ describe('findSymbolAtPosition — comprehensive', () => {
   });
 
   it('should find object at cursor position inside string', () => {
-    const tree = parser.parse('test://pos-obj', `# test\naddobj 'Sword'\ndelobj 'Sword'\n---\n`);
+    const tree = parser.parseOnce(`# test\naddobj 'Sword'\ndelobj 'Sword'\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://pos-obj');
     const sym = symbols.findSymbolAtPosition(2, 9, 'test');
     expect(sym).toBeDefined();
@@ -741,7 +650,7 @@ describe('findSymbolAtPosition — comprehensive', () => {
   });
 
   it('should find location ref at cursor position', () => {
-    const tree = parser.parse('test://pos-loc', `# room1\n---\n# room2\ngosub 'room1'\n---\n`);
+    const tree = parser.parseOnce(`# room1\n---\n# room2\ngosub 'room1'\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://pos-loc');
     const sym = symbols.findSymbolAtPosition(3, 8, 'room2');
     expect(sym).toBeDefined();
@@ -750,7 +659,7 @@ describe('findSymbolAtPosition — comprehensive', () => {
   });
 
   it('should return null when cursor is not on any symbol', () => {
-    const tree = parser.parse('test://pos-none', `# test\npl 'hello'\n---\n`);
+    const tree = parser.parseOnce(`# test\npl 'hello'\n---\n`);
     const { symbols } = extractSymbols(tree!, 'test://pos-none');
     const sym = symbols.findSymbolAtPosition(1, 0, 'test');
     expect(sym).toBeNull();

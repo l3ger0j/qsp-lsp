@@ -76,7 +76,7 @@ pl x
   const URI = 'test://agg-cache';
 
   function makeState(uri = URI): DocumentState {
-    const tree = parser.parse(uri, CODE)!;
+    const tree = parser.parseOnce(CODE)!;
     const { symbols } = extractSymbols(tree, uri);
     return { symbols, locationIndex: buildLocationIndex(CODE) };
   }

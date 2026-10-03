@@ -11,6 +11,7 @@
  * except the first is reported as "never referenced", and anything the
  * regex-only location reads looks unused.
  */
+import { extractErrors } from '../src/parser/extractErrors';
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { PassThrough } from 'stream';
 import { createConnection, TextDocuments } from 'vscode-languageserver/node';
@@ -51,7 +52,7 @@ describe('unused diagnostics with regex-only locations (unit)', () => {
   const uri = 'test://regex-only';
 
   function diagnose(regexReader: boolean): string[] {
-    const tree = parser.parse(uri, CODE)!;
+    const tree = parser.parseOnce(CODE)!;
     const { symbols } = extractSymbols(tree, uri);
     const locationIndex = buildLocationIndex(CODE);
     if (regexReader) {
@@ -65,8 +66,8 @@ describe('unused diagnostics with regex-only locations (unit)', () => {
     }
     const doc = TextDocument.create(uri, 'qsp', 1, CODE);
     return computeDiagnostics(
-      doc, uri, locationIndex, { ...ALL_DIAGS_OFF, ...UNUSED_ON }, parser,
-      collectCallTypesPerTarget([symbols]), symbols,
+      doc, uri, locationIndex, { ...ALL_DIAGS_OFF, ...UNUSED_ON },
+      collectCallTypesPerTarget([symbols]), symbols, extractErrors(tree),
     ).map(d => d.message);
   }
 

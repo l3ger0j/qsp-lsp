@@ -243,7 +243,7 @@ goto 'shop'
 `;
 
   function parseFile(uri: string, code: string) {
-    const tree = parser.parse(uri, code)!;
+    const tree = parser.parseOnce(code)!;
     return extractSymbols(tree, uri);
   }
 

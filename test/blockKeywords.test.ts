@@ -13,7 +13,7 @@ describe('findBlockKeywordRanges', () => {
   });
 
   it('should highlight if/elseif/else/end keywords', () => {
-    const tree = parser.parse('test://bk-if', `# test
+    const tree = parser.parseOnce(`# test
 if x > 0:
   pl 'a'
 elseif x = 0:
@@ -33,7 +33,7 @@ end
   });
 
   it('should highlight same keywords when cursor is on end', () => {
-    const tree = parser.parse('test://bk-end', `# test
+    const tree = parser.parseOnce(`# test
 if x > 0:
   pl 'a'
 elseif x = 0:
@@ -51,7 +51,7 @@ end
   });
 
   it('should highlight same keywords when cursor is on elseif', () => {
-    const tree = parser.parse('test://bk-elseif', `# test
+    const tree = parser.parseOnce(`# test
 if x > 0:
   pl 'a'
 elseif x = 0:
@@ -68,7 +68,7 @@ end
   });
 
   it('should highlight act/end keywords', () => {
-    const tree = parser.parse('test://bk-act', `# test
+    const tree = parser.parseOnce(`# test
 act 'Go':
   pl 'walking'
 end
@@ -82,7 +82,7 @@ end
   });
 
   it('should highlight loop/end keywords', () => {
-    const tree = parser.parse('test://bk-loop', `# test
+    const tree = parser.parseOnce(`# test
 loop while x < 10:
   x += 1
 end
@@ -96,7 +96,7 @@ end
   });
 
   it('should highlight correct block for nested structures', () => {
-    const tree = parser.parse('test://bk-nested', `# test
+    const tree = parser.parseOnce(`# test
 if x:
   act 'Go':
     pl 'a'
@@ -112,7 +112,7 @@ end
   });
 
   it('should highlight outer block when cursor is on outer end', () => {
-    const tree = parser.parse('test://bk-outer', `# test
+    const tree = parser.parseOnce(`# test
 if x:
   act 'Go':
     pl 'a'
@@ -128,7 +128,7 @@ end
   });
 
   it('should return empty array when cursor is not on a keyword', () => {
-    const tree = parser.parse('test://bk-nocursor', `# test
+    const tree = parser.parseOnce(`# test
 if x:
   pl 'hello'
 end
@@ -140,7 +140,7 @@ end
   });
 
   it('should return empty array for non-block keywords', () => {
-    const tree = parser.parse('test://bk-nonblock', `# test
+    const tree = parser.parseOnce(`# test
 x = 1
 ---
 `);
@@ -149,7 +149,7 @@ x = 1
   });
 
   it('should handle if/else without elseif', () => {
-    const tree = parser.parse('test://bk-ifelse', `# test
+    const tree = parser.parseOnce(`# test
 if x:
   pl 'a'
 else
@@ -166,7 +166,7 @@ end
   });
 
   it('should handle simple if/end without else', () => {
-    const tree = parser.parse('test://bk-simple-if', `# test
+    const tree = parser.parseOnce(`# test
 if x:
   pl 'a'
 end
@@ -177,7 +177,7 @@ end
   });
 
   it('should handle multiple elseif clauses', () => {
-    const tree = parser.parse('test://bk-multi-elseif', `# test
+    const tree = parser.parseOnce(`# test
 if x = 1:
   pl 'a'
 elseif x = 2:
@@ -205,7 +205,7 @@ describe('findLabelHighlightsInLocation (jump / label document highlight)', () =
 
   /** Resolve the location's symbol table, then call the real LSP helper. */
   function getHighlights(code: string, uri: string, locationName: string, line: number, col: number) {
-    const tree = parser.parse(uri, code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(tree, uri);
     const loc = symbols.getLocation(locationName);
     if (!loc) throw new Error(`Location '${locationName}' not found`);

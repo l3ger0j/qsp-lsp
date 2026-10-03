@@ -24,7 +24,7 @@ describe('buildPropagatedLocals', () => {
   });
 
   function build(code: string): SymbolAggregates {
-    const tree = parser.parse('test://agg', code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(tree, 'test://agg');
     const agg = emptyAggregates();
     collectAggregates(symbols.locations.values(), agg);
@@ -299,7 +299,7 @@ describe('externalLocalBindings (call-graph-sensitive dataflow, fix #6)', () => 
   });
 
   function build(code: string) {
-    const tree = parser.parse('test://agg', code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(tree, 'test://agg');
     const agg = emptyAggregates();
     collectAggregates(symbols.locations.values(), agg);
@@ -489,7 +489,7 @@ describe('externalLocalBindings: side-effect writes propagate back to caller loc
   });
 
   function build(code: string) {
-    const tree = parser.parse('test://se', code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(tree, 'test://se');
     const agg = emptyAggregates();
     collectAggregates(symbols.locations.values(), agg);
@@ -670,7 +670,7 @@ describe('externalLocalBindings: every call channel carries mutations back', () 
   });
 
   function build(code: string) {
-    const tree = parser.parse('test://ch', code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(tree, 'test://ch');
     const agg = emptyAggregates();
     collectAggregates(symbols.locations.values(), agg);
@@ -745,7 +745,7 @@ describe('externalLocalBindings: dynamic / dyneval writes propagate', () => {
   });
 
   function build(code: string) {
-    const tree = parser.parse('test://dyn', code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(tree, 'test://dyn');
     const agg = emptyAggregates();
     collectAggregates(symbols.locations.values(), agg);
@@ -875,7 +875,7 @@ describe('collectAggregates: globallyRead', () => {
   });
 
   function buildAgg(code: string): SymbolAggregates {
-    const tree = parser.parse('test://gr', code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(tree, 'test://gr');
     const agg = emptyAggregates();
     collectAggregates(symbols.locations.values(), agg);
@@ -928,7 +928,7 @@ describe('crossLocationDispatches (project-wide global code-block dispatch)', ()
   });
 
   function buildBoth(code: string) {
-    const tree = parser.parse('test://cld', code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(tree, 'test://cld');
     const agg = emptyAggregates();
     collectAggregates(symbols.locations.values(), agg);
@@ -1210,11 +1210,11 @@ res = dyneval($d, 1, 2)
     // Project mode: the global $d code-block lives in a different
     // file than the dyneval call.  The cross-loc index must include
     // both files' locations.
-    const treeA = parser.parse('test://fA', `# init
+    const treeA = parser.parseOnce(`# init
 $d = { result = 7 }
 ---
 `)!;
-    const treeB = parser.parse('test://fB', `# other
+    const treeB = parser.parseOnce(`# other
 res = dyneval($d)
 ---
 `)!;
@@ -1243,21 +1243,19 @@ res = dyneval($d)
     // Exec-body equivalent of the cross-file test above: the
     // dispatch lives inside an `<a href="exec:…">` link in fileB,
     // and the global code-block lives in fileA.
-    const treeA = parser.parse('test://fA', `# init
+    const treeA = parser.parseOnce(`# init
 $code = { result = 99 }
 ---
 `)!;
-    const treeB = parser.parse('test://fB', `# home
+    const treeB = parser.parseOnce(`# home
 pl '<a href="exec:y = dyneval($code)">click</a>'
 ---
 `)!;
     const symsA = extractSymbols(
-      treeA, 'test://fA', undefined, undefined,
-      (t) => parser.parseOnce(t),
+      treeA, 'test://fA', (t) => parser.parseOnce(t),
     ).symbols;
     const symsB = extractSymbols(
-      treeB, 'test://fB', undefined, undefined,
-      (t) => parser.parseOnce(t),
+      treeB, 'test://fB', (t) => parser.parseOnce(t),
     ).symbols;
     const agg = emptyAggregates();
     collectAggregates(symsA.locations.values(), agg);
@@ -1391,7 +1389,7 @@ end
     // Requires `parseFn` to drive the embedded-exec sub-parser, so
     // we invoke `extractSymbols` directly (mirroring the cross-file
     // exec-body test above) rather than going through `buildBoth`.
-    const tree = parser.parse('test://aie', `# init
+    const tree = parser.parseOnce(`# init
 $code = { result = 99 }
 ---
 # home
@@ -1399,8 +1397,7 @@ pl '<a href="exec:act ''go'': res = dyneval($code)">click</a>'
 ---
 `)!;
     const { symbols } = extractSymbols(
-      tree, 'test://aie', undefined, undefined,
-      (t) => parser.parseOnce(t),
+      tree, 'test://aie', (t) => parser.parseOnce(t),
     );
     const agg = emptyAggregates();
     collectAggregates(symbols.locations.values(), agg);

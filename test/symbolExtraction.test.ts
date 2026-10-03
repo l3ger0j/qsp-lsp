@@ -11,7 +11,7 @@ describe('extractSymbols', () => {
   });
 
   it('should extract location definitions', () => {
-    const tree = parser.parse('test://syms', `# myLocation
+    const tree = parser.parseOnce(`# myLocation
 pl 'hello'
 ---
 # another
@@ -27,7 +27,7 @@ x = 1
   });
 
   it('should extract variable definitions', () => {
-    const tree = parser.parse('test://vars', `# test
+    const tree = parser.parseOnce(`# test
 x = 1
 $name = 'Alice'
 local temp = 5
@@ -60,7 +60,7 @@ local temp = 5
   });
 
   it('should extract labels', () => {
-    const tree = parser.parse('test://labels', `# test
+    const tree = parser.parseOnce(`# test
 :myLabel
 pl 'at label'
 ---
@@ -75,7 +75,7 @@ pl 'at label'
   });
 
   it('should extract action definitions', () => {
-    const tree = parser.parse('test://acts', `# test
+    const tree = parser.parseOnce(`# test
 act 'Open door':
   pl 'Door opened'
 end
@@ -91,7 +91,7 @@ end
   });
 
   it('should extract location references from gosub', () => {
-    const tree = parser.parse('test://refs', `# main
+    const tree = parser.parseOnce(`# main
 gosub 'helper'
 ---
 # helper
@@ -108,7 +108,7 @@ pl 'helping'
   });
 
   it('should handle unicode identifiers', () => {
-    const tree = parser.parse('test://unicode', `# тест
+    const tree = parser.parseOnce(`# тест
 Имя = 'Алиса'
 ---
 `);
@@ -120,7 +120,7 @@ pl 'helping'
   });
 
   it('should handle if/else blocks', () => {
-    const tree = parser.parse('test://ifelse', `# test
+    const tree = parser.parseOnce(`# test
 if x > 0:
   pl 'positive'
 elseif x = 0: pl 'zero'
@@ -133,7 +133,7 @@ end
   });
 
   it('should treat #var and %var as same variable as var', () => {
-    const tree = parser.parse('test://prefix-var', `# test
+    const tree = parser.parseOnce(`# test
 arr[0] = 1
 pl #arr
 pl %arr
@@ -150,7 +150,7 @@ pl %arr
   });
 
   it('should extract variable with array index', () => {
-    const tree = parser.parse('test://array-var', `# test
+    const tree = parser.parseOnce(`# test
 arr[1] = 5
 pl arr[2]
 ---
@@ -166,7 +166,7 @@ pl arr[2]
   });
 
   it('should extract multiple actions in one location', () => {
-    const tree = parser.parse('test://multi-act', `# test
+    const tree = parser.parseOnce(`# test
 act 'First': pl '1'
 act 'Second':
   pl '2'
@@ -185,7 +185,7 @@ act 'Third': pl '3'
   });
 
   it('should handle nested blocks (act inside if)', () => {
-    const tree = parser.parse('test://nested', `# test
+    const tree = parser.parseOnce(`# test
 if x > 0:
   act 'Nested action':
     pl 'inside'
@@ -228,14 +228,14 @@ describe('extractSymbols — location references', () => {
     ['@name', '@target'],
   ])('should extract refs from %s', (keyword, code) => {
     const uri = `test://lr-${keyword}`;
-    const tree = parser.parse(uri, `# main\n${code}\n---\n`);
+    const tree = parser.parseOnce(`# main\n${code}\n---\n`);
     const { symbols } = extractSymbols(tree!, uri);
     const refs = symbols.findLocationReferences('target');
     expect(refs).toHaveLength(1);
   });
 
   it('should NOT create location refs for non-location statements', () => {
-    const tree = parser.parse('test://lr-no-ref', `# main
+    const tree = parser.parseOnce(`# main
 pl 'target'
 msg 'target'
 ---
@@ -247,7 +247,7 @@ msg 'target'
   });
 
   it('should find multiple refs to the same location', () => {
-    const tree = parser.parse('test://lr-multi', `# main
+    const tree = parser.parseOnce(`# main
 gosub 'helper'
 gs 'helper'
 x = func('helper')
@@ -263,7 +263,7 @@ pl 'hi'
   });
 
   it('should track ref positions inside the string (excluding quotes)', () => {
-    const tree = parser.parse('test://lr-pos', `# main
+    const tree = parser.parseOnce(`# main
 gosub 'myLoc'
 ---
 `);
@@ -280,7 +280,7 @@ gosub 'myLoc'
   });
 
   it('should handle double-quoted strings in refs', () => {
-    const tree = parser.parse('test://lr-dquote', `# main
+    const tree = parser.parseOnce(`# main
 gosub "target"
 ---
 `);
@@ -290,7 +290,7 @@ gosub "target"
   });
 
   it('should be case-insensitive for location matching', () => {
-    const tree = parser.parse('test://lr-case', `# MyLoc
+    const tree = parser.parseOnce(`# MyLoc
 pl 'hi'
 ---
 # main
@@ -312,7 +312,7 @@ describe('label reference extraction', () => {
   });
 
   it('should track jump label references', () => {
-    const tree = parser.parse('test://label-ref', `# main
+    const tree = parser.parseOnce(`# main
 :myLabel
 pl 'hello'
 jump 'myLabel'
@@ -326,7 +326,7 @@ jump 'myLabel'
   });
 
   it('should position label ref inside quotes', () => {
-    const tree = parser.parse('test://label-pos', `# main
+    const tree = parser.parseOnce(`# main
 :start
 jump 'start'
 ---
@@ -341,7 +341,7 @@ jump 'start'
   });
 
   it('should find label refs via findLabelReferences', () => {
-    const tree = parser.parse('test://label-find', `# main
+    const tree = parser.parseOnce(`# main
 :loop
 pl 'tick'
 jump 'loop'
@@ -354,7 +354,7 @@ jump 'loop'
   });
 
   it('should be case-insensitive for label refs', () => {
-    const tree = parser.parse('test://label-case', `# main
+    const tree = parser.parseOnce(`# main
 :MyLabel
 jump 'MYLABEL'
 ---
@@ -365,7 +365,7 @@ jump 'MYLABEL'
   });
 
   it('should exclude leading space from label definition range', () => {
-    const tree = parser.parse('test://label-space', `# main
+    const tree = parser.parseOnce(`# main
 : spaced
 jump 'spaced'
 ---
@@ -382,7 +382,7 @@ jump 'spaced'
   });
 
   it('should scope label refs to their location', () => {
-    const tree = parser.parse('test://label-scope', `# loc1
+    const tree = parser.parseOnce(`# loc1
 :start
 jump 'start'
 ---
@@ -399,7 +399,7 @@ jump 'start'
   });
 
   it('should trim spaces inside quotes for label refs', () => {
-    const tree = parser.parse('test://label-trim', `# main
+    const tree = parser.parseOnce(`# main
 :myLabel
 jump '  myLabel  '
 ---
@@ -428,7 +428,7 @@ describe('location reference extraction', () => {
   });
 
   it('should trim spaces inside quotes for location refs', () => {
-    const tree = parser.parse('test://loc-trim', `# start
+    const tree = parser.parseOnce(`# start
 gosub '  room1  '
 ---
 # room1
@@ -459,7 +459,7 @@ describe('object reference extraction', () => {
   });
 
   it('should track addobj/delobj as object references', () => {
-    const tree = parser.parse('test://obj-ref', `# main
+    const tree = parser.parseOnce(`# main
 addobj 'Sword'
 delobj 'Sword'
 ---
@@ -473,7 +473,7 @@ delobj 'Sword'
   });
 
   it('should track spaced forms add obj/del obj/mod obj', () => {
-    const tree = parser.parse('test://obj-spaced', `# main
+    const tree = parser.parseOnce(`# main
 add obj 'Shield'
 del obj 'Shield'
 mod obj 'Shield','New Shield'
@@ -487,7 +487,7 @@ mod obj 'Shield','New Shield'
   });
 
   it('should track modobj (non-spaced form) as object reference', () => {
-    const tree = parser.parse('test://obj-modobj', `# main
+    const tree = parser.parseOnce(`# main
 modobj 'Sword','Super Sword'
 ---
 `);
@@ -499,7 +499,7 @@ modobj 'Sword','Super Sword'
   });
 
   it('should find object refs case-insensitively via findObjectReferences', () => {
-    const tree = parser.parse('test://obj-case', `# main
+    const tree = parser.parseOnce(`# main
 addobj 'Magic Sword'
 delobj 'magic sword'
 ---
@@ -510,7 +510,7 @@ delobj 'magic sword'
   });
 
   it('should preserve spaces in object names (not trim)', () => {
-    const tree = parser.parse('test://obj-space', `# main
+    const tree = parser.parseOnce(`# main
 addobj '  Sword  '
 addobj 'Sword'
 ---
@@ -526,7 +526,7 @@ addobj 'Sword'
   });
 
   it('should position object ref range inside quotes', () => {
-    const tree = parser.parse('test://obj-pos', `# main
+    const tree = parser.parseOnce(`# main
 addobj 'Sword'
 ---
 `);
@@ -541,7 +541,7 @@ addobj 'Sword'
   });
 
   it('should track obj operator as object reference', () => {
-    const tree = parser.parse('test://obj-op', `# main
+    const tree = parser.parseOnce(`# main
 if obj 'Sword': pl 'yes'
 ---
 `);
@@ -560,7 +560,7 @@ describe('action reference extraction', () => {
   });
 
   it('should track act definitions with accurate string range', () => {
-    const tree = parser.parse('test://act-def', `# main
+    const tree = parser.parseOnce(`# main
 act 'Go north':
   pl 'walking'
 end
@@ -579,7 +579,7 @@ end
   });
 
   it('should track delact as action reference', () => {
-    const tree = parser.parse('test://act-ref', `# main
+    const tree = parser.parseOnce(`# main
 act 'Go north': pl 'hi'
 delact 'Go north'
 ---
@@ -591,7 +591,7 @@ delact 'Go north'
   });
 
   it('should track del act (spaced form) as action reference', () => {
-    const tree = parser.parse('test://act-delsp', `# main
+    const tree = parser.parseOnce(`# main
 act 'Go north': pl 'hi'
 del act 'Go north'
 ---
@@ -603,7 +603,7 @@ del act 'Go north'
   });
 
   it('should find action refs case-insensitively via findActionReferences', () => {
-    const tree = parser.parse('test://act-case', `# main
+    const tree = parser.parseOnce(`# main
 act 'Go North': pl 'hi'
 delact 'go north'
 del act 'GO NORTH'
@@ -616,7 +616,7 @@ del act 'GO NORTH'
   });
 
   it('should preserve spaces in action names (not trim)', () => {
-    const tree = parser.parse('test://act-space', `# main
+    const tree = parser.parseOnce(`# main
 act 'Go': pl 'a'
 act '  Go  ': pl 'b'
 ---
@@ -631,7 +631,7 @@ act '  Go  ': pl 'b'
   });
 
   it('should find symbol at position for actions', () => {
-    const tree = parser.parse('test://sym-pos', `# main
+    const tree = parser.parseOnce(`# main
 act 'Go north': pl 'hi'
 delact 'Go north'
 ---
@@ -651,7 +651,7 @@ delact 'Go north'
   });
 
   it('should find symbol at position for objects', () => {
-    const tree = parser.parse('test://sym-obj', `# main
+    const tree = parser.parseOnce(`# main
 addobj 'Sword'
 ---
 `);
@@ -672,7 +672,7 @@ describe('desc and loc operator tracking', () => {
   });
 
   it('should track desc() as location reference', () => {
-    const tree = parser.parse('test://desc-ref', `# main
+    const tree = parser.parseOnce(`# main
 $text = $desc('room1')
 ---
 # room1
@@ -687,7 +687,7 @@ pl 'hello'
   });
 
   it('should track loc operator as location reference', () => {
-    const tree = parser.parse('test://loc-ref', `# main
+    const tree = parser.parseOnce(`# main
 if loc 'room1': pl 'exists'
 ---
 # room1
@@ -702,7 +702,7 @@ pl 'hello'
   });
 
   it('should trim whitespace for loc operator (whitespace-tolerant)', () => {
-    const tree = parser.parse('test://loc-trim', `# main
+    const tree = parser.parseOnce(`# main
 if loc '  room1  ': pl 'exists'
 ---
 # room1
@@ -726,7 +726,7 @@ describe('code block {…} used as string argument', () => {
   // ── Location references ──
 
   it('goto {loc} creates location reference', () => {
-    const tree = parser.parse('test://cb-goto', `# main
+    const tree = parser.parseOnce(`# main
 goto {target}
 ---
 # target
@@ -739,7 +739,7 @@ pl 'hi'
   });
 
   it('gosub {loc} creates location reference', () => {
-    const tree = parser.parse('test://cb-gosub', `# main
+    const tree = parser.parseOnce(`# main
 gosub {target}
 ---
 # target
@@ -752,7 +752,7 @@ pl 'hi'
   });
 
   it('func({loc}) creates location reference', () => {
-    const tree = parser.parse('test://cb-func', `# main
+    const tree = parser.parseOnce(`# main
 x = func({helper})
 ---
 # helper
@@ -765,7 +765,7 @@ pl 'hi'
   });
 
   it('loc {name} operator creates location reference', () => {
-    const tree = parser.parse('test://cb-loc', `# main
+    const tree = parser.parseOnce(`# main
 if loc {room1}: pl 'exists'
 ---
 # room1
@@ -780,7 +780,7 @@ pl 'hi'
   // ── Label references ──
 
   it('jump {label} creates label reference', () => {
-    const tree = parser.parse('test://cb-jump', `# main
+    const tree = parser.parseOnce(`# main
 :myLabel
 jump {myLabel}
 ---
@@ -793,7 +793,7 @@ jump {myLabel}
   // ── Object references ──
 
   it('addobj {name} creates object reference', () => {
-    const tree = parser.parse('test://cb-addobj', `# main
+    const tree = parser.parseOnce(`# main
 addobj {Sword}
 ---
 `);
@@ -804,7 +804,7 @@ addobj {Sword}
   });
 
   it('delobj {name} creates object reference', () => {
-    const tree = parser.parse('test://cb-delobj', `# main
+    const tree = parser.parseOnce(`# main
 addobj {Sword}
 delobj {Sword}
 ---
@@ -815,7 +815,7 @@ delobj {Sword}
   });
 
   it('obj {name} operator creates object reference', () => {
-    const tree = parser.parse('test://cb-obj', `# main
+    const tree = parser.parseOnce(`# main
 if obj {Sword}: pl 'yes'
 ---
 `);
@@ -828,7 +828,7 @@ if obj {Sword}: pl 'yes'
   // ── Action definitions and references ──
 
   it('act {name}: creates action definition', () => {
-    const tree = parser.parse('test://cb-act', `# main
+    const tree = parser.parseOnce(`# main
 act {Go north}: pl 'walking'
 ---
 `);
@@ -839,7 +839,7 @@ act {Go north}: pl 'walking'
   });
 
   it('delact {name} creates action reference', () => {
-    const tree = parser.parse('test://cb-delact', `# main
+    const tree = parser.parseOnce(`# main
 act {Go north}: pl 'hi'
 delact {Go north}
 ---
@@ -853,7 +853,7 @@ delact {Go north}
   // ── Variable references from string args ──
 
   it('sortarr {name} creates variable reference', () => {
-    const tree = parser.parse('test://cb-sortarr', `# main
+    const tree = parser.parseOnce(`# main
 arr[0] = 3
 sortarr {arr}
 ---
@@ -865,7 +865,7 @@ sortarr {arr}
   });
 
   it('killvar {name} creates variable reference', () => {
-    const tree = parser.parse('test://cb-killvar', `# main
+    const tree = parser.parseOnce(`# main
 x = 1
 killvar {x}
 ---
@@ -876,7 +876,7 @@ killvar {x}
   });
 
   it('arrsize({name}) creates variable reference', () => {
-    const tree = parser.parse('test://cb-arrsize', `# main
+    const tree = parser.parseOnce(`# main
 arr[0] = 1
 pl arrsize({$arr})
 ---
@@ -889,7 +889,7 @@ pl arrsize({$arr})
   // ── Range positions (braces excluded from range) ──
 
   it('positions code block ref range inside braces', () => {
-    const tree = parser.parse('test://cb-pos', `# main
+    const tree = parser.parseOnce(`# main
 gosub {myLoc}
 ---
 `);
@@ -904,7 +904,7 @@ gosub {myLoc}
   });
 
   it('trims whitespace inside braces for location refs', () => {
-    const tree = parser.parse('test://cb-trim', `# main
+    const tree = parser.parseOnce(`# main
 gosub {  room1  }
 ---
 # room1
@@ -925,7 +925,7 @@ pl 'hi'
   });
 
   it('preserves spaces inside braces for object names (exact)', () => {
-    const tree = parser.parse('test://cb-objspace', `# main
+    const tree = parser.parseOnce(`# main
 addobj {  Sword  }
 addobj {Sword}
 ---
@@ -947,7 +947,7 @@ describe('compound expressions ignored — no refs from string+string or string+
   // ── Location references ──
 
   it('goto with string concatenation does NOT create location ref', () => {
-    const tree = parser.parse('test://expr-goto', `# main
+    const tree = parser.parseOnce(`# main
 goto 'a' + 'b'
 ---
 `);
@@ -957,7 +957,7 @@ goto 'a' + 'b'
   });
 
   it('gosub with string + $var does NOT create location ref', () => {
-    const tree = parser.parse('test://expr-gosub', `# main
+    const tree = parser.parseOnce(`# main
 gosub 'prefix' + $suffix
 ---
 `);
@@ -967,7 +967,7 @@ gosub 'prefix' + $suffix
   });
 
   it('func() with concatenation does NOT create location ref', () => {
-    const tree = parser.parse('test://expr-func', `# main
+    const tree = parser.parseOnce(`# main
 x = func('a' + 'b')
 ---
 `);
@@ -979,7 +979,7 @@ x = func('a' + 'b')
   // ── Label references ──
 
   it('jump with concatenation does NOT create label ref', () => {
-    const tree = parser.parse('test://expr-jump', `# main
+    const tree = parser.parseOnce(`# main
 :start
 jump 'sta' + 'rt'
 ---
@@ -992,7 +992,7 @@ jump 'sta' + 'rt'
   // ── Object references ──
 
   it('addobj with concatenation does NOT create object ref', () => {
-    const tree = parser.parse('test://expr-addobj', `# main
+    const tree = parser.parseOnce(`# main
 addobj 'Magic ' + 'Sword'
 ---
 `);
@@ -1004,7 +1004,7 @@ addobj 'Magic ' + 'Sword'
   // ── Action references ──
 
   it('delact with concatenation does NOT create action ref', () => {
-    const tree = parser.parse('test://expr-delact', `# main
+    const tree = parser.parseOnce(`# main
 act 'Go north': pl 'hi'
 delact 'Go ' + 'north'
 ---
@@ -1017,7 +1017,7 @@ delact 'Go ' + 'north'
   // ── Variable references from string args ──
 
   it('sortarr with concatenation does NOT create variable ref from string', () => {
-    const tree = parser.parse('test://expr-sortarr', `# main
+    const tree = parser.parseOnce(`# main
 arr[0] = 3
 sortarr '$' + 'arr'
 ---
@@ -1029,7 +1029,7 @@ sortarr '$' + 'arr'
   });
 
   it('arrsize() with concatenation does NOT create variable ref from string', () => {
-    const tree = parser.parse('test://expr-arrsize', `# main
+    const tree = parser.parseOnce(`# main
 arr[0] = 1
 pl arrsize('$' + 'arr')
 ---
@@ -1042,7 +1042,7 @@ pl arrsize('$' + 'arr')
   // ── Plain strings still work ──
 
   it('goto with plain string still creates location ref', () => {
-    const tree = parser.parse('test://expr-ok', `# main
+    const tree = parser.parseOnce(`# main
 goto 'target'
 ---
 # target
@@ -1063,7 +1063,7 @@ describe('extractSymbols — additional edge cases', () => {
   });
 
   it('should extract location ref from @@name user call statement', () => {
-    const tree = parser.parse('test://edge-usercall2', `# main
+    const tree = parser.parseOnce(`# main
 @@target
 ---
 `);
@@ -1073,7 +1073,7 @@ describe('extractSymbols — additional edge cases', () => {
   });
 
   it('should NOT extract refs for dynamic (non-string) arguments', () => {
-    const tree = parser.parse('test://edge-dynamic', `# main
+    const tree = parser.parseOnce(`# main
 gosub $locName
 ---
 `);
@@ -1083,7 +1083,7 @@ gosub $locName
   });
 
   it('should NOT create location refs for non-location statements', () => {
-    const tree = parser.parse('test://edge-nonloc', `# main
+    const tree = parser.parseOnce(`# main
 openqst 'game.qsp'
 dyneval 'x = 1'
 ---
@@ -1094,7 +1094,7 @@ dyneval 'x = 1'
   });
 
   it('should skip label after & statement separator', () => {
-    const tree = parser.parse('test://edge-amp-label', `# main
+    const tree = parser.parseOnce(`# main
 x = 1 & :fake
 :real
 ---
@@ -1108,7 +1108,7 @@ x = 1 & :fake
   it('should extract label as the first statement in a &-chain', () => {
     // `:loop` is the head of the chain, no `&` precedes it — it IS a real
     // label that a `jump 'loop'` would target at runtime.
-    const tree = parser.parse('test://edge-amp-head', `# main
+    const tree = parser.parseOnce(`# main
 :loop & pl 'a'
 ---
 `);
@@ -1123,7 +1123,7 @@ x = 1 & :fake
     // line" check, so every inline form (if/elseif/else/loop/act) and
     // the after-`&` case are handled the same way — the inline `act`
     // case below is representative.
-    const tree = parser.parse('test://edge-inline-label', `# main
+    const tree = parser.parseOnce(`# main
 act 'go': :foo & end
 :real
 ---
@@ -1139,7 +1139,7 @@ act 'go': :foo & end
   });
 
   it('should handle empty location body', () => {
-    const tree = parser.parse('test://edge-empty', `# empty
+    const tree = parser.parseOnce(`# empty
 ---
 `);
     expect(tree).not.toBeNull();
@@ -1153,7 +1153,7 @@ act 'go': :foo & end
   });
 
   it('should return null from findSymbolAtPosition for untracked position', () => {
-    const tree = parser.parse('test://edge-nopos', `# test
+    const tree = parser.parseOnce(`# test
 ---
 `);
     const { symbols } = extractSymbols(tree!, 'test://edge-nopos');
@@ -1161,7 +1161,7 @@ act 'go': :foo & end
   });
 
   it('should NOT extract refs for act with dynamic (non-string) name', () => {
-    const tree = parser.parse('test://edge-dynact', `# main
+    const tree = parser.parseOnce(`# main
 act $actName: pl 'dynamic'
 ---
 `);
@@ -1174,7 +1174,7 @@ act $actName: pl 'dynamic'
   });
 
   it('should NOT extract object ref for obj with dynamic argument', () => {
-    const tree = parser.parse('test://edge-dynobj', `# main
+    const tree = parser.parseOnce(`# main
 addobj $objName
 ---
 `);
@@ -1184,7 +1184,7 @@ addobj $objName
   });
 
   it('should NOT extract location ref for loc with dynamic argument', () => {
-    const tree = parser.parse('test://edge-dynloc', `# main
+    const tree = parser.parseOnce(`# main
 if loc $locName: pl 'exists'
 ---
 `);
@@ -1206,7 +1206,7 @@ describe('extractSymbols — variable refs from statement/function string args',
   });
 
   function getVars(code: string, locName = 'main'): Map<string, { def: boolean; refCount: number }> {
-    const tree = parser.parse('test://varref', code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(tree, 'test://varref');
     const locSyms = symbols.getLocation(locName);
     const result = new Map<string, { def: boolean; refCount: number }>();
@@ -1355,7 +1355,7 @@ describe('extractSymbols — variable refs from statement/function string args',
   // ── Block-level locals with string-arg builtins ──
 
   it('killvar inside block references block-level local', () => {
-    const tree = parser.parse('test://killvar-local', `# main
+    const tree = parser.parseOnce(`# main
 if 1:
   local x = 5
   killvar 'x'
@@ -1371,7 +1371,7 @@ end
   });
 
   it('arrpos inside block references block-level local', () => {
-    const tree = parser.parse('test://arrpos-local', `# main
+    const tree = parser.parseOnce(`# main
 if 1:
   local arr[0] = 1
   pl arrpos('$arr', 1)
@@ -1386,7 +1386,7 @@ end
   });
 
   it('setvar inside block defines block-level local', () => {
-    const tree = parser.parse('test://setvar-local', `# main
+    const tree = parser.parseOnce(`# main
 if 1:
   local x = 0
   setvar '$x', 42
@@ -1401,7 +1401,7 @@ end
   });
 
   it('copyarr inside block references block-level locals', () => {
-    const tree = parser.parse('test://copyarr-local', `# main
+    const tree = parser.parseOnce(`# main
 if 1:
   local src[0] = 1
   local dst[0] = 0
@@ -1420,7 +1420,7 @@ end
   });
 
   it('sortarr inside block references block-level local', () => {
-    const tree = parser.parse('test://sortarr-local', `# main
+    const tree = parser.parseOnce(`# main
 if 1:
   local arr[0] = 3
   sortarr '$arr'

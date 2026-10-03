@@ -6,10 +6,11 @@
  * `LocationSymbols` with correctly remapped positions, while strings
  * in identifier-position contexts are skipped.
  */
+import { extractErrors } from '../src/parser/extractErrors';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { QspTreeSitterParser, extractSymbols } from '../src/parser/treeSitter';
-import { extractEmbeddedExec, decodeDoubledQuotes, EXEC_LINK_RE } from '../src/parser/embeddedExec';
+import { decodeDoubledQuotes, EXEC_LINK_RE } from '../src/parser/embeddedExec';
 import type { DocumentSymbols } from '../src/parser/symbolTable';
 import { initParser } from './testHelpers';
 import { buildFileAggregates } from '../src/server/aggregation';
@@ -22,10 +23,9 @@ const parser = new QspTreeSitterParser();
 beforeAll(() => initParser(parser));
 
 function run(code: string): DocumentSymbols {
-  const tree = parser.parse(URI, code)!;
+  const tree = parser.parseOnce(code)!;
   const { symbols } = extractSymbols(
-    tree, URI, undefined, undefined,
-    (t) => parser.parseOnce(t),
+    tree, URI, (t) => parser.parseOnce(t),
   );
   return symbols;
 }
@@ -527,22 +527,21 @@ pl '<a href="exec:">click</a>'
     });
 
     it('runs automatically as part of extractSymbols', () => {
-      const tree = parser.parse(URI, `# home
+      const tree = parser.parseOnce(`# home
 pl '<a href="exec:gs ''skip''">x</a>'
 ---
 # skip
 ---
 `)!;
       const { symbols } = extractSymbols(
-        tree, URI, undefined, undefined,
-        (t) => parser.parseOnce(t),
+        tree, URI, (t) => parser.parseOnce(t),
       );
       expect(symbols.getLocation('home')!.locationRefs.get('skip'))
         .toBeDefined();
     });
 
     it('is a no-op when parseFn is not provided', () => {
-      const tree = parser.parse(URI, `# home
+      const tree = parser.parseOnce(`# home
 pl '<a href="exec:gs ''skip''">x</a>'
 ---
 # skip
@@ -550,34 +549,6 @@ pl '<a href="exec:gs ''skip''">x</a>'
 `)!;
       const { symbols } = extractSymbols(tree, URI);
       expect(symbols.getLocation('home')!.locationRefs.size).toBe(0);
-    });
-
-    it('respects the reusedLocations skip set', () => {
-      const tree = parser.parse(URI, `# home
-pl '<a href="exec:gs ''target''">x</a>'
----
-# target
----
-`)!;
-      // Build symbols WITHOUT the embedded scan (omit parseFn).
-      const { symbols } = extractSymbols(tree, URI);
-      expect(symbols.getLocation('home')!.locationRefs.size).toBe(0);
-
-      const reused = new Set(['home']);
-      extractEmbeddedExec(
-        tree, URI, symbols,
-        (t) => parser.parseOnce(t),
-        reused,
-      );
-      expect(symbols.getLocation('home')!.locationRefs.size).toBe(0);
-
-      // Sanity: without the skip set, the same call DOES extract.
-      extractEmbeddedExec(
-        tree, URI, symbols,
-        (t) => parser.parseOnce(t),
-      );
-      expect(symbols.getLocation('home')!.locationRefs.get('target'))
-        .toBeDefined();
     });
 
     it('skips strings in nested non-target contexts within argument lists', () => {
@@ -1269,15 +1240,14 @@ pl '<a href="exec:y = dyneval($b)">B</a>'
 
     function diagnose(code: string, overrides: Partial<DiagnosticSettings>, opts?: { parseExec?: boolean }) {
       const doc = TextDocument.create(URI, 'qsp', 1, code);
-      const tree = parser.parse(URI, code)!;
+      const tree = parser.parseOnce(code)!;
       const parseExec = opts?.parseExec ?? true;
       const { symbols } = extractSymbols(
-        tree, URI, undefined, undefined,
-        parseExec ? (t) => parser.parseOnce(t) : undefined,
+        tree, URI, parseExec ? (t) => parser.parseOnce(t) : undefined,
       );
       const locationIndex = buildLocationIndex(code);
       const settings = { ...ALL_OFF, ...overrides };
-      return computeDiagnostics(doc, URI, locationIndex, settings, parser, new Map(), symbols);
+      return computeDiagnostics(doc, URI, locationIndex, settings, new Map(), symbols, extractErrors(tree));
     }
 
     /** Source span (substring on `loc.range.start.line`) covered by a diagnostic. */

@@ -47,7 +47,7 @@ interface Fixture {
 }
 
 function makeFixture(code: string, uri = 'test://file.qsps'): Fixture {
-  const tree = parser.parse(uri, code)!;
+  const tree = parser.parseOnce(code)!;
   const { symbols } = extractSymbols(tree, uri);
   const locationIndex = buildLocationIndex(code);
   const state: DocumentState = { symbols, locationIndex };
@@ -71,7 +71,7 @@ function makeProjectFixture(files: { uri: string; code: string }[]): {
   const docs = new Map<string, TextDocument>();
   const projectFileUris = new Set<string>();
   for (const { uri, code } of files) {
-    const tree = parser.parse(uri, code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(tree, uri);
     const locationIndex = buildLocationIndex(code);
     states.set(uri, { symbols, locationIndex });

@@ -5,7 +5,7 @@ import { DiagnosticSeverity } from 'vscode-languageserver-types';
 import { QspTreeSitterParser, extractSymbols } from '../src/parser/treeSitter';
 import { buildLocationIndex } from '../src/common/locations';
 import { computeDiagnostics, type DiagnosticSettings } from '../src/server/diagnostics';
-import { checkReservedWordMisuse } from '../src/parser/extractErrors';
+import { checkReservedWordMisuse, extractErrors } from '../src/parser/extractErrors';
 import { initParser, WASM_PATH } from './testHelpers';
 
 const ALL_OFF: DiagnosticSettings = {
@@ -41,7 +41,7 @@ describe('reserved-word misuse lint', () => {
   beforeAll(() => initParser(parser));
 
   function analyse(src: string) {
-    const tree = parser.parse('file:///t.qsps', src)!;
+    const tree = parser.parseOnce(src)!;
     return checkReservedWordMisuse(tree);
   }
 
@@ -138,10 +138,10 @@ describe('reserved-word misuse surfaces as LSP diagnostics', () => {
   function run(code: string) {
     const uri = 'test://reserved';
     const doc = TextDocument.create(uri, 'qsp', 1, code);
-    const tree = parser.parse(uri, code)!;
+    const tree = parser.parseOnce(code)!;
     const { symbols } = extractSymbols(tree, uri);
     const locationIndex = buildLocationIndex(code);
-    return computeDiagnostics(doc, uri, locationIndex, ALL_OFF, parser, new Map(), symbols);
+    return computeDiagnostics(doc, uri, locationIndex, ALL_OFF, new Map(), symbols, extractErrors(tree));
   }
 
   it('produces Error-severity diagnostics routed through computeDiagnostics', () => {

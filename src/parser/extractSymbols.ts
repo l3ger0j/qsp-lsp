@@ -34,24 +34,17 @@ export { extractQuotedRefInfo, extractExactQuotedRefInfo, nodeLoc } from './walk
 /**
  * Walk the parse tree and populate a DocumentSymbols table.
  *
- * When `previousSymbols` is provided, unchanged location blocks reuse
- * the old symbols with adjusted line numbers — reducing work from
- * O(tree) to O(changed_locations) for typical edits.
- *
- * When `parseFn` is provided, every newly-extracted location is also
- * scanned for embedded `<a href="exec:CODE">` hyperlinks; their bodies
- * are sub-parsed via `parseFn` and contributed location / object /
- * action refs are merged into the host location's symbols.
+ * When `parseFn` is provided, every location is also scanned for
+ * embedded `<a href="exec:CODE">` hyperlinks; their bodies are
+ * sub-parsed via `parseFn` and contributed location / object / action
+ * refs are merged into the host location's symbols.
  */
 export function extractSymbols(
   tree: Parser.Tree,
   docUri: string,
-  previousSymbols?: DocumentSymbols,
-  lastEdit?: { startIndex: number; newEndIndex: number } | null,
   parseFn?: (text: string) => Parser.Tree | null,
-): { symbols: DocumentSymbols; reusedLocations: Set<string> } {
+): { symbols: DocumentSymbols } {
   const symbols = new DocumentSymbols(docUri);
-  const reusedLocations = new Set<string>();
   const root = tree.rootNode;
 
   const findNamedChild = (
@@ -82,34 +75,19 @@ export function extractSymbols(
     const locName = nameNode.text.trim();
     const locLoc = nodeLoc(nameNode, docUri);
 
-    // Reuse previous symbols for unchanged locations.
-    const locUnchanged = previousSymbols && lastEdit &&
-      (locBlock.endIndex <= lastEdit.startIndex ||
-       locBlock.startIndex >= lastEdit.newEndIndex);
-    if (locUnchanged) {
-      const oldLocSyms = previousSymbols.getLocation(locName);
-      const oldLocDef = previousSymbols.locationDefs.get(locName.toLowerCase());
-      if (oldLocSyms && oldLocDef?.definition) {
-        const lineShift = locLoc.line - oldLocDef.definition.line;
-        symbols.addLocationFrom(locName, locLoc, oldLocSyms, lineShift);
-        reusedLocations.add(locName.toLowerCase());
-        continue;
-      }
-    }
-
     const locSymbols = symbols.addLocation(locName, locLoc);
     locSymbols.hasErrors = hasStructuralErrors(locBlock);
     walkLocationBody(locBlock, locSymbols, docUri);
     walked.push([locBlock, locSymbols]);
   }
 
-  extractEmbeddedExec(tree, docUri, symbols, parseFn, reusedLocations);
-  extractEmbeddedInterpolations(tree, docUri, symbols, parseFn, reusedLocations);
+  extractEmbeddedExec(tree, docUri, symbols, parseFn);
+  extractEmbeddedInterpolations(tree, docUri, symbols, parseFn);
   // After the embedded passes, whose references sit in the host's strings.
   for (const [locBlock, locSymbols] of walked) recordCheckScopes(locBlock, locSymbols);
 
   symbols.rebuildGlobalBindings();
-  return { symbols, reusedLocations };
+  return { symbols };
 }
 
 // The scopes of the references the variable checks start from: a

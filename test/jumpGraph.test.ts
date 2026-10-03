@@ -120,9 +120,9 @@ describe('buildJumpGraph: targets that are not literals', () => {
   it('keeps them from exec: links', () => {
     const code = `# a\n*pl '<a href="exec:gt $next">go</a>'\n---\n`;
     const uri = 'file:///game/main.qsps';
-    const tree = parser.parse(uri, code)!;
+    const tree = parser.parseOnce(code)!;
     // exec: bodies are analyzed only with a re-parse callback, as the server passes.
-    const { symbols } = extractSymbols(tree, uri, undefined, undefined, (t) => parser.parseOnce(t));
+    const { symbols } = extractSymbols(tree, uri, (t) => parser.parseOnce(t));
     const graph = buildJumpGraph([{ uri, symbols, locationIndex: buildLocationIndex(code) }]);
     expect(graph.unresolved.map(u => u.exprs)).toEqual([['$next']]);
     expect(graph.unresolved[0].sites[0].line).toBe(1);

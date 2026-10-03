@@ -146,7 +146,7 @@ describe('tree-sitter WASM resource cleanup', () => {
       textDocument: { uri, languageId: 'qsp', version: 1, text: '# a\npl 1\n---\n' },
     });
     await settle();
-    const parse = vi.spyOn(QspTreeSitterParser.prototype, 'parse');
+    const parse = vi.spyOn(QspTreeSitterParser.prototype, 'parseOnce');
 
     harness.client.sendNotification(DidChangeTextDocumentNotification.type, {
       textDocument: { uri, version: 2 },

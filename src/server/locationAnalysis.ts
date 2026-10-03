@@ -17,11 +17,11 @@ export function extractLocationSymbols(
   docUri: string,
   locationName: string,
   locText: string,
-  embedParseFn: Parameters<typeof extractSymbols>[4],
+  embedParseFn: Parameters<typeof extractSymbols>[2],
 ): LocationSymbols {
   // extractSymbols wraps the location in a DocumentSymbols with one entry.
   let found: LocationSymbols | undefined;
-  for (const [, ls] of extractSymbols(tree, docUri, undefined, undefined, embedParseFn).symbols.locations) {
+  for (const [, ls] of extractSymbols(tree, docUri, embedParseFn).symbols.locations) {
     found = ls;
     break;
   }
@@ -55,7 +55,7 @@ export function analyzeParsedLocation(
   docUri: string,
   locationName: string,
   locText: string,
-  embedParseFn: Parameters<typeof extractSymbols>[4],
+  embedParseFn: Parameters<typeof extractSymbols>[2],
   step: <T>(name: string, fn: () => T) => T,
 ): { symbols: LocationSymbols; errors: SyntaxError[] } {
   return {

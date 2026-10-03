@@ -16,7 +16,6 @@ import {
   findLocationAtLine,
   DocumentSymbols,
   LocationSymbols,
-  extractErrors,
   LocationEntry,
   QspTreeSitterParser,
   computeTreeEdit,
@@ -33,7 +32,7 @@ import { type SymbolAggregates, buildFileAggregates, collectCallTypesPerTarget a
 import { computeDiagnostics, type DiagnosticSettings } from './diagnostics';
 import { registerLspFeatures, type DocumentState, type PerLocationParseResult } from './lspFeatures';
 import { stripBom, shiftErrors, dropIdleTrees, makeLocSymLoc, perLocationCacheKeys, safeSendDiagnostics, safeConnectionCall, safeConsole, QSP_FILE_EXTENSIONS, type FsProvider } from './serverUtils';
-import { ProjectModeService, syntaxErrorsFor } from './projectMode';
+import { ProjectModeService } from './projectMode';
 import { analyzeParsedLocation, collectFoldLines } from './locationAnalysis';
 import { AnalysisStatusReporter } from './analysisStatus';
 import { ANALYSIS_STATUS_MIN_BYTES } from '../common/analysisStatus';
@@ -664,9 +663,9 @@ export function createQspServer(
         const otherDoc = documents.get(uri);
         const d = diagnose(
           otherDoc ?? null, uri, st.locationIndex,
-          settings.diagnostics, tsParser,
+          settings.diagnostics,
           liveAgg.callTypesPerTarget ?? collectCallTypesPerTarget(documentStates),
-          st.symbols, syntaxErrorsFor(st, otherDoc !== undefined), liveAgg,
+          st.symbols, st.syntaxErrors, liveAgg,
           undefined,
           collectPeerDocs(documentStates, uri),
           st.suppressions,
@@ -813,7 +812,6 @@ export function createQspServer(
     // Clean up retained per-location trees before discarding state.
     releasePerLocationTrees(documentStates.get(uri));
     documentStates.delete(uri);
-    tsParser.removeTree(uri);
 
     // In project mode, re-read the file from disk so its symbols remain
     // in the project aggregates (the editor no longer holds the text).
@@ -942,9 +940,7 @@ export function createQspServer(
         shiftErrors(entry.errors, loc.startLine, syntaxErrors);
       }
     } else {
-      const tree = tsParser.getTree(uri);
-      if (!tree) return undefined;
-      syntaxErrors.push(...extractErrors(tree));
+      return undefined;
     }
     return { symbols: state.symbols, syntaxErrors };
   }
@@ -1044,7 +1040,7 @@ export function createQspServer(
       const state = documentStates.get(doc.uri)!;
       const fileAgg = perf.step('file aggregates', () => buildOrReuseFileAgg(state, doc.uri, tightOnMemory));
       const diagnostics = diagnose(
-        doc, doc.uri, locationIndex, settings.diagnostics, tsParser,
+        doc, doc.uri, locationIndex, settings.diagnostics,
         collectCallTypesPerTarget(documentStates), symbols,
         undefined, undefined, fileAgg,
         collectPeerDocs(documentStates, doc.uri),
@@ -1290,7 +1286,7 @@ export function createQspServer(
       const state = documentStates.get(doc.uri)!;
       const fileAgg = perf.step('file aggregates', () => buildOrReuseFileAgg(state, doc.uri, tightOnMemory));
       const diagnostics = diagnose(
-        doc, doc.uri, currentIndex, settings.diagnostics, tsParser,
+        doc, doc.uri, currentIndex, settings.diagnostics,
         collectCallTypesPerTarget(documentStates), symbols,
         allErrors, undefined, fileAgg,
         collectPeerDocs(documentStates, doc.uri),
@@ -1433,7 +1429,7 @@ export function createQspServer(
       const state = documentStates.get(doc.uri)!;
       const fileAgg = perf.step('file aggregates', () => buildOrReuseFileAgg(state, doc.uri, tightOnMemory));
       const diagnostics = diagnose(
-        doc, doc.uri, locationIndex, settings.diagnostics, tsParser,
+        doc, doc.uri, locationIndex, settings.diagnostics,
         collectCallTypesPerTarget(documentStates), symbols,
         allErrors, undefined, fileAgg,
         collectPeerDocs(documentStates, doc.uri),

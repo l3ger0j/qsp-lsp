@@ -29,16 +29,6 @@ export type WasmLoader = () => Promise<string | Uint8Array | ArrayBuffer>;
  */
 export type WasmDirProvider = () => string;
 
-/**
- * Time budget for a from-scratch parse of `textLength` characters.
- * A normal file parses at roughly 8 µs/char, so this allows about twice that,
- * with a 2 s floor. Anything slower is GLR blow-up and should give up early.
- * The server is single-threaded, so every request waits while a parse runs.
- */
-export function fullParseTimeoutMicros(textLength: number): number {
-  return Math.max(2_000_000, textLength * 16);
-}
-
 // ──────────────────────────────────────────────────────────────────────
 // Incremental edit computation
 // ──────────────────────────────────────────────────────────────────────
@@ -173,10 +163,6 @@ export function computeTreeEdit(
 export class QspTreeSitterParser {
   private parser: Parser | null = null;
   private language: Parser.Language | null = null;
-  private trees = new Map<string, Parser.Tree>();
-  private oldTexts = new Map<string, string>();
-  private _wasLastParseIncremental = false;
-  private _lastEdit: { startIndex: number; newEndIndex: number } | null = null;
 
   /**
    * Optional sink for parse failures that aren't a plain timeout (see
@@ -243,119 +229,11 @@ export class QspTreeSitterParser {
     return this.parser !== null;
   }
 
-  /** Whether the last parse() call used incremental parsing. */
-  get wasLastParseIncremental(): boolean {
-    return this._wasLastParseIncremental;
-  }
-
   /**
-   * The edit range from the last incremental parse, or null.
-   * Used by extractSymbols to determine which location blocks overlap
-   * the edit and need re-extraction (hasChanges on the new tree is
-   * unreliable in web-tree-sitter).
-   */
-  get lastEdit(): { startIndex: number; newEndIndex: number } | null {
-    return this._lastEdit;
-  }
-
-  /**
-   * Parse a full document, using incremental parsing when possible.
-   *
-   * When we have a previous tree and the previous text, we compute the
-   * minimal edit (prefix/suffix scan), call Tree#edit() so byte offsets
-   * are adjusted, then pass the old tree to parser.parse() for
-   * incremental re-parsing.  This can reduce a multi-second full parse
-   * to a few milliseconds for typical single-character edits.
-   */
-  parse(uri: string, text: string): Parser.Tree | null {
-    if (!this.parser) return null;
-
-    const oldTree = this.trees.get(uri);
-    const oldText = this.oldTexts.get(uri);
-
-    // Try incremental parse when we have a previous tree and text.
-    if (oldTree && oldText !== undefined) {
-      // Texts are truly identical — return existing tree unchanged.
-      if (oldText === text) {
-        this._wasLastParseIncremental = false;
-        this._lastEdit = null;
-        return oldTree;
-      }
-
-      const edit = computeTreeEdit(oldText, text);
-      if (edit) {
-        // Incremental parse: apply edit and reuse old tree structure.
-        oldTree.edit(edit);
-        this.parser.setTimeoutMicros(5_000_000); // 5 seconds
-        let tree: Parser.Tree;
-        try {
-          tree = parseText(this.parser, text, oldTree);
-        } catch (err) {
-          // Timeout (or another parse failure) — oldTree is corrupted by
-          // edit(), discard it. Critically, also reset() the *parser*:
-          // web-tree-sitter resumes a halted parse from where it left off
-          // on the next call unless reset() clears that state, so without
-          // this the next parse() for a *different* document/location
-          // would silently continue this failed parse and produce a
-          // corrupted tree with wrong symbols/diagnostics.
-          this.parser.reset();
-          this.reportUnexpectedParseError(err);
-          oldTree.delete();
-          this.trees.delete(uri);
-          this.oldTexts.delete(uri);
-          this._wasLastParseIncremental = false;
-          this._lastEdit = null;
-          return null;
-        }
-        oldTree.delete();
-        this.trees.set(uri, tree);
-        this.oldTexts.set(uri, text);
-        this._wasLastParseIncremental = true;
-        this._lastEdit = { startIndex: edit.startIndex, newEndIndex: edit.newEndIndex };
-        return tree;
-      }
-      // computeTreeEdit returned null — the suffix scan hit the 100 KB
-      // cap or edit range is too large for efficient incremental parse.
-      // Fall through to a fresh full parse below.
-    }
-
-    // Full parse (initial load, capped suffix, or no prior state).
-    if (oldTree) oldTree.delete();
-    this.parser.setTimeoutMicros(fullParseTimeoutMicros(text.length));
-    let tree: Parser.Tree;
-    try {
-      tree = parseText(this.parser, text);
-    } catch (err) {
-      // Initial parse timed out (or failed another way) — reset() so the
-      // *next* parse() call (possibly for a different document) doesn't
-      // silently resume this halted parse. See the comment in the
-      // incremental branch above for why this matters.
-      this.parser.reset();
-      this.reportUnexpectedParseError(err);
-      this.trees.delete(uri);
-      this.oldTexts.delete(uri);
-      this._wasLastParseIncremental = false;
-      this._lastEdit = null;
-      return null;
-    }
-    this.trees.set(uri, tree);
-    this.oldTexts.set(uri, text);
-    this._wasLastParseIncremental = false;
-    this._lastEdit = null;
-    return tree;
-  }
-
-  /** Get the most recent tree for a document. */
-  getTree(uri: string): Parser.Tree | null {
-    return this.trees.get(uri) ?? null;
-  }
-
-  /**
-   * Parse a standalone text fragment without caching the tree.
-   * The caller is responsible for calling tree.delete() when done.
-   * Used for per-location parsing of large files.
-   * Optionally accepts an oldTree for incremental re-parsing (the caller
-   * must have called tree.edit() on it before passing it here).
+   * Parse a text (a location, an embedded code fragment). The caller owns
+   * the tree and calls tree.delete() when done. Optionally accepts an
+   * oldTree for incremental re-parsing (the caller must have called
+   * tree.edit() on it before passing it here).
    */
   parseOnce(text: string, timeoutMicros = 5_000_000, oldTree?: Parser.Tree): Parser.Tree | null {
     if (!this.parser) return null;
@@ -363,27 +241,19 @@ export class QspTreeSitterParser {
     try {
       return parseText(this.parser, text, oldTree);
     } catch (err) {
-      // Timeout (or another parse failure). reset() so the next parse()
-      // (for a different location/document — the parser is shared across
-      // all of them) doesn't resume this halted parse. See parse() above.
+      // Timeout (or another parse failure). Reset the parser: web-tree-sitter
+      // resumes a halted parse from where it left off on the next call
+      // unless reset() clears that state, so the next parse — of another
+      // location or document, the parser is shared — would silently continue
+      // this one and produce a corrupted tree with wrong symbols and diagnostics.
       this.parser.reset();
       this.reportUnexpectedParseError(err);
       return null;
     }
   }
 
-  /** Remove the cached tree when a document is closed. */
-  removeTree(uri: string): void {
-    this.trees.get(uri)?.delete();
-    this.trees.delete(uri);
-    this.oldTexts.delete(uri);
-  }
-
   /** Clean up all resources. */
   dispose(): void {
-    for (const tree of this.trees.values()) tree.delete();
-    this.trees.clear();
-    this.oldTexts.clear();
     this.parser?.delete();
     this.parser = null;
   }
