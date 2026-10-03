@@ -12,10 +12,10 @@
  *  - `handleWatchedFileChanges` applies a whole batch of watcher events
  *    and rebuilds the project aggregate ONCE — a `git checkout` touching
  *    hundreds of files must not trigger hundreds of full rebuilds;
- *  - `analyzeFile` parses files at/above
- *    `PROJECT_PER_LOCATION_BYTE_THRESHOLD` one location at a time — a
- *    single multi-MB parse can take seconds (the same GLR blowup
- *    `PER_LOCATION_BYTE_THRESHOLD` avoids for open documents).
+ *  - `analyzeFile` parses every file one location at a time — a single
+ *    multi-MB parse can take seconds (the same GLR blowup
+ *    `PER_LOCATION_BYTE_THRESHOLD` avoids for open documents), and a
+ *    closed file must get the symbols an open one does.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import * as fs from 'fs';
@@ -146,8 +146,8 @@ describe('ProjectModeService: async, non-blocking, batched project mode', () => 
     const documentStates = new Map<string, DocumentState>();
     const project = new ProjectModeService(fakeConnection(), fakeDocuments(), documentStates, tsParser);
 
-    // Build a file comfortably over PROJECT_PER_LOCATION_BYTE_THRESHOLD
-    // (500 KB) out of many small, distinct locations.
+    // A file of several MB would take seconds as one parse: build one
+    // over 500 KB out of a few distinct locations.
     const padLine = '! ' + 'x'.repeat(120) + '\n';
     const padBody = padLine.repeat(Math.ceil(520_000 / (padLine.length * 3)));
     const text = `# init\n$g = 'FROM_LARGE_FILE'\n---\n`
@@ -165,6 +165,16 @@ describe('ProjectModeService: async, non-blocking, batched project mode', () => 
     // the document-wide global-bindings index (rebuildGlobalBindings()
     // must have run) — this is what cross-file hover relies on.
     expect(state!.symbols.globalBindings.has('g')).toBe(true);
+  });
+
+  it('analyzeFile takes an action a syntax error hid from a small file\'s text', () => {
+    // A whole-file parse of a closed file used to lose it, while the editor
+    // and large files add it from the text (locationAnalysis.ts).
+    const documentStates = new Map<string, DocumentState>();
+    const project = new ProjectModeService(fakeConnection(), fakeDocuments(), documentStates, tsParser);
+    project.analyzeFile('file:///proj/room.qsps', "# комната\n(((\nact 'взять':\n*pl 1\nend\n--- комната ---\n");
+    const room = documentStates.get('file:///proj/room.qsps')!.symbols.getLocation('комната')!;
+    expect(room.actions.map(a => a.name)).toEqual(['взять']);
   });
 
   it('init() without an FsProvider (browser) still builds the project from open documents', async () => {

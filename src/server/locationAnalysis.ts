@@ -1,9 +1,9 @@
 // ── Analysis of one location ─────────────────────────────────────────
 //
-// Large files, in the editor and in the project scan, are parsed one
-// location at a time. Shared here so both get the same symbols.
+// Files are parsed one location at a time: by the project scan, and by the
+// editor for large ones. Shared here so both get the same symbols.
 
-import { LocationSymbols, extractSymbols } from '../parser';
+import { LocationSymbols, extractErrors, extractSymbols, type SyntaxError } from '../parser';
 import { extractLocationSymbolsFromText, mergeActionsFromText, mergeLabelsFromText } from './regexFallback';
 
 /**
@@ -45,6 +45,24 @@ export function extractLocationSymbols(
     mergeLabelsFromText(locText, wholeText, found, docUri);
   }
   return found;
+}
+
+/**
+ * The symbols and syntax errors of a location parsed alone (`tree`, of
+ * `locText`), in its own coordinates. `step` times each part (PerfLog.step).
+ */
+export function analyzeParsedLocation(
+  tree: Parameters<typeof extractSymbols>[0],
+  docUri: string,
+  locationName: string,
+  locText: string,
+  embedParseFn: Parameters<typeof extractSymbols>[4],
+  step: <T>(name: string, fn: () => T) => T,
+): { symbols: LocationSymbols; errors: SyntaxError[] } {
+  return {
+    symbols: step('symbols', () => extractLocationSymbols(tree, docUri, locationName, locText, embedParseFn)),
+    errors: step('errors', () => extractErrors(tree)),
+  };
 }
 
 const FOLDABLE_TYPES = ['act_block', 'if_block', 'loop_block'];

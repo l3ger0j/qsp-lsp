@@ -22,10 +22,7 @@ import {
   buildLocationIndex,
   DocumentSymbols,
   LocationSymbols,
-  extractErrors,
-  extractSymbols,
   reviveDocumentSymbols,
-  fullParseTimeoutMicros,
   QspSymbolKind,
   type QspSymbol,
   type SymbolLocation,
@@ -46,23 +43,10 @@ import {
 import type { DiagnosticSettings } from './diagnostics';
 import type { DocumentState } from './lspFeatures';
 import { computeDiagnostics } from './diagnostics';
-import { extractLocationSymbols } from './locationAnalysis';
+import { analyzeParsedLocation } from './locationAnalysis';
 import { parseSuppressions } from '../common/suppressions';
 import { PerfLog, formatChars } from './perfLog';
 import { stripBom, makeLocSymLoc, shiftErrors, QSP_FILE_EXTENSIONS, safeSendDiagnostics, safeConnectionCall, safeConsole, type AnalysisCache, type FsProvider } from './serverUtils';
-
-/**
- * Files at or above this size are parsed per-location instead of as one
- * whole-document tree-sitter tree. Mirrors `PER_LOCATION_BYTE_THRESHOLD`
- * in common.ts (kept as a separate constant because project-mode files
- * don't need the incremental-retained-tree machinery that threshold also
- * gates there — project files aren't edited in place). A single
- * `parseOnce()` call on a multi-MB file can still take seconds even
- * though it's individually timeout-bounded; splitting by location keeps
- * each parse in the low-single-digit-millisecond range, the same reason
- * common.ts avoids one huge tree for large open documents.
- */
-const PROJECT_PER_LOCATION_BYTE_THRESHOLD = 500_000; // 500 KB
 
 /** Yield to the event loop between files during a bulk scan, so pending
  *  LSP requests (hover, completion, …) get a turn instead of queuing
@@ -359,28 +343,9 @@ export class ProjectModeService {
       // From the cache.
     } else if (!this.tsParser.isReady) {
       symbols = buildRegexSymbols(uri, locationIndex, text);
-    } else if (text.length >= PROJECT_PER_LOCATION_BYTE_THRESHOLD) {
+    } else {
       syntaxErrors = [];
       symbols = this.analyzePerLocation(uri, text, locationIndex, syntaxErrors);
-    } else {
-      const tree = this.perf.step('parse', () => this.tsParser.parseOnce(text, fullParseTimeoutMicros(text.length)));
-      if (tree) {
-        try {
-          symbols = this.perf.step('symbols', () => extractSymbols(
-            tree, uri, undefined, undefined,
-            this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
-          ).symbols);
-          syntaxErrors = this.perf.step('errors', () => extractErrors(tree));
-        } finally {
-          tree.delete();
-        }
-      } else {
-        // The whole-file parse ran out of time: what follows depends on how
-        // fast this machine is, not only on the text, so it isn't stored.
-        cacheable = false;
-        syntaxErrors = [];
-        symbols = this.analyzePerLocation(uri, text, locationIndex, syntaxErrors);
-      }
     }
     if (cacheable && key) this.storeAnalysis(key, symbols, syntaxErrors ?? []);
 
@@ -394,8 +359,8 @@ export class ProjectModeService {
     });
   }
 
-  // Large project files, and files whose whole-file parse timed out, are
-  // parsed one location at a time. See PROJECT_PER_LOCATION_BYTE_THRESHOLD.
+  // One location at a time, like the editor's large files
+  // (locationAnalysis.ts): a closed file gets the symbols an open one does.
   private analyzePerLocation(
     uri: string,
     text: string,
@@ -412,17 +377,18 @@ export class ProjectModeService {
       const locLoc = makeLocSymLoc(uri, text, loc);
       const tree = this.perf.step('parse', () => this.tsParser.parseOnce(locText));
       if (tree) {
-        let locSymbols: LocationSymbols;
+        let parsed: ReturnType<typeof analyzeParsedLocation>;
         try {
-          locSymbols = this.perf.step('symbols', () => extractLocationSymbols(
+          parsed = analyzeParsedLocation(
             tree, uri, loc.name, locText,
             this.embeddedExecEnabled ? (t) => this.tsParser.parseOnce(t) : undefined,
-          ));
-          this.perf.step('errors', () => shiftErrors(extractErrors(tree), loc.startLine, syntaxErrors));
+            (name, fn) => this.perf.step(name, fn),
+          );
         } finally {
           tree.delete();
         }
-        this.perf.step('copy into file', () => symbols.addLocationFrom(loc.name, locLoc, locSymbols, loc.startLine));
+        shiftErrors(parsed.errors, loc.startLine, syntaxErrors);
+        this.perf.step('copy into file', () => symbols.addLocationFrom(loc.name, locLoc, parsed.symbols, loc.startLine));
       } else {
         // Tree-sitter failed (timeout) for this one location — fall
         // back to regex extraction for just that location.

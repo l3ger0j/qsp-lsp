@@ -37,7 +37,7 @@ import { computeDiagnostics, type DiagnosticSettings } from './diagnostics';
 import { registerLspFeatures, type DocumentState, type PerLocationParseResult } from './lspFeatures';
 import { stripBom, shiftErrors, dropIdleTrees, makeLocSymLoc, perLocationCacheKeys, safeSendDiagnostics, safeConnectionCall, safeConsole, QSP_FILE_EXTENSIONS, type FsProvider } from './serverUtils';
 import { ProjectModeService, syntaxErrorsFor } from './projectMode';
-import { collectFoldLines, extractLocationSymbols } from './locationAnalysis';
+import { analyzeParsedLocation, collectFoldLines } from './locationAnalysis';
 import { AnalysisStatusReporter } from './analysisStatus';
 import { ANALYSIS_STATUS_MIN_BYTES } from '../common/analysisStatus';
 import { libraryFolderPrefixes } from '../common/libraryConfig';
@@ -1246,8 +1246,9 @@ export function createQspServer(
         ? (t: string) => tsParser.parseOnce(t)
         : undefined;
       const parsed = tree;
-      const locSymbols = perf.step('symbols', () => extractLocationSymbols(parsed, docUri, locationName, locText, embedParseFn));
-      const errors = perf.step('errors', () => extractErrors(parsed));
+      const { symbols: locSymbols, errors } = analyzeParsedLocation(
+        parsed, docUri, locationName, locText, embedParseFn, (name, fn) => perf.step(name, fn),
+      );
       // Short of memory, large files go without semantic highlighting
       // (TextMate still colours them).
       const tokens = tightOnMemory() ? new Uint32Array(0)
