@@ -806,21 +806,45 @@ export function reusePropagation(
   const fresh = emptyAggregates();
   if (redo.size > 0) propagateLocals(allLocations, fresh, shouldStop, redo);
 
-  const swapped = (providers: PropagatedLocal[]) => providers.map(p => {
-    const sym = swap.get(p.sym);
-    return sym ? { ...p, sym } : p;
-  });
+  // Copied only where a provider is swapped: a large game has hundreds of
+  // thousands of pairs, and an edit swaps the providers of a few locations.
+  const swapped = (providers: PropagatedLocal[]) => {
+    let copy: PropagatedLocal[] | undefined;
+    for (let i = 0; i < providers.length; i++) {
+      const sym = swap.get(providers[i].sym);
+      if (!sym) continue;
+      copy ??= providers.slice();
+      copy[i] = { ...providers[i], sym };
+    }
+    return copy ?? providers;
+  };
   const merge = (kept: Map<string, Map<string, PropagatedLocal[]>>, redone: Map<string, Map<string, PropagatedLocal[]>>) => {
+    let changed = false;
     const all = new Map<string, Map<string, PropagatedLocal[]>>();
     for (const [target, byVar] of kept) {
-      const vars = new Map<string, PropagatedLocal[]>();
-      for (const [name, providers] of byVar) if (!redo.has(name)) vars.set(name, swap.size > 0 ? swapped(providers) : providers);
-      if (vars.size > 0) all.set(target, vars);
+      let vars: Map<string, PropagatedLocal[]> | undefined;
+      for (const [name, providers] of byVar) {
+        const now = redo.has(name) ? undefined : swapped(providers);
+        if (now === providers && !vars) continue;
+        if (!vars) {
+          // The names before this one were kept as they are.
+          vars = new Map();
+          for (const [n, p] of byVar) {
+            if (n === name) break;
+            vars.set(n, p);
+          }
+        }
+        if (now) vars.set(name, now);
+      }
+      if (vars) changed = true;
+      const result = vars ?? byVar;
+      if (result.size > 0) all.set(target, result);
     }
+    if (redo.size === 0) return changed ? all : kept;
     for (const [target, byVar] of redone) {
-      let vars = all.get(target);
-      if (!vars) { vars = new Map(); all.set(target, vars); }
+      const vars = new Map(all.get(target));
       for (const [name, providers] of byVar) vars.set(name, providers);
+      all.set(target, vars);
     }
     return inCanonicalOrder(all, allLocations.map(l => l.locName.toLowerCase()));
   };
@@ -923,24 +947,18 @@ export function finishAggregates(
   // but should only be reported once per provider.
   // ────────────────────────────────────────────────────────────────────
   const ext = out.externalLocalBindings;
-  // Per-target-symbol dedup memo, shared across both post-passes below.
-  // For each provider QspSymbol, holds the set of `${sourceLoc}\0${line},${col}`
-  // keys already pushed to ext.get(sym).  Avoids repeatedly scanning the
-  // growing list to rebuild a fresh Set for every (provider, varName) pair.
-  const extSeen = new Map<QspSymbol, Set<string>>();
-  const getOrInitSeen = (sym: QspSymbol): Set<string> => {
-    let seen = extSeen.get(sym);
-    if (!seen) {
-      seen = new Set();
-      const list = ext.get(sym);
-      if (list) {
-        for (const e of list) {
-          seen.add(`${e.sourceLoc}\0${e.binding.stmtLoc.line},${e.binding.stmtLoc.column}`);
-        }
-      }
-      extSeen.set(sym, seen);
+  // Dedup memo of the second post-pass below: for each provider QspSymbol,
+  // the (source location, statement position) pairs already pushed to
+  // ext.get(sym), made from its list on first use.
+  const extSeen = new Map<QspSymbol, Map<string, Set<number>>>();
+  const seenAt = (sym: QspSymbol, sourceLoc: string): Set<number> => {
+    let bySource = extSeen.get(sym);
+    if (!bySource) {
+      bySource = new Map();
+      extSeen.set(sym, bySource);
+      for (const e of ext.get(sym) ?? []) seenIn(bySource, e.sourceLoc).add(positionKey(e.binding.stmtLoc));
     }
-    return seen;
+    return seenIn(bySource, sourceLoc);
   };
   for (const [targetLoc, byVar] of result) {
     const targetInfo = locIndex.get(targetLoc);
@@ -958,17 +976,24 @@ export function finishAggregates(
 
       // Only non-local bindings mutate the caller's local.  A `local x = …`
       // inside the callee is shadowed and doesn't flow back.
-      const nonLocalBindings = calleeBindings.filter(b => !b.isLocal);
+      // One per statement position, as the dedup below keyed them.
+      const nonLocalBindings: VariableBinding[] = [];
+      const positions = new Set<number>();
+      for (const b of calleeBindings) {
+        if (b.isLocal) continue;
+        const k = positionKey(b.stmtLoc);
+        if (positions.has(k)) continue;
+        positions.add(k);
+        nonLocalBindings.push(b);
+      }
       if (nonLocalBindings.length === 0) continue;
 
+      // No dedup needed here: a pair's providers are distinct, and a
+      // provider of this name reaches this target through this pair only.
       for (const p of providers) {
         let list = ext.get(p.sym);
         if (!list) { list = []; ext.set(p.sym, list); }
-        const seen = getOrInitSeen(p.sym);
         for (const cb of nonLocalBindings) {
-          const k = `${targetLoc}\0${cb.stmtLoc.line},${cb.stmtLoc.column}`;
-          if (seen.has(k)) continue;
-          seen.add(k);
           list.push({
             binding: cb,
             sourceLoc: targetLoc,
@@ -1076,9 +1101,8 @@ export function finishAggregates(
             for (const targetSym of targetSyms) {
               let list = ext.get(targetSym);
               if (!list) { list = []; ext.set(targetSym, list); }
-              const seen = getOrInitSeen(targetSym);
-              const dedupKey =
-                `${calleeLoc}\0${w.binding.stmtLoc.line},${w.binding.stmtLoc.column}`;
+              const seen = seenAt(targetSym, calleeLoc);
+              const dedupKey = positionKey(w.binding.stmtLoc);
               if (seen.has(dedupKey)) continue;
               seen.add(dedupKey);
               list.push({
@@ -1417,6 +1441,21 @@ export function finishAggregates(
       argsUsage.set(locKey, { hasOpaque, maxLiteralIdx });
     }
   }
+}
+
+// A statement's position as one number: exact up to columns of 2^24 (a
+// line of 16 M characters).
+function positionKey(loc: SymbolLocation): number {
+  return loc.line * 16_777_216 + loc.column;
+}
+
+function seenIn(bySource: Map<string, Set<number>>, sourceLoc: string): Set<number> {
+  let seen = bySource.get(sourceLoc);
+  if (!seen) {
+    seen = new Set();
+    bySource.set(sourceLoc, seen);
+  }
+  return seen;
 }
 
 /** Inclusive containment test for SymbolLocation-shaped ranges. */

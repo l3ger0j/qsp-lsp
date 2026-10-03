@@ -143,8 +143,9 @@ Next, in order:
     stay the same: a changed value on the 10-file game, 5 s → 0.2 s. On
     games from the QSP catalog no locals pass through calls at all, so the
     whole propagation takes milliseconds there;
-  - `finishAggregates` takes 0.7 s on every edit of that game, and an edit
-    makes about 260 MB of garbage;
+  - `finishAggregates` took 0.8 s on every edit of that game: 0.25 s now
+    (its first pass no longer dedups what can't repeat); an edit's
+    aggregates make ~70 MB of garbage instead of ~260 MB;
   - keep the propagation in the cache keyed by the files' interfaces, so an
     unchanged project skips it on start (4–5 s);
   (see also **Incremental project aggregates**).
