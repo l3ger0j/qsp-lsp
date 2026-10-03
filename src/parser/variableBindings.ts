@@ -68,6 +68,7 @@ import {
   type TypePrefix,
 } from './symbolTable';
 import { isBindingVisible, scopePathOf, type ScopePath } from './scopeUtils';
+import { isLocationBlock } from './walkHelpers';
 
 // ----------------------------------------------------------------------
 // Call-graph contract — boundary with the propagation subsystem
@@ -160,10 +161,10 @@ export function parseVarStringArg(
 // Resolver: bindings visible at a specific AST position
 // ----------------------------------------------------------------------
 
-/** Walk up from a node to its enclosing `location_block` ancestor. */
+/** Walk up from a node to the node holding its location (see isLocationBlock). */
 export function findLocationBlock(node: Parser.SyntaxNode): Parser.SyntaxNode | null {
   let a: Parser.SyntaxNode | null = node;
-  while (a && a.type !== 'location_block') a = a.parent;
+  while (a && !isLocationBlock(a)) a = a.parent;
   return a;
 }
 

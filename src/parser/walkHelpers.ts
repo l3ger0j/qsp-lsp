@@ -61,6 +61,26 @@ export interface VarMediatedCtx {
 // ── Text helpers ──────────────────────────────────────────────────────
 
 /**
+ * Whether `node` holds a location: a `location_block`, or an ERROR node
+ * that starts with a location header. A syntax error tree-sitter can't
+ * recover from (prose written into the code, an `if` never closed) leaves
+ * no `location_block`: the location parsed alone gets an ERROR root
+ * holding its header and statements, which still give symbols.
+ */
+export function isLocationBlock(node: Parser.SyntaxNode): boolean {
+  return node.type === 'location_block'
+    || (node.type === 'ERROR' && node.namedChild(0)?.type === 'location_header');
+}
+
+/** The nodes under `root` that hold a location (see isLocationBlock), `root` itself included. */
+export function locationBlocksOf(root: Parser.SyntaxNode): Parser.SyntaxNode[] {
+  if (isLocationBlock(root)) return [root];
+  const blocks: Parser.SyntaxNode[] = [];
+  for (const child of root.namedChildren) if (isLocationBlock(child)) blocks.push(child);
+  return blocks;
+}
+
+/**
  * Replace line breaks (`\r` / `\n` runs) in a source snippet with single
  * spaces and trim ends, so the snippet renders as a single line in
  * hovers / one-line markdown bullets.  Spaces and tabs are preserved

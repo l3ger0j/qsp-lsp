@@ -18,7 +18,7 @@
 
 import type Parser from 'web-tree-sitter';
 import { DocumentSymbols, type LocationSymbols } from './symbolTable';
-import { nodeLoc } from './walkHelpers';
+import { locationBlocksOf, nodeLoc } from './walkHelpers';
 import { hasStructuralErrors } from './extractErrors';
 import { walkLocationBody } from './symbolWalker';
 import { extractEmbeddedExec } from './embeddedExec';
@@ -60,11 +60,7 @@ export function extractSymbols(
   };
 
   const walked: Array<[Parser.SyntaxNode, LocationSymbols]> = [];
-  const rootChildCount = root.namedChildCount;
-  for (let i = 0; i < rootChildCount; i++) {
-    const locBlock = root.namedChild(i);
-    if (!locBlock || locBlock.type !== 'location_block') continue;
-
+  for (const locBlock of locationBlocksOf(root)) {
     const header = locBlock.childForFieldName('location_header')
       ?? findNamedChild(locBlock, 'location_header');
     if (!header) continue;

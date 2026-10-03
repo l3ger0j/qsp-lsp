@@ -8,6 +8,12 @@
  * nodes. A whole-file parse adds them from the text; a location parsed
  * alone must too, or the Outline and action checks of a large or closed
  * file lose them.
+ * A syntax error tree-sitter can't recover from (an `if` never closed,
+ * prose written into the code) leaves no `location_block` at all, only an
+ * ERROR node holding the header and the statements. Those still give
+ * symbols: a location filled from the text alone (`regexOnly`) has no
+ * variables or jumps, and turns off the "never used" checks of the whole
+ * project.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { QspTreeSitterParser } from '../src/parser/treeSitter';
@@ -40,5 +46,19 @@ describe('extractLocationSymbols', () => {
     expect(symbols.hasErrors).toBe(false);
     expect(symbols.actions.map(a => a.name)).toEqual(['взять']);
     expect([...symbols.allLabelSymbols()].map(l => l.name)).toEqual(['метка']);
+  });
+
+  it('takes the symbols of a location whose syntax error leaves no location block', () => {
+    const text = "# комната\nсчёт = 1\nif счёт = 1:\n  pl 'a'\nact 'выйти':\n  gt 'кухня'\nend\n--- комната ---\n";
+    const tree = parser.parseOnce(text)!;
+    expect(tree.rootNode.namedChildren.map(n => n.type)).toEqual(['ERROR']);
+    tree.delete();
+
+    const symbols = symbolsOf(text);
+    expect(symbols.regexOnly).toBe(false);
+    expect(symbols.hasErrors).toBe(true);
+    expect(symbols.findVariable('счёт')?.hasValueDefinition).toBe(true);
+    expect([...symbols.locationRefs.keys()]).toEqual(['кухня']);
+    expect(symbols.actions.map(a => a.name)).toEqual(['выйти']);
   });
 });

@@ -19,6 +19,7 @@
 - Files in `libs/` show errors only (no warnings about a library's unused locations or variables), and a duplicate location names the library it clashes with.
 
 ### Fixes
+- A location with a syntax error tree-sitter can't recover from (notes written as plain text in the code, an `if` never closed) lost its variables and jumps, kept only its actions and labels, and turned off the "never used" checks of the whole project; the file was also analysed again on every open instead of read from the cache (a 5 M-character game: ready in 10.9 s instead of 1.6 s). Its symbols are now taken from what was parsed.
 - The jump graph's statistics in the log could quote game text: a jump target broken by a comment (`gt $curloc - …`) was described by the text where its operator should be. They now name grammar node types and built-in functions only.
 - Folding in files past 500 KB matched `act`/`if`/`loop` lines with `end` lines, so a one-line `if x: …` or `act '…': …` shifted the ranges; blocks now fold by the parse, as in smaller files.
 - In files past 500 KB and in closed project files, an action or label a syntax error hid from the parser was missing from the Outline and the checks; it is now taken from the text, as in smaller open files.

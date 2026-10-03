@@ -50,7 +50,7 @@ import { hasStructuralErrors } from './extractErrors';
 import { LocationSymbols } from './locationSymbols';
 import type { SymbolLocation } from './symbolTypes';
 import { walkLocationBody } from './symbolWalker';
-import { nodeLoc } from './walkHelpers';
+import { locationBlocksOf, nodeLoc } from './walkHelpers';
 import {
   collectEmbeddedErrors,
   decodeDoubledQuotes,
@@ -250,12 +250,7 @@ export function extractEmbeddedExec(
 ): void {
   if (!parseFn) return;
 
-  const root = tree.rootNode;
-  const rootCount = root.namedChildCount;
-  for (let i = 0; i < rootCount; i++) {
-    const locBlock = root.namedChild(i);
-    if (!locBlock || locBlock.type !== 'location_block') continue;
-
+  for (const locBlock of locationBlocksOf(tree.rootNode)) {
     const header = findNamedChildOfType(locBlock, 'location_header');
     if (!header) continue;
     const nameNode = findNamedChildOfType(header, 'location_name');
