@@ -45,6 +45,7 @@
  */
 
 import type Parser from 'web-tree-sitter';
+import { forEachDescendant } from './blockTrees';
 import type { DocumentSymbols } from './symbolTable';
 import { hasStructuralErrors } from './extractErrors';
 import { LocationSymbols } from './locationSymbols';
@@ -272,24 +273,11 @@ function processLocation(
 ): void {
   const allocScope = makeScopeAllocator(locSymbols);
 
-  const cursor = locBlock.walk();
-  try {
-    visit(cursor);
-  } finally {
-    cursor.delete();
-  }
-
-  function visit(c: Parser.TreeCursor): void {
-    const n = c.currentNode;
-    if (n.type === 'single_quoted_string' || n.type === 'double_quoted_string') {
-      processString(n, locSymbols, docUri, parseFn, allocScope);
-      return; // don't descend into string content
-    }
-    if (c.gotoFirstChild()) {
-      do { visit(c); } while (c.gotoNextSibling());
-      c.gotoParent();
-    }
-  }
+  forEachDescendant(locBlock, n => {
+    if (n.type !== 'single_quoted_string' && n.type !== 'double_quoted_string') return;
+    processString(n, locSymbols, docUri, parseFn, allocScope);
+    return false; // don't descend into string content
+  });
 }
 
 /**

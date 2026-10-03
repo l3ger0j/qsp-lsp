@@ -11,6 +11,7 @@
  */
 import type Parser from 'web-tree-sitter';
 import { QSP_STATEMENTS } from './builtins';
+import { forEachDescendant, parentOf } from './blockTrees';
 
 /** A syntax error extracted from the parse tree. */
 export interface SyntaxError {
@@ -95,12 +96,10 @@ export function isOrphanBlockMarker(varRef: Parser.SyntaxNode, lower: string): b
  */
 export function checkFunctionNameAsLvalue(tree: Parser.Tree): SyntaxError[] {
   const errors: SyntaxError[] = [];
-  const cursor = tree.walk();
   let codeBlockDepth = 0;
   let interpolationDepth = 0;
 
-  function visit(): void {
-    const n = cursor.currentNode;
+  forEachDescendant(tree.rootNode, (n) => {
     const isCB = n.type === 'code_block' || n.type === 'raw_code_block';
     const isIntp = n.type === 'string_interpolation';
     if (isCB) codeBlockDepth++;
@@ -131,21 +130,10 @@ export function checkFunctionNameAsLvalue(tree: Parser.Tree): SyntaxError[] {
         });
       }
     }
-
-    if (cursor.gotoFirstChild()) {
-      do { visit(); } while (cursor.gotoNextSibling());
-      cursor.gotoParent();
-    }
-
-    if (isCB) codeBlockDepth--;
-    if (isIntp) interpolationDepth--;
-  }
-
-  try {
-    visit();
-  } finally {
-    cursor.delete();
-  }
+  }, (n) => {
+    if (n.type === 'code_block' || n.type === 'raw_code_block') codeBlockDepth--;
+    if (n.type === 'string_interpolation') interpolationDepth--;
+  });
   return errors;
 }
 
@@ -185,10 +173,8 @@ export function checkFunctionNameAsLvalue(tree: Parser.Tree): SyntaxError[] {
  */
 export function checkReservedWordMisuse(tree: Parser.Tree): SyntaxError[] {
   const errors: SyntaxError[] = [];
-  const cursor = tree.walk();
 
-  function visit(): void {
-    const node = cursor.currentNode;
+  forEachDescendant(tree.rootNode, (node) => {
     if (node.type === 'identifier_text' && node.parent?.type === 'variable_ref') {
       const text = node.text.toLowerCase();
       if (RESERVED_WORDS.has(text) && !isOrphanBlockMarker(node.parent, text)) {
@@ -198,7 +184,7 @@ export function checkReservedWordMisuse(tree: Parser.Tree): SyntaxError[] {
         // non-blocking hint (mirrors the parser-error demotion in
         // extractErrors / diagnostics.ts).
         let inCB = false, inIntp = false;
-        for (let a: Parser.SyntaxNode | null = node.parent; a; a = a.parent) {
+        for (let a: Parser.SyntaxNode | null = parentOf(node); a; a = parentOf(a)) {
           if (a.type === 'code_block' || a.type === 'raw_code_block') { inCB = true; }
           if (a.type === 'string_interpolation') { inIntp = true; }
         }
@@ -213,17 +199,7 @@ export function checkReservedWordMisuse(tree: Parser.Tree): SyntaxError[] {
         });
       }
     }
-    if (cursor.gotoFirstChild()) {
-      do { visit(); } while (cursor.gotoNextSibling());
-      cursor.gotoParent();
-    }
-  }
-
-  try {
-    visit();
-  } finally {
-    cursor.delete();
-  }
+  });
   return errors;
 }
 
@@ -259,7 +235,6 @@ export function checkReservedWordMisuse(tree: Parser.Tree): SyntaxError[] {
  */
 export function checkPrefixWhitespace(tree: Parser.Tree): SyntaxError[] {
   const errors: SyntaxError[] = [];
-  const cursor = tree.walk();
   let errorDepth = 0;
 
   /** Emit an error for the gap between two adjacent tokens. */
@@ -274,11 +249,9 @@ export function checkPrefixWhitespace(tree: Parser.Tree): SyntaxError[] {
     });
   }
 
-  function visit(): void {
-    const n = cursor.currentNode;
+  forEachDescendant(tree.rootNode, (n) => {
     const t = n.type;
-    const isErr = n.isError;
-    if (isErr) errorDepth++;
+    if (n.isError) errorDepth++;
 
     // Variables / functions that carry a `prefix` field.
     if (t === 'variable_ref' || t === 'ml_variable_ref'
@@ -310,19 +283,8 @@ export function checkPrefixWhitespace(tree: Parser.Tree): SyntaxError[] {
         }
       }
     }
-
-    if (cursor.gotoFirstChild()) {
-      do { visit(); } while (cursor.gotoNextSibling());
-      cursor.gotoParent();
-    }
-
-    if (isErr) errorDepth--;
-  }
-
-  try {
-    visit();
-  } finally {
-    cursor.delete();
-  }
+  }, (n) => {
+    if (n.isError) errorDepth--;
+  });
   return errors;
 }

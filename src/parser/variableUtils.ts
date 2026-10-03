@@ -9,6 +9,7 @@
 
 import type Parser from 'web-tree-sitter';
 import { lookupFunctionReturnType } from './builtins';
+import { forEachDescendant } from './blockTrees';
 
 /** Find a child with the given type via index-based access (no array alloc). */
 function findNamedChildOfType(
@@ -29,9 +30,9 @@ function findNamedChildOfType(
  * Used to detect self-referential plain-`=` assignments such as
  * `hp = hp + 5` or `$s = ucase($s)`.
  *
- * Reuses one `TreeCursor` for the whole descent instead of allocating
- * a fresh `SyntaxNode` per child via `namedChild(i)` — important on
- * large files where every assignment RHS gets scanned.  `target` must
+ * Walks with a `TreeCursor` instead of allocating a fresh `SyntaxNode`
+ * per child via `namedChild(i)` — important on large files where every
+ * assignment RHS gets scanned.  `target` must
  * already be lowercased; tree-sitter token text has no surrounding
  * whitespace so no `.trim()` is needed.
  */
@@ -39,27 +40,13 @@ export function subtreeReferencesVariable(
   node: Parser.SyntaxNode,
   target: string,
 ): boolean {
-  const cursor = node.walk();
   let found = false;
-  const visit = (): void => {
-    const n = cursor.currentNode;
-    if (n.type === 'variable_ref' || n.type === 'ml_variable_ref') {
-      const nameNode = n.childForFieldName('name');
-      if (nameNode && nameNode.text.toLowerCase() === target) {
-        found = true;
-        return;
-      }
-    }
-    if (cursor.gotoFirstChild()) {
-      do { visit(); if (found) return; } while (cursor.gotoNextSibling());
-      cursor.gotoParent();
-    }
-  };
-  try {
-    visit();
-  } finally {
-    cursor.delete();
-  }
+  forEachDescendant(node, n => {
+    if (found) return false;
+    if (n.type !== 'variable_ref' && n.type !== 'ml_variable_ref') return;
+    const nameNode = n.childForFieldName('name');
+    if (nameNode && nameNode.text.toLowerCase() === target) found = true;
+  });
   return found;
 }
 

@@ -12,7 +12,7 @@ import {
   SemanticTokenTypes,
   SemanticTokenModifiers,
 } from 'vscode-languageserver';
-import { isVariableDefinition } from '../parser';
+import { blockStatements, isVariableDefinition } from '../parser';
 import { EXEC_PROBE_RE, EXEC_LINK_RE, decodeDoubledQuotes } from '../parser/embeddedExec';
 import { makeOffsetProjector, bodyLineStarts } from '../parser/embeddedReparse';
 import { interpolationNeedsDecode } from '../parser/embeddedInterpolation';
@@ -354,7 +354,9 @@ function emitSemanticTokens(
     }
 
     // Recurse
-    if (cursor.gotoFirstChild()) {
+    if (node.type === 'code_block') {
+      for (const stmt of blockStatements(node)) visitNode(stmt);
+    } else if (cursor.gotoFirstChild()) {
       do { visit(); } while (cursor.gotoNextSibling());
       cursor.gotoParent();
     }
@@ -368,9 +370,8 @@ function emitSemanticTokens(
     // Use a separate cursor so we don't corrupt the outer cursor's
     // parent-chain / depth tracking (cursor.reset() loses that context).
     const outer = cursor;
-    cursor = tree.walk();
+    cursor = node.walk();
     try {
-      cursor.reset(node);
       visit();
     } finally {
       cursor.delete();

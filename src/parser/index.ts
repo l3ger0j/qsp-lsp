@@ -11,6 +11,7 @@ export { locationInterface, locationInterfaceHash } from './locationInterface';
 export type { SyntaxError } from './extractErrors';
 export { extractSymbols, isVariableDefinition } from './extractSymbols';
 export { findBlockKeywordRanges } from './blockKeywords';
+export { blockStatements, descendantAt, descendantsOfType, forEachDescendant, parentOf } from './blockTrees';
 export type { KeywordRange } from './blockKeywords';
 export {
   getPossibleValuesAtCursor,

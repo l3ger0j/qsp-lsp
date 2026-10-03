@@ -19,6 +19,7 @@ import {
   markConsumedCodeBlock,
   isTextBlock,
 } from './walkHelpers';
+import { blockStatements, forEachDescendant } from './blockTrees';
 import {
   extractVariable,
   extractLabel,
@@ -92,27 +93,9 @@ export function walkLocationBody(
 
   // Build stmtId → stmtNode lookup for collectDeferredBlocks.
   const callSiteNodes = new Map<number, Parser.SyntaxNode>();
-  {
-    const c2 = locBlock.walk();
-    const find = () => {
-      const n = c2.currentNode;
-      if (callSiteTargets.has(n.id) || untrackedByNodeId.has(n.id)) {
-        callSiteNodes.set(n.id, n);
-      }
-      if (c2.gotoFirstChild()) {
-        do { find(); } while (c2.gotoNextSibling());
-        c2.gotoParent();
-      }
-    };
-    try {
-      if (c2.gotoFirstChild()) {
-        do { find(); } while (c2.gotoNextSibling());
-        c2.gotoParent();
-      }
-    } finally {
-      c2.delete();
-    }
-  }
+  forEachDescendant(locBlock, n => {
+    if (callSiteTargets.has(n.id) || untrackedByNodeId.has(n.id)) callSiteNodes.set(n.id, n);
+  });
   collectDeferredBlocks(
     callSiteTargets, callSiteNodes,
     deferredCodeBlocks, blockInboundLocals, blockCallers,
@@ -142,6 +125,23 @@ export function walkLocationBody(
     locSymbols.scopeParent.set(id, parent);
     if (isolated) locSymbols.isolatedScopes.add(id);
     return id;
+  }
+
+  // A block's statements, each walked with a cursor of its own.
+  function visitStatements(block: Parser.SyntaxNode): void {
+    const outer = cursor;
+    try {
+      for (const stmt of blockStatements(block)) {
+        cursor = stmt.walk();
+        try {
+          visit();
+        } finally {
+          cursor.delete();
+        }
+      }
+    } finally {
+      cursor = outer;
+    }
   }
 
   // ── Recursive visitor ────────────────────────────────────────────
@@ -178,10 +178,7 @@ export function walkLocationBody(
         const prevLabelNs = labelNamespace;
         scopeId = newScope(prevScope, /* isolated */ false);
         labelNamespace = scopeId;
-        if (cursor.gotoFirstChild()) {
-          do { visit(); } while (cursor.gotoNextSibling());
-          cursor.gotoParent();
-        }
+        visitStatements(node);
         scopeId = prevScope;
         labelNamespace = prevLabelNs;
         return;
@@ -194,10 +191,7 @@ export function walkLocationBody(
       const prevLabelNs = labelNamespace;
       scopeId = newScope(prevScope, /* isolated */ true);
       labelNamespace = scopeId;
-      if (cursor.gotoFirstChild()) {
-        do { visit(); } while (cursor.gotoNextSibling());
-        cursor.gotoParent();
-      }
+      visitStatements(node);
       scopeId = prevScope;
       labelNamespace = prevLabelNs;
       return;
@@ -376,22 +370,16 @@ export function walkLocationBody(
     }
     const inner = newScope(outer, /* isolated */ false);
 
-    const blockCursor = entry.node.walk();
-    cursor = blockCursor;
     const savedScope = scopeId;
     const savedLabelNs = labelNamespace;
     scopeId = inner;
     // Stored code-block ⇒ fresh label namespace, isolated from callers.
     labelNamespace = outer;
     try {
-      if (blockCursor.gotoFirstChild()) {
-        do { visit(); } while (blockCursor.gotoNextSibling());
-        blockCursor.gotoParent();
-      }
+      visitStatements(entry.node);
     } finally {
       scopeId = savedScope;
       labelNamespace = savedLabelNs;
-      blockCursor.delete();
     }
   };
 

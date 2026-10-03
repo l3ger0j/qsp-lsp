@@ -31,6 +31,7 @@ import {
   countCallArgs,
   isTextBlock,
 } from './walkHelpers';
+import { blockStatements, parentOf } from './blockTrees';
 import { lookupArgConstraints, lookupFunctionReturnType } from './builtins';
 import { parseVarStringArg } from './variableBindings';
 import { isTupleTypedRhs, tupleLiteralOf, subtreeReferencesVariable } from './variableUtils';
@@ -580,7 +581,24 @@ export function collectVariableBindings(
     }
     noteCallSite(n, inDeferred);
     noteSideEffectWrite(n);
-    if (isTextBlock(n)) return;
+    if (n.type === 'code_block') {
+      if (isTextBlock(n)) return;
+      // A block's statements, each walked with a cursor of its own.
+      const outer = cursor;
+      try {
+        for (const stmt of blockStatements(n)) {
+          cursor = stmt.walk();
+          try {
+            visit(inDeferred);
+          } finally {
+            cursor.delete();
+          }
+        }
+      } finally {
+        cursor = outer;
+      }
+      return;
+    }
     if (cursor.gotoFirstChild()) {
       const childInDeferred = inDeferred || n.type === 'act_block' || n.type === 'act_inline';
       do { visit(childInDeferred); } while (cursor.gotoNextSibling());
@@ -588,7 +606,7 @@ export function collectVariableBindings(
     }
   };
   // Created only here, after the setup above, so a throw there can't leak it.
-  const cursor = locBlock.walk();
+  let cursor = locBlock.walk();
   try {
     if (cursor.gotoFirstChild()) {
       do { visit(inDeferredExecution); } while (cursor.gotoNextSibling());
@@ -769,7 +787,7 @@ export function collectVariableBindings(
       for (const [otherName, otherBindings] of bindingsByName) {
         for (const ob of otherBindings) {
           let write: { source: BindingInfo; varBaseName: string; binding: VariableBinding } | undefined;
-          for (let p = ob.stmtNode.parent; p && p.id !== locBlock.id; p = p.parent) {
+          for (let p = parentOf(ob.stmtNode); p && p.id !== locBlock.id; p = parentOf(p)) {
             if (!codeBlockIds.has(p.id)) continue;
             write ??= { source: ob, varBaseName: otherName, binding: { value: ob.value, stmtLoc: ob.stmtLoc, stmtText: ob.stmtText, isLocal: ob.isLocal, writePrefix: ob.writePrefix, isValueBearing: ob.isValueBearing, compoundOp: ob.compoundOp, scopeKey: ob.scopeKey, isolationKey: ob.isolationKey } };
             let list = writesByBlock.get(p.id);
@@ -814,10 +832,10 @@ export function collectVariableBindings(
       }
 
       const findEnclosingDeferred = (node: Parser.SyntaxNode): Parser.SyntaxNode | null => {
-        let a: Parser.SyntaxNode | null = node.parent;
+        let a: Parser.SyntaxNode | null = parentOf(node);
         while (a && a.id !== locBlock.id) {
           if (a.type === 'code_block' && deferredIds.has(a.id)) return a;
-          a = a.parent;
+          a = parentOf(a);
         }
         return null;
       };
@@ -918,10 +936,10 @@ export function collectDeferredBlocks(
   }
 
   const findEnclosingDeferred = (node: Parser.SyntaxNode): number => {
-    let p: Parser.SyntaxNode | null = node.parent;
+    let p: Parser.SyntaxNode | null = parentOf(node);
     while (p) {
       if (p.type === 'code_block' && deferredIds.has(p.id)) return p.id;
-      p = p.parent;
+      p = parentOf(p);
     }
     return 0;
   };

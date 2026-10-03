@@ -14,6 +14,7 @@ import {
   checkPrefixWhitespace,
 } from './lintChecks';
 import { isDynamicArgCodeBlock } from './scopeUtils';
+import { blockStatements } from './blockTrees';
 
 export { checkFunctionNameAsLvalue, checkReservedWordMisuse, checkPrefixWhitespace };
 
@@ -162,10 +163,27 @@ function friendlyMissingMessage(node: Parser.SyntaxNode): string {
  */
 export function extractErrors(tree: Parser.Tree): SyntaxError[] {
   const errors: SyntaxError[] = [];
-  const cursor = tree.walk();
+  let cursor = tree.walk();
   let codeBlockDepth = 0;
   let storedBlockDepth = 0;
   let interpolationDepth = 0;
+
+  // A block's statements, each walked with a cursor of its own.
+  function visitStatements(block: Parser.SyntaxNode): void {
+    const outer = cursor;
+    try {
+      for (const stmt of blockStatements(block)) {
+        cursor = stmt.walk();
+        try {
+          visit();
+        } finally {
+          cursor.delete();
+        }
+      }
+    } finally {
+      cursor = outer;
+    }
+  }
 
   function visit(): void {
     const node = cursor.currentNode;
@@ -218,7 +236,9 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
     }
 
     // Recurse into children only if this subtree has errors
-    if (node.hasError && cursor.gotoFirstChild()) {
+    if (isCodeBlock) {
+      visitStatements(node);
+    } else if (node.hasError && cursor.gotoFirstChild()) {
       do { visit(); } while (cursor.gotoNextSibling());
       cursor.gotoParent();
     }
@@ -255,7 +275,7 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
  */
 function runMergedLintPasses(tree: Parser.Tree): SyntaxError[] {
   const errors: SyntaxError[] = [];
-  const cursor = tree.walk();
+  let cursor = tree.walk();
   let codeBlockDepth = 0;
   let storedBlockDepth = 0;
   let interpolationDepth = 0;
@@ -270,6 +290,23 @@ function runMergedLintPasses(tree: Parser.Tree): SyntaxError[] {
       endCol: name.startPosition.column,
       message: `No whitespace allowed between ${label}`,
     });
+  }
+
+  // A block's statements, each walked with a cursor of its own.
+  function visitStatements(block: Parser.SyntaxNode): void {
+    const outer = cursor;
+    try {
+      for (const stmt of blockStatements(block)) {
+        cursor = stmt.walk();
+        try {
+          visit();
+        } finally {
+          cursor.delete();
+        }
+      }
+    } finally {
+      cursor = outer;
+    }
   }
 
   function visit(): void {
@@ -358,7 +395,9 @@ function runMergedLintPasses(tree: Parser.Tree): SyntaxError[] {
       }
     }
 
-    if (cursor.gotoFirstChild()) {
+    if (t === 'code_block') {
+      visitStatements(n);
+    } else if (cursor.gotoFirstChild()) {
       do { visit(); } while (cursor.gotoNextSibling());
       cursor.gotoParent();
     }

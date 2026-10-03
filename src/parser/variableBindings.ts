@@ -69,6 +69,7 @@ import {
 } from './symbolTable';
 import { isBindingVisible, scopePathOf, type ScopePath } from './scopeUtils';
 import { isLocationBlock } from './walkHelpers';
+import { descendantAt, parentOf } from './blockTrees';
 
 // ----------------------------------------------------------------------
 // Call-graph contract — boundary with the propagation subsystem
@@ -164,7 +165,7 @@ export function parseVarStringArg(
 /** Walk up from a node to the node holding its location (see isLocationBlock). */
 export function findLocationBlock(node: Parser.SyntaxNode): Parser.SyntaxNode | null {
   let a: Parser.SyntaxNode | null = node;
-  while (a && !isLocationBlock(a)) a = a.parent;
+  while (a && !isLocationBlock(a)) a = parentOf(a);
   return a;
 }
 
@@ -530,7 +531,7 @@ export function cursorScopeAt(
   line: number,
   column: number,
 ): CursorScope | undefined {
-  const atNode = tree.rootNode.descendantForPosition({ row: line, column });
+  const atNode = descendantAt(tree.rootNode, { row: line, column });
   if (!atNode) return undefined;
   const locBlock = findLocationBlock(atNode);
   if (!locBlock) return undefined;

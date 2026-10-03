@@ -19,6 +19,7 @@
  */
 
 import type Parser from 'web-tree-sitter';
+import { forEachDescendant } from './blockTrees';
 import type { DocumentSymbols } from './symbolTable';
 import { hasStructuralErrors } from './extractErrors';
 import { LocationSymbols } from './locationSymbols';
@@ -160,32 +161,18 @@ export function processLocationInterpolations(
   // though for interpolations no locals end up bound to it.
   const allocScope = makeScopeAllocator(locSymbols);
 
-  const cursor = locBlock.walk();
-  try {
-    visit(cursor);
-  } finally {
-    cursor.delete();
-  }
-
-  function visit(c: Parser.TreeCursor): void {
-    const n = c.currentNode;
-    if (n.type === 'string_interpolation') {
-      const hostScope = hostScopes.get(n.id);
-      if (hostScope !== undefined) {
-        // Tagged needs-decode: handle wholesale, don't descend — the
-        // body is an opaque raw token with no children to walk anyway.
-        processInterpolation(n, locSymbols, docUri, parseFn, allocScope, hostScope);
-        return;
-      }
-      // Untagged (inline-parsed) interpolation: descend — a NESTED
-      // interpolation inside an inner string with the opposite quote
-      // may itself be tagged (e.g. `'<<len("hi <<f(""x"")>> bye")>>'`).
-    }
-    if (c.gotoFirstChild()) {
-      do { visit(c); } while (c.gotoNextSibling());
-      c.gotoParent();
-    }
-  }
+  forEachDescendant(locBlock, n => {
+    if (n.type !== 'string_interpolation') return;
+    const hostScope = hostScopes.get(n.id);
+    // Untagged (inline-parsed) interpolation: descend — a NESTED
+    // interpolation inside an inner string with the opposite quote
+    // may itself be tagged (e.g. `'<<len("hi <<f(""x"")>> bye")>>'`).
+    if (hostScope === undefined) return;
+    // Tagged needs-decode: handle wholesale, don't descend — the
+    // body is an opaque raw token with no children to walk anyway.
+    processInterpolation(n, locSymbols, docUri, parseFn, allocScope, hostScope);
+    return false;
+  });
 }
 
 function processInterpolation(

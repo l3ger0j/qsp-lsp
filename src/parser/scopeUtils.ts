@@ -12,6 +12,7 @@
 
 
 import type Parser from 'web-tree-sitter';
+import { parentOf } from './blockTrees';
 
 // ──────────────────────────────────────────────────────────────────────
 // Local helpers — duplicates of items in extractSymbols.ts to keep this
@@ -127,9 +128,9 @@ export function isDynamicArgCodeBlock(node: Parser.SyntaxNode): boolean {
   // The container may be the direct parent (e.g. `dynamic { … }`) or
   // the grandparent when the call uses parentheses (e.g.
   // `dyneval({ … })`, where the parent is `paren_args`).
-  let container = node.parent;
+  let container = parentOf(node);
   if (!container) return false;
-  if (container.type === 'paren_args') container = container.parent;
+  if (container.type === 'paren_args') container = parentOf(container);
   if (!container) return false;
   if (!CONTAINER_NODE_TYPES.has(container.type)) return false;
   const nameNode = container.childForFieldName('name');
@@ -157,16 +158,16 @@ export function findScopeAncestor(
   stopAt: Parser.SyntaxNode,
   isConsumed: (id: number) => boolean,
 ): Parser.SyntaxNode | null {
-  let a: Parser.SyntaxNode | null = node.parent;
+  let a: Parser.SyntaxNode | null = parentOf(node);
   while (a && a.id !== stopAt.id) {
     if (isScopeForming(a.type)) {
       if (a.type === 'code_block' && isConsumed(a.id)) {
-        a = a.parent;
+        a = parentOf(a);
         continue;
       }
       return a;
     }
-    a = a.parent;
+    a = parentOf(a);
   }
   return null;
 }
@@ -181,16 +182,16 @@ export function findIsolationAncestor(
   stopAt: Parser.SyntaxNode,
   isConsumed: (id: number) => boolean,
 ): Parser.SyntaxNode | null {
-  let a: Parser.SyntaxNode | null = node.parent;
+  let a: Parser.SyntaxNode | null = parentOf(node);
   while (a && a.id !== stopAt.id) {
     if (isIsolatingScope(a.type)) {
       if (a.type === 'code_block') {
-        if (isConsumed(a.id)) { a = a.parent; continue; }
-        if (isDynamicArgCodeBlock(a)) { a = a.parent; continue; }
+        if (isConsumed(a.id)) { a = parentOf(a); continue; }
+        if (isDynamicArgCodeBlock(a)) { a = parentOf(a); continue; }
       }
       return a;
     }
-    a = a.parent;
+    a = parentOf(a);
   }
   return null;
 }
@@ -228,13 +229,14 @@ const STEP = 3;
 /** The scope path of `node`, inside `locBlock` (its location_block). */
 export function scopePathOf(node: Parser.SyntaxNode, locBlock: Parser.SyntaxNode): number[] {
   const path: number[] = [];
-  for (let a = node.parent; a && a.id !== locBlock.id; a = a.parent) {
+  for (let a = parentOf(node); a && a.id !== locBlock.id; a = parentOf(a)) {
     if (!isScopeForming(a.type)) continue;
     let flags = 0;
     let branchOf = 0;
-    if (isBranchNode(a.type) && a.parent) {
+    const branchHost = isBranchNode(a.type) ? parentOf(a) : null;
+    if (branchHost) {
       flags |= BRANCH;
-      branchOf = scopeKeyOf(a.parent, locBlock);
+      branchOf = scopeKeyOf(branchHost, locBlock);
     }
     // A code block that is `dynamic`'s or `dyneval`'s own argument runs
     // in the caller's scope.

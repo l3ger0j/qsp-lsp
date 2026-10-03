@@ -3,7 +3,7 @@
 // Files are parsed one location at a time, by the project scan and by the
 // editor. Shared here so both get the same symbols.
 
-import { LocationSymbols, extractErrors, extractSymbols, locationInterface, type SyntaxError } from '../parser';
+import { LocationSymbols, descendantsOfType, extractErrors, extractSymbols, locationInterface, type SyntaxError } from '../parser';
 import { extractLocationSymbolsFromText, mergeActionsFromText, mergeLabelsFromText } from './regexFallback';
 
 /**
@@ -72,7 +72,7 @@ export function collectFoldLines(tree: Parameters<typeof extractSymbols>[0]): nu
   const lines: number[] = [];
   // Searched inside tree-sitter: walking every node from JS cost as much
   // as half the parse.
-  for (const node of tree.rootNode.descendantsOfType(FOLDABLE_TYPES)) {
+  for (const node of descendantsOfType(tree.rootNode, FOLDABLE_TYPES)) {
     const start = node.startPosition.row;
     const end = node.endPosition.row;
     if (end > start) lines.push(start, end);

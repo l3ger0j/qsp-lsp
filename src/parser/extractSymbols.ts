@@ -24,6 +24,7 @@ import { walkLocationBody } from './symbolWalker';
 import { extractEmbeddedExec } from './embeddedExec';
 import { extractEmbeddedInterpolations } from './embeddedInterpolation';
 import { scopePathOf } from './scopeUtils';
+import { descendantAt } from './blockTrees';
 
 // Re-export for backward compatibility.
 export { isVariableDefinition } from './variableUtils';
@@ -98,7 +99,7 @@ function recordCheckScopes(locBlock: Parser.SyntaxNode, locSymbols: LocationSymb
       if (!ref || ref.scopePath) continue;
       // Copied to its length: the pushed array keeps room to grow, 13 MB
       // in all on a 12.8 M-character file.
-      ref.scopePath = scopePathOf(locBlock.descendantForPosition({ row: ref.line, column: ref.column }), locBlock).slice();
+      ref.scopePath = scopePathOf(descendantAt(locBlock, { row: ref.line, column: ref.column }), locBlock).slice();
     }
   }
 }

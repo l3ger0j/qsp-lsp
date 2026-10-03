@@ -12,6 +12,7 @@
 
 import type Parser from 'web-tree-sitter';
 import { lookupBuiltin } from './builtins';
+import { blockStatements } from './blockTrees';
 
 /** Options for {@link anonymizeCode}. */
 export interface AnonymizeOptions {
@@ -129,7 +130,7 @@ export function anonymizeCode(tree: Parser.Tree, text: string, opts: AnonymizeOp
       emit(node, leaf(node));
       return;
     }
-    for (const child of node.children) visit(child);
+    for (const child of node.type === 'code_block' ? blockStatements(node) : node.children) visit(child);
   };
 
   // Location names first, so `gt 'kitchen'` before `# kitchen` still maps.

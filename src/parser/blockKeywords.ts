@@ -3,6 +3,7 @@
  * act/end, loop/end keyword positions for document highlights.
  */
 import type Parser from 'web-tree-sitter';
+import { descendantAt } from './blockTrees';
 
 /** Node types that represent block constructs with matching keywords. */
 const BLOCK_NODE_TYPES = new Set(['if_block', 'act_block', 'loop_block']);
@@ -37,7 +38,7 @@ export function findBlockKeywordRanges(
   col: number,
 ): KeywordRange[] {
   // Find the deepest node at the cursor position
-  let node = tree.rootNode.descendantForPosition({ row: line, column: col });
+  let node = descendantAt(tree.rootNode, { row: line, column: col });
   if (!node) return [];
 
   // Walk up to find a keyword node (the cursor might be on text inside it)
