@@ -77,7 +77,7 @@ export class NodeAnalysisCache implements AnalysisCache {
       return undefined;
     }
     try {
-      const value = internStrings(v8.deserialize(zlib.gunzipSync(bytes)));
+      const value = compactDeserialized(v8.deserialize(zlib.gunzipSync(bytes)));
       // The modification time is the "last used" the clean-up goes by.
       const now = new Date();
       try { fs.utimesSync(file, now, now); } catch { /* another process removed it: fine */ }
@@ -144,74 +144,95 @@ export class NodeAnalysisCache implements AnalysisCache {
 }
 
 /**
- * Make equal strings in `value` one string, in place, and return it. v8
- * writes every occurrence of a string out in full, so a read-back analysis
- * held a copy of its file's URI for each position, and of each name for
- * each use: 121 MB more than a fresh one for a 12.8 M-character file, half
- * of which this gives back, for 0.8 s.
+ * A copy of a value just read back by `v8.deserialize` that takes the memory
+ * a fresh one does. Maps and Sets are fixed in place; an object shared in
+ * `value` has one copy, shared the same way, and a cycle stays a cycle.
+ * - v8 writes every occurrence of a string out in full: a read-back analysis
+ *   held a copy of its file's URI for each position and of each name for
+ *   each use. Equal strings become one.
+ * - v8 writes a holey array (`.map()` makes them) element by element, and
+ *   reads it back with room for 16. Arrays are copied to their length.
+ * - v8 reads an object back with room for 4 fields inside it, the rest in a
+ *   separate array. Plain objects are made again from a literal of their keys.
+ * A 12.8 M-character file's analysis takes 212 MB read back this way, 230 MB
+ * fresh and 293 MB with strings interned alone; this takes 1.2 s, that 1 s.
  */
-export function internStrings<T>(value: T): T {
-  const table = new Map<string, string>();
+export function compactDeserialized<T>(value: T): T {
+  const strings = new Map<string, string>();
   const intern = (s: string) => {
-    const known = table.get(s);
+    const known = strings.get(s);
     if (known !== undefined) return known;
-    table.set(s, s);
+    strings.set(s, s);
     return s;
   };
-  // Shared objects are visited once, and a cycle ends.
-  const seen = new Set<object>();
+  // Each copied object or array is marked with its copy, which is cheaper
+  // than a Map of millions of them; Maps and Sets are kept, and fixed in place.
+  const copyOf = Symbol('copy');
+  const kept = new Set<object>();
   const stack: object[] = [];
-  const visit = (v: unknown) => {
-    if (v !== null && typeof v === 'object' && !ArrayBuffer.isView(v) && !seen.has(v)) {
-      seen.add(v);
-      stack.push(v);
-    }
+  const fix = (v: unknown): unknown => {
+    if (typeof v === 'string') return intern(v);
+    if (v === null || typeof v !== 'object' || ArrayBuffer.isView(v)) return v;
+    const marked = v as { [copyOf]?: object };
+    const copyable = Array.isArray(v) || Object.getPrototypeOf(v) === Object.prototype;
+    const done = copyable ? marked[copyOf] : kept.has(v) ? v : undefined;
+    if (done !== undefined) return done;
+    const copy = Array.isArray(v) ? v.slice() : copyable ? copyObject(v) : v;
+    if (copyable) marked[copyOf] = copy;
+    else kept.add(v);
+    stack.push(copy);
+    return copy;
   };
-  visit(value);
+  const root = fix(value);
   while (stack.length > 0) {
     const o = stack.pop()!;
     if (Array.isArray(o)) {
-      for (let i = 0; i < o.length; i++) {
-        const v: unknown = o[i];
-        if (typeof v === 'string') o[i] = intern(v);
-        else visit(v);
-      }
+      for (let i = 0; i < o.length; i++) o[i] = fix(o[i]);
     } else if (o instanceof Map) {
-      // A key can only be swapped by rebuilding the map (in the same order);
-      // most keys are their string's first occurrence and need no rebuild.
-      let keysChanged = false;
-      for (const [k, v] of o) {
-        if (typeof k === 'string') keysChanged ||= intern(k) !== k;
-        else visit(k);
-        if (typeof v === 'string') o.set(k, intern(v));
-        else visit(v);
-      }
-      if (keysChanged) {
-        const entries = [...o];
-        o.clear();
-        for (const [k, v] of entries) o.set(typeof k === 'string' ? intern(k) : k, v);
-      }
+      // Rebuilt, in the same order: a key can only be swapped that way, and
+      // whether a string is already the interned one can't be told.
+      const entries = [...o];
+      o.clear();
+      for (const [k, v] of entries) o.set(fix(k), fix(v));
     } else if (o instanceof Set) {
-      let changed = false;
-      for (const v of o) {
-        if (typeof v === 'string') changed ||= intern(v) !== v;
-        else visit(v);
-      }
-      if (changed) {
-        const items = [...o];
-        o.clear();
-        for (const v of items) o.add(typeof v === 'string' ? intern(v) : v);
-      }
+      const items = [...o];
+      o.clear();
+      for (const v of items) o.add(fix(v));
     } else {
       const record = o as Record<string, unknown>;
-      for (const key in record) {
-        const v = record[key];
-        if (typeof v === 'string') record[key] = intern(v);
-        else visit(v);
-      }
+      for (const key in record) record[key] = fix(record[key]);
     }
   }
-  return value;
+  return root as T;
+}
+
+// One maker per list of keys, found by walking a tree of the keys: no
+// allocation per object. Generated, because only an object literal that
+// names its keys gets them all inside the object.
+interface MakerNode { next: Map<string, MakerNode>; make?: (o: object) => object }
+const makers: MakerNode = { next: new Map() };
+let makerCount = 0;
+const MAX_MAKERS = 1000;
+
+function copyObject(o: object): object {
+  let node = makers;
+  for (const key in o) {
+    let next = node.next.get(key);
+    if (next === undefined) {
+      next = { next: new Map() };
+      node.next.set(key, next);
+    }
+    node = next;
+  }
+  if (node.make === undefined) {
+    const keys = Object.keys(o);
+    // `__proto__` in a literal would set the prototype instead.
+    if (makerCount >= MAX_MAKERS || keys.includes('__proto__')) return o;
+    const fields = keys.map(k => `${JSON.stringify(k)}: o[${JSON.stringify(k)}]`).join(', ');
+    node.make = new Function('o', `return { ${fields} };`) as (o: object) => object;
+    makerCount++;
+  }
+  return node.make(o);
 }
 
 /** Hash of the files the analysis results depend on; a missing one counts by its name. */

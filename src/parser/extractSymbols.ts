@@ -100,7 +100,9 @@ function recordCheckScopes(locBlock: Parser.SyntaxNode, locSymbols: LocationSymb
     const firstRead = sym.references.find(r => r.isProperUsage);
     for (const ref of [first, firstRead]) {
       if (!ref || ref.scopePath) continue;
-      ref.scopePath = scopePathOf(locBlock.descendantForPosition({ row: ref.line, column: ref.column }), locBlock);
+      // Copied to its length: the pushed array keeps room to grow, 13 MB
+      // in all on a 12.8 M-character file.
+      ref.scopePath = scopePathOf(locBlock.descendantForPosition({ row: ref.line, column: ref.column }), locBlock).slice();
     }
   }
 }

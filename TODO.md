@@ -121,17 +121,14 @@ the project load. Trees that large locations keep for incremental edits
 are freed after five minutes without use. Symbols no longer depend on the
 tree they came from: scopes are keyed by position, and the variable checks
 run on scope paths recorded at extraction, so every file gets the same
-warnings open or closed.
+warnings open or closed. A read-back analysis takes less memory than a
+fresh one (212 MB against 230 MB for that file): `compactDeserialized` in
+`nodeCache.ts` makes equal strings one, copies arrays to their length and
+objects into literals of their keys, for 1.2 s.
 
 Every file is now analysed one way, location by location, open or closed:
 "open" only changes where the text comes from and how soon it is analysed.
 Next, in order:
-- **Memory.** Read-back analyses hold more than fresh ones: for a
-  12.8 M-character file 336 MB against 215 MB (heap after a full GC). v8
-  writes each string occurrence out in full; interning on read
-  (`internStrings` in `nodeCache.ts`) brings it to 274 MB, for 0.8 s more
-  on a 2.5 s read. The rest is object layout: read-back objects and arrays
-  take more room than the ones the analysis built.
 - **A second hash: a file's interface.** What other files can see of a file
   (its location names, the globals it reads and writes, the calls it makes)
   hashed apart from its text, so an edit that leaves the interface alone
@@ -151,9 +148,9 @@ Next, in order:
 - **A format of our own for cache entries** (long term). Instead of
   `v8.serialize`: a string table, the file's URI stored once instead of in
   every position, positions and names in flat arrays, read with
-  `JSON.parse` or straight into typed arrays. It could remove the remaining
-  60 MB of layout overhead and the 0.8 s of interning and make reads faster,
-  but it is bound to the symbol types.
+  `JSON.parse` or straight into typed arrays. It could remove the 1.2 s
+  of compacting on read and make reads faster, but it is bound to the symbol
+  types.
 - **The MCP server and VS Code for the Web** run without a cache:
   `QspHost` takes a `cacheDir` already, the MCP server would need a folder
   (e.g. under the user's cache directory); the browser would need IndexedDB.
