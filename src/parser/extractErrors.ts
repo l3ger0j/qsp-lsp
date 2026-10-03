@@ -13,6 +13,7 @@ import {
   checkReservedWordMisuse,
   checkPrefixWhitespace,
 } from './lintChecks';
+import { isDynamicArgCodeBlock } from './scopeUtils';
 
 export { checkFunctionNameAsLvalue, checkReservedWordMisuse, checkPrefixWhitespace };
 
@@ -25,6 +26,12 @@ export interface SyntaxError {
   message: string;
   /** True when the error is inside a code block or <<>> string interpolation. */
   inCodeBlock?: boolean;
+  /**
+   * True inside a `{…}` that isn't run where it stands (as `dynamic {…}`
+   * is): QSP keeps it as text until something runs it, and games keep
+   * lists of text in such blocks.
+   */
+  inStoredBlock?: boolean;
   inInterpolation?: boolean;
 }
 
@@ -143,11 +150,14 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
   const errors: SyntaxError[] = [];
   const cursor = tree.walk();
   let codeBlockDepth = 0;
+  let storedBlockDepth = 0;
   let interpolationDepth = 0;
 
   function visit(): void {
     const node = cursor.currentNode;
     const isCodeBlock = node.type === 'code_block';
+    const isStoredBlock = isCodeBlock && !isDynamicArgCodeBlock(node);
+    if (isStoredBlock) storedBlockDepth++;
     // Track raw_code_block too: errors inside a comment's { … } region
     // are secondary (the outer comment is still valid).
     const isRawCodeBlock = node.type === 'raw_code_block';
@@ -159,6 +169,9 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
       const { diagnostics, summarized } = refineErrorNode(node);
       if (codeBlockDepth > 0) {
         for (const e of diagnostics) e.inCodeBlock = true;
+      }
+      if (storedBlockDepth > 0) {
+        for (const e of diagnostics) e.inStoredBlock = true;
       }
       if (interpolationDepth > 0) {
         for (const e of diagnostics) e.inInterpolation = true;
@@ -173,6 +186,7 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
       // threshold-collapse path can kick in for pathological files).
       if (summarized) {
         if (isCodeBlock || isRawCodeBlock) codeBlockDepth--;
+        if (isStoredBlock) storedBlockDepth--;
         if (isInterpolation) interpolationDepth--;
         return;
       }
@@ -184,6 +198,7 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
         endCol: node.endPosition.column,
         message: friendlyMissingMessage(node),
         inCodeBlock: codeBlockDepth > 0 || undefined,
+        inStoredBlock: storedBlockDepth > 0 || undefined,
         inInterpolation: interpolationDepth > 0 || undefined,
       });
     }
@@ -195,6 +210,7 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
     }
 
     if (isCodeBlock || isRawCodeBlock) codeBlockDepth--;
+    if (isStoredBlock) storedBlockDepth--;
     if (isInterpolation) interpolationDepth--;
   }
 
@@ -226,6 +242,7 @@ function runMergedLintPasses(tree: Parser.Tree): SyntaxError[] {
   const errors: SyntaxError[] = [];
   const cursor = tree.walk();
   let codeBlockDepth = 0;
+  let storedBlockDepth = 0;
   let interpolationDepth = 0;
   let errorDepth = 0;
 
@@ -244,9 +261,11 @@ function runMergedLintPasses(tree: Parser.Tree): SyntaxError[] {
     const n = cursor.currentNode;
     const t = n.type;
     const isCB = t === 'code_block' || t === 'raw_code_block';
+    const isStored = t === 'code_block' && !isDynamicArgCodeBlock(n);
     const isIntp = t === 'string_interpolation';
     const isErr = n.isError;
     if (isCB) codeBlockDepth++;
+    if (isStored) storedBlockDepth++;
     if (isIntp) interpolationDepth++;
     if (isErr) errorDepth++;
 
@@ -261,6 +280,7 @@ function runMergedLintPasses(tree: Parser.Tree): SyntaxError[] {
           endCol: n.endPosition.column,
           message: `'${n.text}' is a reserved keyword and cannot be used as a variable name`,
           inCodeBlock: codeBlockDepth > 0 || undefined,
+          inStoredBlock: storedBlockDepth > 0 || undefined,
           inInterpolation: interpolationDepth > 0 || undefined,
         });
       }
@@ -317,6 +337,7 @@ function runMergedLintPasses(tree: Parser.Tree): SyntaxError[] {
           endCol: lhs.endPosition.column,
           message: `'${display}' is a reserved function name and cannot be assigned to`,
           inCodeBlock: codeBlockDepth > 0 || undefined,
+          inStoredBlock: storedBlockDepth > 0 || undefined,
           inInterpolation: interpolationDepth > 0 || undefined,
         });
       }
@@ -328,6 +349,7 @@ function runMergedLintPasses(tree: Parser.Tree): SyntaxError[] {
     }
 
     if (isCB) codeBlockDepth--;
+    if (isStored) storedBlockDepth--;
     if (isIntp) interpolationDepth--;
     if (isErr) errorDepth--;
   }

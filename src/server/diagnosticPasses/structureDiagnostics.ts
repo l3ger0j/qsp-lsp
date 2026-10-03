@@ -64,7 +64,10 @@ export function checkSyntaxErrors(
     if (errs.length <= maxPerLoc) {
       for (const err of errs) {
         ctx.push(
-          err.inCodeBlock ? DiagnosticSeverity.Information : DiagnosticSeverity.Error,
+          // A block nothing runs where it stands may be text (a list of
+          // words): only a hint. One run in place (`dynamic {…}`) fails.
+          err.inStoredBlock ? DiagnosticSeverity.Hint
+            : err.inCodeBlock ? DiagnosticSeverity.Information : DiagnosticSeverity.Error,
           {
             start: { line: err.startRow, character: err.startCol },
             end: { line: err.endRow, character: err.endCol },

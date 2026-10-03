@@ -29,6 +29,7 @@ import {
   hasInterpolation,
   collapseNewlines,
   countCallArgs,
+  isTextBlock,
 } from './walkHelpers';
 import { lookupArgConstraints, lookupFunctionReturnType } from './builtins';
 import { parseVarStringArg } from './variableBindings';
@@ -579,6 +580,7 @@ export function collectVariableBindings(
     }
     noteCallSite(n, inDeferred);
     noteSideEffectWrite(n);
+    if (isTextBlock(n)) return;
     if (cursor.gotoFirstChild()) {
       const childInDeferred = inDeferred || n.type === 'act_block' || n.type === 'act_inline';
       do { visit(childInDeferred); } while (cursor.gotoNextSibling());

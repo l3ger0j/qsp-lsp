@@ -17,6 +17,7 @@ import type { LocationSymbols } from './locationSymbols';
 import {
   type VarMediatedCtx,
   markConsumedCodeBlock,
+  isTextBlock,
 } from './walkHelpers';
 import {
   extractVariable,
@@ -161,8 +162,9 @@ export function walkLocationBody(
       return;
     }
 
-    // Skip consumed or deferred code blocks.
+    // Skip consumed or deferred code blocks, and those that are text.
     if (node.type === 'code_block') {
+      if (isTextBlock(node)) return;
       if (consumedCodeBlocks.has(node.id)) return;
       if (deferredCodeBlocks.has(node.id)) return;
 

@@ -404,6 +404,15 @@ pl '<<x + >>'
     expect(errorDiags).toHaveLength(0);
   });
 
+  // A `{…}` kept in a variable may be text (games keep lists of words in
+  // them): QSP checks it only when something runs it.
+  it('a stored block that is no code gives a hint, and no variables', () => {
+    const diags = runDiagnostics(parser, `# test\nlocal $фрукты = { Яблоко, Банан }\npl $фрукты\n---\n`,
+      { maxErrorsPerLocation: 100, uninitializedVariables: true });
+    expect(diags.length).toBeGreaterThan(0);
+    expect(diags.every(d => d.severity === 4 && d.code === 'syntax')).toBe(true);
+  });
+
   it('accepts unary plus, also right after a binary plus', () => {
     for (const line of ["$s = 'a'++rand(0,20)++'b'", 'x = 1++2', "pl 'a' + +rand(0, 20)", 'x = +5']) {
       const tree = parser.parseOnce(`# t\n${line}\n---\n`)!;

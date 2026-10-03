@@ -20,6 +20,8 @@ export interface SyntaxError {
   endCol: number;
   message: string;
   inCodeBlock?: boolean;
+  /** See extractErrors.ts. */
+  inStoredBlock?: boolean;
   /** True when the error is inside a <<>> string interpolation. */
   inInterpolation?: boolean;
 }

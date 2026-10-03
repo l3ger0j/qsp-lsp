@@ -183,6 +183,7 @@ export function collectEmbeddedErrors(
       endCol: m.endColumn,
       message: e.message,
       inCodeBlock: e.inCodeBlock,
+      inStoredBlock: e.inStoredBlock,
       inInterpolation: e.inInterpolation,
     });
   }

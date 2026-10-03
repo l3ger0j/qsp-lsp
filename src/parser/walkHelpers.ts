@@ -61,6 +61,16 @@ export interface VarMediatedCtx {
 // ── Text helpers ──────────────────────────────────────────────────────
 
 /**
+ * Whether `node` is a `{…}` block that doesn't parse as code. QSP keeps a
+ * block as text and checks it only when it runs, and games keep lists of
+ * text in them (`local $fruit = { apple, pear }`): such a block gives no
+ * symbols, or its words would be taken for variables never assigned.
+ */
+export function isTextBlock(node: Parser.SyntaxNode): boolean {
+  return node.type === 'code_block' && node.hasError;
+}
+
+/**
  * Whether `node` holds a location: a `location_block`, or an ERROR node
  * that starts with a location header. A syntax error tree-sitter can't
  * recover from (prose written into the code, an `if` never closed) leaves
