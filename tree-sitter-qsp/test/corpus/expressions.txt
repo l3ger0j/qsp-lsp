@@ -1050,3 +1050,51 @@ x = ( a = 'D'  _
                 (string
                   (single_quoted_string))))))))
     (location_end)))
+
+================
+Unary plus, also right after a binary plus
+================
+# test
+$s = 'a'++rand(0,20)++'b'
+x = +5
+--
+---
+
+(source_file
+  (location_block
+    (location_header
+      (location_name))
+    (single_line_block
+      (assignment_statement
+        variables: (variable_list
+          (variable_ref
+            prefix: (type_prefix)
+            name: (identifier_text)))
+        operator: (assignment_operator)
+        value: (na_binary
+          (na_binary
+            (string
+              (single_quoted_string))
+            (op_arith)
+            (na_unary
+              (op_pos)
+              (na_func_call
+                name: (function_name)
+                (paren_args
+                  (number_literal)
+                  (number_literal)))))
+          (op_arith)
+          (na_unary
+            (op_pos)
+            (string
+              (single_quoted_string))))))
+    (single_line_block
+      (assignment_statement
+        variables: (variable_list
+          (variable_ref
+            name: (identifier_text)))
+        operator: (assignment_operator)
+        value: (na_unary
+          (op_pos)
+          (number_literal))))
+    (location_end)))

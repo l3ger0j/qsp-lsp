@@ -404,6 +404,14 @@ pl '<<x + >>'
     expect(errorDiags).toHaveLength(0);
   });
 
+  it('accepts unary plus, also right after a binary plus', () => {
+    for (const line of ["$s = 'a'++rand(0,20)++'b'", 'x = 1++2', "pl 'a' + +rand(0, 20)", 'x = +5']) {
+      const tree = parser.parseOnce(`# t\n${line}\n---\n`)!;
+      expect(extractErrors(tree), line).toEqual([]);
+      tree.delete();
+    }
+  });
+
   // ── Invalid variable names (PEG: varName = ~digit nonDelimiterChar+) ──
 
   it.each([

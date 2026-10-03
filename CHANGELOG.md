@@ -22,6 +22,7 @@
 - Files in `libs/` show errors only (no warnings about a library's unused locations or variables), and a duplicate location names the library it clashes with.
 
 ### Fixes
+- A label whose name has brackets or parentheses (`:i[16]i[16]`) was cut at the first bracket and the rest reported as a syntax error; the name is now the whole rest of the line, as QSP takes it. Unary plus (`'a'++rand(0, 20)++'b'`, `x = +5`) is no longer a syntax error.
 - `unusedLocations`, `unusedObjects` and `unusedVariables` no longer report a name the game uses as text: a location, object or variable whose name is written to a variable or passed to a call (`$to = 'hall'` … `gt $to`, `gs 'print', 'list'`), or a location a jump target built from text fits (`gs 'eat<<n>>'`). On games from the QSP catalog most of these reports were of such names.
 - A location with a syntax error tree-sitter can't recover from (notes written as plain text in the code, an `if` never closed) lost its variables and jumps, kept only its actions and labels, and turned off the "never used" checks of the whole project; the file was also analysed again on every open instead of read from the cache (a 5 M-character game: ready in 10.9 s instead of 1.6 s). Its symbols are now taken from what was parsed.
 - The jump graph's statistics in the log could quote game text: a jump target broken by a comment (`gt $curloc - …`) was described by the text where its operator should be. They now name grammar node types and built-in functions only.

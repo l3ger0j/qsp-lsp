@@ -297,6 +297,7 @@ function emitSemanticTokens(
       // ── Operators ───────────────────────────────────────
       case 'op_arith':    // +, -, *, /
       case 'op_neg':      // unary -
+      case 'op_pos':      // unary +
       case 'op_mod':      // mod
       case 'op_cmp':      // <>, !, <=, =<, >=, =>, =, <, >
       case 'op_and':

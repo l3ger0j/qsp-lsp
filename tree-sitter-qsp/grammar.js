@@ -92,7 +92,7 @@ const FUNCTIONS = [
  *  11  = loc, obj (unary)
  *  12  = & (value concatenation — only in ext/ml contexts)
  *  14  = +, -       16 = mod        17 = *, /
- *  18  = - (unary negation)
+ *  18  = - (unary negation), + (unary plus)
  */
 
 // ── Grammar ──────────────────────────────────────────────────────────────────
@@ -599,17 +599,16 @@ module.exports = grammar({
     // ══════════════════════════════════════════════════════════════════════════
 
     // PEG: labelStatement = ":" ws labelName
-    // PEG: labelName = noteString
     label_statement: $ => prec.right(seq(':', field('name', $.label_name))),
 
-    // PEG: noteString = (rawStringLiteral | rawCodeBlock | noteChar)+
-    // PEG: noteChar = ~(statementSeparator | newline | "'" | "\"" | "{" | "}"
-    //                  | "(" | ")" | "[" | "]") any
+    // PEG: labelName = (rawStringLiteral | rawCodeBlock | labelChar)+
+    // PEG: labelChar = ~(statementSeparator | newline | "'" | "\"" | "{" | "}") any
+    // Brackets are part of a name (`:i[16]`), unlike in noteString.
     // {..} and '...'/"..." can span multiple lines.
     label_name: $ => prec.right(repeat1(choice(
       $._raw_string,
       $.raw_code_block,
-      /[^\r\n&{}'"()\[\]]+/,
+      /[^\r\n&{}'"]+/,
     ))),
 
     // Used after `end` in multi-line if/act/loop
@@ -650,6 +649,7 @@ module.exports = grammar({
       prec(11, seq(alias(ci('obj'), $.op_obj), $._na_expression)),
       prec(11, seq(alias(ci('loc'), $.op_loc), $._na_expression)),
       prec(18, seq(alias('-', $.op_neg),       $._na_expression)),
+      prec(18, seq(alias('+', $.op_pos),       $._na_expression)),
     ),
 
     _na_primary: $ => choice(
@@ -684,6 +684,7 @@ module.exports = grammar({
       prec(11, seq(alias(ci('obj'), $.op_obj), $._ext_expression)),
       prec(11, seq(alias(ci('loc'), $.op_loc), $._ext_expression)),
       prec(18, seq(alias('-', $.op_neg),       $._ext_expression)),
+      prec(18, seq(alias('+', $.op_pos),       $._ext_expression)),
     ),
 
     _ext_primary: $ => choice(
@@ -718,6 +719,7 @@ module.exports = grammar({
       prec(11, seq(alias(ci('obj'), $.op_obj), optional($._nls), $._ml_expression)),
       prec(11, seq(alias(ci('loc'), $.op_loc), optional($._nls), $._ml_expression)),
       prec(18, seq(alias('-', $.op_neg),       optional($._nls), $._ml_expression)),
+      prec(18, seq(alias('+', $.op_pos),       optional($._nls), $._ml_expression)),
     ),
 
     _ml_primary: $ => choice(

@@ -57,6 +57,7 @@ const FRIENDLY_NODE_NAMES: Record<string, string> = {
   op_obj: "'obj'",
   op_loc: "'loc'",
   op_neg: "'-'",
+  op_pos: "'+'",
   assignment_operator: 'an assignment operator (=, +=, -=, *=, /=)',
 
   // Keywords
@@ -468,7 +469,7 @@ function detectInvalidVarNameError(node: Parser.SyntaxNode): SyntaxError | null 
  */
 const OPERATOR_NODE_TYPES = new Set([
   'op_arith', 'op_cmp', 'op_amp', 'op_and', 'op_or', 'op_no',
-  'op_neg', 'op_mod', 'op_obj', 'op_loc',
+  'op_neg', 'op_pos', 'op_mod', 'op_obj', 'op_loc',
 ]);
 
 /**

@@ -208,7 +208,8 @@ QSP {
     labelStatement                  = ":" ws labelName
     implicitStatement               = nonAmpersandExpression
 
-    labelName                       = noteString
+    labelName                       = (rawStringLiteral | rawCodeBlock | labelChar)+
+    labelChar                       = ~(statementSeparator | newline | "'" | "\"" | "{" | "}") any
 
     noteString                      = (rawStringLiteral | rawCodeBlock | noteChar)+
     noteChar                        = ~(statementSeparator | newline | "'" | "\"" | "{" | "}" | "(" | ")" | "[" | "]") any
@@ -422,7 +423,7 @@ QSP {
     binaryExtendedOperator  = binaryStandardOperator | "&"
 
     unaryKeywordOperator    = "no" | "obj" | "loc"
-    unaryStandardOperator   = "-"
+    unaryStandardOperator   = "-" | "+"
 
     /* Priority | Operations
        ---------|--------------------------------
@@ -436,7 +437,7 @@ QSP {
        14       | +, -
        16       | mod
        17       | *, /
-       18       | - (unary negation)
+       18       | - (unary negation), + (unary plus)
        30       | ALL REGULAR FUNCTIONS
        127      | ( ) PARENTHESES
     */

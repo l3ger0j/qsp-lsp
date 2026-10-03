@@ -36,7 +36,7 @@ const KEEP_TYPES = new Set([
   'statement_name', 'function_name', 'type_prefix', 'assignment_operator',
   'act_keyword', 'if_keyword', 'elseif_keyword', 'else_keyword', 'end_keyword', 'local_keyword',
   'loop_keyword', 'while_keyword', 'step_keyword', 'set_keyword',
-  'op_amp', 'op_and', 'op_arith', 'op_cmp', 'op_loc', 'op_mod', 'op_neg', 'op_no', 'op_obj', 'op_or',
+  'op_amp', 'op_and', 'op_arith', 'op_cmp', 'op_loc', 'op_mod', 'op_neg', 'op_no', 'op_obj', 'op_or', 'op_pos',
 ]);
 const STRING_TYPES = new Set(['string', 'single_quoted_string', 'double_quoted_string', 'raw_string']);
 // Free text: only its line breaks are kept.

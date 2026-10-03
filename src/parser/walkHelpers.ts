@@ -35,7 +35,7 @@ export const CONTAINER_NODE_TYPES = new Set([
 /** AST child types that represent metadata rather than arguments. */
 export const META_CHILD_TYPES = new Set([
   'statement_name', 'function_name', 'type_prefix',
-  'op_obj', 'op_loc', 'op_no', 'op_neg',
+  'op_obj', 'op_loc', 'op_no', 'op_neg', 'op_pos',
 ]);
 
 // ── Shared context for var-mediated dynamic/dyneval propagation ──────

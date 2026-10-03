@@ -34,7 +34,7 @@ const CONTAINER_NODE_TYPES = new Set([
 /** AST child types that represent metadata rather than arguments. */
 const META_CHILD_TYPES = new Set([
   'statement_name', 'function_name', 'type_prefix',
-  'op_obj', 'op_loc', 'op_no', 'op_neg',
+  'op_obj', 'op_loc', 'op_no', 'op_neg', 'op_pos',
 ]);
 
 /** Get the first non-meta argument of a statement or function call. */

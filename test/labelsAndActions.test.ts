@@ -35,6 +35,12 @@ describe('unresolved label reference detection (real computeDiagnostics)', () =>
     expect(run(`# main\n:loop\npl 'tick'\njump 'loop'\n---\n`)).toHaveLength(0);
   });
 
+  it('a label name takes brackets and parentheses: the rest of its line is the name', () => {
+    const code = `# main\n:i[16]i[16](а)\njump 'I[16]i[16](А)'\n---\n`;
+    expect(run(code)).toHaveLength(0);
+    expect(runDiagnostics(parser, code, { unusedLabels: true, maxErrorsPerLocation: 100 })).toEqual([]);
+  });
+
   it('case-insensitive matching', () => {
     expect(run(`# main\n:MyLabel\njump 'MYLABEL'\n---\n`)).toHaveLength(0);
   });
