@@ -902,6 +902,158 @@ function inCanonicalOrder(
   return sorted;
 }
 
+// ── Propagation in the analysis cache ────────────────────────────────
+
+/**
+ * A propagation (propagateLocals) as the analysis cache keeps it: names
+ * in one table, everything else numbers indexing it, so a large game's
+ * million providers make a few typed arrays rather than a million objects.
+ * A provider is its location and its key in that location's `variables`.
+ */
+export interface StoredPropagation {
+  names: string[];
+  /** Per target: name, count of names; per name: name, count of providers; per provider: location, key. */
+  locals: Uint32Array;
+  /** As `locals`. */
+  shadowed: Uint32Array;
+  /** Location and key of each symbol in `propagatedSyms`. */
+  syms: Uint32Array;
+  /** Per target: name, count of callers, the callers. */
+  callers: Uint32Array;
+}
+
+// The location each lowercase name stands for, as propagateLocals indexes
+// them (a later one of the same name wins).
+function locationsByKey(allLocations: Iterable<{ locName: string; locSyms: LocationSymbols; uri: string }>) {
+  const byKey = new Map<string, { locSyms: LocationSymbols; uri: string }>();
+  for (const { locName, locSyms, uri } of allLocations) byKey.set(locName.toLowerCase(), { locSyms, uri });
+  return byKey;
+}
+
+/** `agg`'s propagation of `allLocations`, to store; undefined when a provider can't be named. */
+export function storedPropagation(
+  agg: SymbolAggregates,
+  allLocations: Iterable<{ locName: string; locSyms: LocationSymbols; uri: string }>,
+): StoredPropagation | undefined {
+  const where = new Map<QspSymbol, { loc: string; key: string }>();
+  for (const [loc, { locSyms }] of locationsByKey(allLocations)) {
+    for (const [key, sym] of locSyms.variables) if (!where.has(sym)) where.set(sym, { loc, key });
+  }
+  const names: string[] = [];
+  const indexes = new Map<string, number>();
+  const name = (s: string) => {
+    let n = indexes.get(s);
+    if (n === undefined) {
+      n = names.length;
+      names.push(s);
+      indexes.set(s, n);
+    }
+    return n;
+  };
+  const byTarget = (map: Map<string, Map<string, PropagatedLocal[]>>): Uint32Array | undefined => {
+    const out: number[] = [];
+    for (const [target, byVar] of map) {
+      out.push(name(target), byVar.size);
+      for (const [varName, providers] of byVar) {
+        out.push(name(varName), providers.length);
+        for (const p of providers) {
+          const at = where.get(p.sym);
+          if (!at || at.loc !== p.providerLoc) return undefined;
+          out.push(name(at.loc), name(at.key));
+        }
+      }
+    }
+    return Uint32Array.from(out);
+  };
+  const locals = byTarget(agg.propagatedLocals);
+  const shadowed = byTarget(agg.shadowedPropagations);
+  if (!locals || !shadowed) return undefined;
+  const syms: number[] = [];
+  for (const sym of agg.propagatedSyms) {
+    const at = where.get(sym);
+    if (!at) return undefined;
+    syms.push(name(at.loc), name(at.key));
+  }
+  const callers: number[] = [];
+  for (const [target, from] of agg.propagationCallers) {
+    callers.push(name(target), from.size);
+    for (const caller of from) callers.push(name(caller));
+  }
+  return { names, locals, shadowed, syms: Uint32Array.from(syms), callers: Uint32Array.from(callers) };
+}
+
+/**
+ * Put a stored propagation of `allLocations` into `out`, its providers
+ * found in their symbols as they are now. Returns false, having done
+ * nothing, when it doesn't fit them (or isn't one).
+ */
+export function loadPropagation(
+  stored: unknown,
+  allLocations: Iterable<{ locName: string; locSyms: LocationSymbols; uri: string }>,
+  out: SymbolAggregates,
+): boolean {
+  const s = stored as Partial<StoredPropagation> | undefined;
+  if (!s || !Array.isArray(s.names) || !(s.locals instanceof Uint32Array) || !(s.shadowed instanceof Uint32Array)
+    || !(s.syms instanceof Uint32Array) || !(s.callers instanceof Uint32Array)) return false;
+  const names = s.names;
+  const byKey = locationsByKey(allLocations);
+  const text = (n: number | undefined) => (n === undefined ? undefined : names[n]);
+  const symAt = (loc: string | undefined, key: string | undefined) =>
+    loc === undefined || key === undefined ? undefined : byKey.get(loc)?.locSyms.variables.get(key);
+  const byTarget = (a: Uint32Array): Map<string, Map<string, PropagatedLocal[]>> | undefined => {
+    const map = new Map<string, Map<string, PropagatedLocal[]>>();
+    let i = 0;
+    while (i < a.length) {
+      const target = text(a[i++]);
+      const nVars = a[i++];
+      if (target === undefined || nVars === undefined) return undefined;
+      const byVar = new Map<string, PropagatedLocal[]>();
+      for (let v = 0; v < nVars; v++) {
+        const varName = text(a[i++]);
+        const nProviders = a[i++];
+        if (varName === undefined || nProviders === undefined) return undefined;
+        const providers: PropagatedLocal[] = [];
+        for (let k = 0; k < nProviders; k++) {
+          const loc = text(a[i++]);
+          const sym = symAt(loc, text(a[i++]));
+          if (!sym) return undefined;
+          providers.push({ providerLoc: loc!, providerUri: byKey.get(loc!)!.uri, sym });
+        }
+        byVar.set(varName, providers);
+      }
+      map.set(target, byVar);
+    }
+    return map;
+  };
+  const locals = byTarget(s.locals);
+  const shadowed = byTarget(s.shadowed);
+  if (!locals || !shadowed) return false;
+  const syms = new Set<QspSymbol>();
+  for (let i = 0; i < s.syms.length; i += 2) {
+    const sym = symAt(text(s.syms[i]), text(s.syms[i + 1]));
+    if (!sym) return false;
+    syms.add(sym);
+  }
+  const callers = new Map<string, Set<string>>();
+  for (let i = 0; i < s.callers.length;) {
+    const target = text(s.callers[i++]);
+    const n = s.callers[i++];
+    if (target === undefined || n === undefined) return false;
+    const from = new Set<string>();
+    for (let k = 0; k < n; k++) {
+      const caller = text(s.callers[i++]);
+      if (caller === undefined) return false;
+      from.add(caller);
+    }
+    callers.set(target, from);
+  }
+  out.propagatedLocals = locals;
+  out.shadowedPropagations = shadowed;
+  out.propagatedSyms = syms;
+  out.propagationCallers = callers;
+  return true;
+}
+
 /**
  * propagateLocals, then finishAggregates: every aggregate the call graph
  * gives.

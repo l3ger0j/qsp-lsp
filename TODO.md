@@ -128,27 +128,20 @@ objects into literals of their keys, for 1.2 s. Each location carries a
 hash of what other files can see of it (`locationInterface.ts`: its symbols
 without positions), so an edit that leaves a file's interface alone
 diagnoses only that file: on a 15.6 M-character game in 10 files, an edit
-is checked in 7 s instead of 11 s, of which 6 s are the aggregates (now
-1.9 s, see below).
+is checked in 7 s instead of 11 s, of which 6 s are the aggregates. The
+aggregates are incremental now: the propagation of locals is kept while no
+location's interface changes, redone only for the names whose facts
+changed while the calls that pass locals stay the same, and kept in the
+analysis cache for the next start when it took long (`reusePropagation`,
+`storedPropagation` in `aggregation.ts`). On that game an edit of game text
+is checked in 1.5 s, a changed value's aggregates take 0.6 s instead of
+5 s, and an unchanged project's take 0.9 s on start instead of 6.6 s. On
+games from the QSP catalog the propagation takes milliseconds: no locals
+pass through calls there.
 
 Every file is now analysed one way, location by location, open or closed:
 "open" only changes where the text comes from and how soon it is analysed.
 Next, in order:
-- **Incremental aggregates, the rest.** An edit that changes no
-  location's interface keeps the propagation of locals (`reusePropagation`
-  in `aggregation.ts`), which was nearly all of the aggregates' 5–7 s: the
-  10-file game's edit is checked in 1.9 s instead of 11 s. Left:
-  - an edit that changes an interface propagates again only the names whose
-    facts changed (`propagationFacts`), while the calls that pass locals
-    stay the same: a changed value on the 10-file game, 5 s → 0.2 s. On
-    games from the QSP catalog no locals pass through calls at all, so the
-    whole propagation takes milliseconds there;
-  - `finishAggregates` took 0.8 s on every edit of that game: 0.25 s now
-    (its first pass no longer dedups what can't repeat); an edit's
-    aggregates make ~70 MB of garbage instead of ~260 MB;
-  - keep the propagation in the cache keyed by the files' interfaces, so an
-    unchanged project skips it on start (4–5 s);
-  (see also **Incremental project aggregates**).
 - **Yield during the aggregates and diagnostics.** On first open the server
   answers nothing for their ~10 s (hover, navigation, status updates all
   wait; on the 12.8 M-character file, the 26 ms range request for the

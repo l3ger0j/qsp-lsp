@@ -43,7 +43,10 @@ import {
   propagateLocals,
   propagationBase,
   reusePropagation,
+  loadPropagation,
+  storedPropagation,
   type PropagationBase,
+  type SymbolAggregates,
 } from './aggregation';
 import type { DiagnosticSettings } from './diagnostics';
 import type { DocumentState } from './lspFeatures';
@@ -98,6 +101,8 @@ export class ProjectModeService {
 
   /** The last propagation of locals across the project, reused while it holds. */
   private propagation: PropagationBase | undefined;
+  /** A propagation that took this long is kept in the analysis cache for the next start. */
+  propagationCacheMinMs = 500;
 
   /**
    * Whether to sub-parse `<a href="exec:...">` link bodies during
@@ -496,8 +501,16 @@ export class ProjectModeService {
       }
       // Seconds in a large game: an edit that changes no location's
       // interface (game text, comments, new lines) keeps the last one.
-      const reused = this.perf.step('propagation reuse', () => reusePropagation(this.propagation, allLocs, agg, this.shouldStop));
-      if (!reused) this.perf.step('propagation', () => propagateLocals(allLocs, agg, this.shouldStop));
+      const reused = this.perf.step('propagation reuse', () => reusePropagation(this.propagation, allLocs, agg, this.shouldStop))
+        || this.perf.step('propagation cache read', () => this.readPropagation(allLocs, agg));
+      if (!reused) {
+        const started = performance.now();
+        this.perf.step('propagation', () => propagateLocals(allLocs, agg, this.shouldStop));
+        // Most games' propagation takes milliseconds, less than reading it back.
+        if (performance.now() - started >= this.propagationCacheMinMs && !this.shouldStop?.()) {
+          this.perf.step('propagation cache write', () => this.storePropagation(allLocs, agg));
+        }
+      }
       this.perf.step('aggregates finish', () => finishAggregates(allLocs, agg));
       this.propagation = propagationBase(allLocs, agg);
     }
@@ -512,6 +525,24 @@ export class ProjectModeService {
 
     this.projectAggregates = agg;
     return agg;
+  }
+
+  // The analysis cache key of the propagation of these locations: it reads
+  // only what their interfaces cover (see reusePropagation).
+  private propagationKey(allLocs: ReadonlyArray<{ locSyms: LocationSymbols; uri: string }>): string | undefined {
+    return this.analysisCache?.key('propagation', ...allLocs.map(({ uri, locSyms }) =>
+      `${uri}\n${locSyms.locationName}\n${locationInterface(locSyms)}`));
+  }
+
+  private readPropagation(allLocs: ReadonlyArray<{ locName: string; locSyms: LocationSymbols; uri: string }>, agg: SymbolAggregates): boolean {
+    const key = this.propagationKey(allLocs);
+    return key !== undefined && loadPropagation(this.analysisCache!.get(key), allLocs, agg);
+  }
+
+  private storePropagation(allLocs: ReadonlyArray<{ locName: string; locSyms: LocationSymbols; uri: string }>, agg: SymbolAggregates): void {
+    const key = this.propagationKey(allLocs);
+    const stored = key !== undefined ? storedPropagation(agg, allLocs) : undefined;
+    if (stored) this.analysisCache!.put(key!, stored);
   }
 
   // ── Diagnostics ─────────────────────────────────────────────────────

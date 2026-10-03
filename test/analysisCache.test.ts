@@ -12,13 +12,23 @@
  * - A file that changed is analysed again; the others still come from the cache.
  * - An unchanged project shows the diagnostics it had last time before the
  *   seconds-long aggregates; any change to its files means none are shown.
+ * - The propagation of locals, the seconds of those aggregates, is read
+ *   back when no location changed what it reads.
  */
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { QspHost } from '../src/mcp/qspHost';
-import { loadWasm } from './testHelpers';
+import type { Connection, TextDocuments } from 'vscode-languageserver';
+import type { TextDocument } from 'vscode-languageserver-textdocument';
+import { QspTreeSitterParser } from '../src/parser/treeSitter';
+import { ProjectModeService } from '../src/server/projectMode';
+import { NodeAnalysisCache } from '../src/server/nodeCache';
+import { collectCallTypesPerTarget } from '../src/server/aggregation';
+import { PerfLog } from '../src/server/perfLog';
+import type { DocumentState } from '../src/server/featureTypes';
+import { initParser, loadWasm } from './testHelpers';
 
 const FILES: Record<string, string> = {
   'main.qsps': [
@@ -101,4 +111,55 @@ describe('analysis cache', () => {
       fs.rmSync(cacheDir, { recursive: true, force: true });
     }
   }, 60_000);
+});
+
+// The propagation of locals across the project is stored too (a large game
+// spends seconds on it); read back, it must give the aggregates a fresh one
+// gives, and a change to what it reads must miss it.
+describe('analysis cache: the propagation of locals', () => {
+  const PROJECT: Record<string, string> = {
+    'file:///game/main.qsps': "# старт\nlocal шаг = 1\nlocal $путь = 'лес'\ngs 'помощь', шаг\nx = @считать(шаг)\n---\n# второй\nlocal шаг = 2\ngs 'помощь'\n---\n",
+    'file:///game/forest.qsps': "# помощь\npl шаг, $путь\nшаг = args[0]\ngs 'считать'\n---\n# считать\nresult = шаг + 1\n---\n",
+  };
+
+  async function aggregatesOf(files: Record<string, string>, cacheDir?: string) {
+    const parser = new QspTreeSitterParser();
+    await initParser(parser);
+    const states = new Map<string, DocumentState>();
+    const connection = { console: { log() {}, error() {}, warn() {}, info() {} }, sendDiagnostics() {} } as unknown as Connection;
+    const documents = { get: () => undefined, all: () => [] } as unknown as TextDocuments<TextDocument>;
+    const service = new ProjectModeService(connection, documents, states, parser);
+    if (cacheDir) service.analysisCache = new NodeAnalysisCache(cacheDir);
+    service.propagationCacheMinMs = 0;
+    const steps: string[] = [];
+    service.perf = new PerfLog(line => steps.push(line));
+    service.perf.verbose = true;
+    for (const [uri, text] of Object.entries(files)) {
+      service.projectFileUris.add(uri);
+      service.analyzeFile(uri, text);
+    }
+    service.perf.phase('aggregates', () => service.rebuildAggregates(() => collectCallTypesPerTarget([...states.values()].map(s => s.symbols))));
+    const line = steps.find(l => l.includes('aggregates'))!;
+    return { agg: service.projectAggregates, propagated: /[·,] propagation \d/.test(line), read: /propagation cache read/.test(line) };
+  }
+
+  it('reads it back instead of propagating, the same as a fresh one', async () => {
+    const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qsp-cache-prop-'));
+    try {
+      const fresh = await aggregatesOf(PROJECT);
+      expect(fresh.agg!.propagatedLocals.size).toBeGreaterThan(0);
+      expect((await aggregatesOf(PROJECT, cacheDir)).propagated).toBe(true);
+      const back = await aggregatesOf(PROJECT, cacheDir);
+      expect(back.propagated).toBe(false);
+      expect(back.agg).toEqual(fresh.agg);
+
+      // A location that now passes `шаг` from another scope: a different key.
+      const changed = { ...PROJECT, 'file:///game/main.qsps': PROJECT['file:///game/main.qsps'].replace("local шаг = 1\n", "if 1: local шаг = 1\n") };
+      const after = await aggregatesOf(changed, cacheDir);
+      expect(after.propagated).toBe(true);
+      expect(after.agg).toEqual((await aggregatesOf(changed)).agg);
+    } finally {
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
 });
