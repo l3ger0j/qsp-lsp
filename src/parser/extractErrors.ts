@@ -35,6 +35,20 @@ export interface SyntaxError {
   inInterpolation?: boolean;
 }
 
+// Errors of `{…}` blocks blanked out of a tree (`blockContainment.ts`):
+// the tree no longer holds them.
+const containedBlockErrors = new WeakMap<Parser.Tree, SyntaxError[]>();
+
+/** Attach the errors of the blocks blanked out of `tree`. */
+export function setContainedBlockErrors(tree: Parser.Tree, errors: SyntaxError[]): void {
+  containedBlockErrors.set(tree, errors);
+}
+
+/** True when `tree` was parsed from a text with blocks blanked out. */
+export function hasContainedBlocks(tree: Parser.Tree): boolean {
+  return containedBlockErrors.has(tree);
+}
+
 /** Map raw tree-sitter node types to human-friendly descriptions. */
 const FRIENDLY_NODE_NAMES: Record<string, string> = {
   // Identifiers / literals
@@ -225,6 +239,7 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
   // walk for performance. Public per-pass exports below remain so tests
   // (and external callers) can invoke each in isolation.
   errors.push(...runMergedLintPasses(tree));
+  for (const e of containedBlockErrors.get(tree) ?? []) errors.push({ ...e });
 
   return errors;
 }

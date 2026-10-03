@@ -8,6 +8,8 @@
  * Works in both Node.js (desktop) and browser (vscode.dev) contexts.
  */
 import type Parser from 'web-tree-sitter';
+import { hasContainedBlocks } from './extractErrors';
+import { containBlockErrors } from './blockContainment';
 
 // Re-export from sub-modules for backward compatibility
 export { extractErrors, hasStructuralErrors } from './extractErrors';
@@ -47,9 +49,9 @@ export type WasmDirProvider = () => string;
 // again, so `node.text` stays one slice instead of many small pieces.
 const PARSE_CHUNK = 128;
 
-function parseText(parser: Parser, text: string, oldTree?: Parser.Tree): Parser.Tree {
+function parseText(parser: Parser, text: string, oldTree?: Parser.Tree, served = text): Parser.Tree {
   let parsing = true;
-  const input = (index: number) => (parsing ? text.slice(index, index + PARSE_CHUNK) : text.slice(index));
+  const input = (index: number) => (parsing ? text.slice(index, index + PARSE_CHUNK) : served.slice(index));
   try {
     return parser.parse(input, oldTree);
   } finally {
@@ -238,8 +240,16 @@ export class QspTreeSitterParser {
   parseOnce(text: string, timeoutMicros = 5_000_000, oldTree?: Parser.Tree): Parser.Tree | null {
     if (!this.parser) return null;
     this.parser.setTimeoutMicros(timeoutMicros);
+    // A tree with blanked-out blocks doesn't match the text it was edited from.
+    if (oldTree && hasContainedBlocks(oldTree)) oldTree = undefined;
+    const tree = this.parseRaw(text, text, oldTree);
+    return tree && containBlockErrors(tree, text, (t, served) => this.parseRaw(t, served));
+  }
+
+  private parseRaw(text: string, served: string, oldTree?: Parser.Tree): Parser.Tree | null {
+    if (!this.parser) return null;
     try {
-      return parseText(this.parser, text, oldTree);
+      return parseText(this.parser, text, oldTree, served);
     } catch (err) {
       // Timeout (or another parse failure). Reset the parser: web-tree-sitter
       // resumes a halted parse from where it left off on the next call

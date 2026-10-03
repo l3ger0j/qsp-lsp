@@ -416,15 +416,16 @@ pl '<<x + >>'
     expect(diags.every(d => d.severity === 4 && d.code === 'syntax')).toBe(true);
   });
 
-  // The shape of a game's word list: a multi-line block whose lines end in
-  // a comma, split into an array by `scanstr`, in a UTF-8 file with a BOM.
+  // The shape of a game's word list: a multi-line block whose lines, the
+  // last one too, end in a comma, split into an array by `scanstr`, in a
+  // UTF-8 file with a BOM.
   const wordListLocation = [
     '# старт',
     "killvar '$названия'",
     'local $сырой_список = {',
     '    Яблоко, Груша, Слива, Персик, Абрикос,',
     '    Вишня, Черешня, Малина, Ежевика, Клубника,',
-    '    Айва, Инжир, Финик, Лимон, Апельсин',
+    '    Айва, Инжир, Финик, Лимон, Апельсин,',
     '}',
     "scanstr '$названия', $сырой_список, '[\\w-]+'",
     'pl $названия[rand(0, arrsize(\'$названия\') - 1)]',
