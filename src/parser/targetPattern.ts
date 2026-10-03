@@ -20,6 +20,7 @@
 
 import type Parser from 'web-tree-sitter';
 import { getNthArgNode } from './walkHelpers';
+import { lookupBuiltin } from './builtins';
 
 /** One piece of a string expression. */
 export type TargetPart =
@@ -110,6 +111,9 @@ function isInformative(p: TargetPart): boolean {
 }
 
 const unknown = (why: string): TargetPattern => [{ any: true, why }];
+// Reasons go into log lines users send us (CLAUDE.md): a function the
+// game defines, or a mistyped one, is its text, so only built-ins are named.
+const callReason = (fn: string) => `call:${lookupBuiltin(fn) ? fn : 'unknown'}`;
 
 function partsOf(node: Parser.SyntaxNode, depth: number): TargetPattern {
   if (depth > MAX_DEPTH) return unknown('too deep');
@@ -135,7 +139,9 @@ function partsOf(node: Parser.SyntaxNode, depth: number): TargetPattern {
     const op = node.namedChild(1);
     const concat = op?.type === 'op_amp' || (op?.type === 'op_arith' && op.text === '+');
     const left = node.namedChild(0), right = node.namedChild(2);
-    if (!concat || !left || !right) return unknown(`${op?.type ?? t} ${op?.text ?? ''}`.trim());
+    // An operator's text names it; anything else in its place (an ERROR
+    // node) is the game's text.
+    if (!concat || !left || !right) return unknown(op?.type.startsWith('op_') ? `${op.type} ${op.text}`.trim() : op?.type ?? t);
     return join([...partsOf(left, depth + 1), ...partsOf(right, depth + 1)]);
   }
   if (FUNC_CALLS.has(t)) {
@@ -154,7 +160,7 @@ function partsOf(node: Parser.SyntaxNode, depth: number): TargetPattern {
       return name !== undefined ? [{ result: name.trim().toLowerCase() }] : unknown('call:func');
     }
     // Built-in names only: a user's @function is a location, and its name is game content.
-    return unknown(`call:${fn}`);
+    return unknown(callReason(fn));
   }
   if (USER_CALLS.has(t)) {
     const name = node.childForFieldName('name')?.text.trim();
@@ -211,7 +217,7 @@ function rawBodyParts(body: string, depth: number): TargetPattern {
     const call = /^\$?(\w+)\s*\((.*)\)$/s.exec(term);
     if (call) {
       const fn = call[1].toLowerCase();
-      parts.push(...(PASS_THROUGH.has(fn) ? rawBodyParts(call[2], depth + 1) : unknown(`call:${fn}`)));
+      parts.push(...(PASS_THROUGH.has(fn) ? rawBodyParts(call[2], depth + 1) : unknown(callReason(fn))));
       continue;
     }
     const v = /^\$?([^\s\[\]()+\-*/&=<>!,'"@]+)(?:\[\s*(\d+)\s*\])?$/.exec(term);

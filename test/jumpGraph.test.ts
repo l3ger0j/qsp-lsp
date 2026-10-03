@@ -260,6 +260,15 @@ describe('buildJumpGraph: possible targets of dynamic jumps', () => {
     for (const name of ['hall', 'room_', 'nowhere', 'next', 'go']) expect(line).not.toContain(name);
   });
 
+  it('names no game text for a target broken by a syntax error or calling a function of its own', () => {
+    // A comment written after `-` leaves an ERROR node where the operator goes.
+    const code = "# a\ngt $curloc - если по квесту или еще как-то нужно\ngt 'r' + \"<<тайна(1)>>\"\ngt \"<<secret(1)>>\"\n---\n";
+    const stats = newDynamicJumpStats();
+    buildJumpGraph([source(code)], stats);
+    const line = formatDynamicJumpStats(stats)!;
+    for (const text of ['если', 'квесту', 'как', 'нужно', 'тайна', 'secret']) expect(line).not.toContain(text);
+  });
+
   it('takes the nearest write before the jump in its own location, not every write in the game', () => {
     const others = Array.from({ length: 30 }, (_, i) => `# o${i}\n$loc = 'r${i}'\n---`).join('\n');
     const names = rooms(Array.from({ length: 30 }, (_, i) => `r${i}`));
