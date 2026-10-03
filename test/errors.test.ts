@@ -405,18 +405,12 @@ pl '<<x + >>'
   });
 
   // A `{…}` kept in a variable may be text (games keep lists of words in
-  // them): QSP checks it only when something runs it, and so do we.
-  it('a stored block that is no code says nothing, single- or multi-line, until something runs it', () => {
-    const settings = { maxErrorsPerLocation: 100, uninitializedVariables: true };
-    for (const block of ['{ Яблоко, Банан }', '{ \n    Яблоко, Банан, Ананас,\n    Вишня, Папайя\n}']) {
-      expect(runDiagnostics(parser, `# test\nlocal $фрукты = ${block}\npl $фрукты\n---\n`, settings), block).toEqual([]);
-      const ran = runDiagnostics(parser, `# test\n$фрукты = ${block}\ndynamic $фрукты\n---\n`, settings);
-      expect(ran.filter(d => d.code === 'syntax').length, block).toBeGreaterThan(0);
-      expect(ran.filter(d => d.code === 'syntax').every(d => d.severity === 3), block).toBe(true);
-    }
-    // Run from another location of the file.
-    const elsewhere = runDiagnostics(parser, `# a\n$фрукты = { Яблоко, Банан }\n---\n# b\ndynamic $фрукты\n---\n`, settings);
-    expect(elsewhere.filter(d => d.code === 'syntax' && d.severity === 3).length).toBeGreaterThan(0);
+  // them): QSP checks it only when something runs it.
+  it('a stored block that is no code gives a hint, and no variables', () => {
+    const diags = runDiagnostics(parser, `# test\nlocal $фрукты = { Яблоко, Банан }\npl $фрукты\n---\n`,
+      { maxErrorsPerLocation: 100, uninitializedVariables: true });
+    expect(diags.length).toBeGreaterThan(0);
+    expect(diags.every(d => d.severity === 4 && d.code === 'syntax')).toBe(true);
   });
 
   it('accepts unary plus, also right after a binary plus', () => {

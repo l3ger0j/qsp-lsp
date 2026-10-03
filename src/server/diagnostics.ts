@@ -15,7 +15,6 @@ import {
   type DocumentSymbols,
   type LocationEntry,
   type QspSymbol,
-  type SymbolLocation,
   type SyntaxError,
 } from '../parser';
 import {
@@ -109,19 +108,8 @@ export function computeDiagnostics(
     );
   }
 
-  // ── Aggregates ──────────────────────────────────────────────────
-  let agg: SymbolAggregates | undefined;
-  let allLocationDefs: Map<string, QspSymbol> | undefined;
-  if (projectAgg) {
-    agg = projectAgg;
-    allLocationDefs = projectAgg.flatLocationDefs;
-  } else if (symbols) {
-    agg = cachedFileAgg ?? buildFileAggregates(symbols, docUri);
-    allLocationDefs = symbols.locationDefs;
-  }
-
   // ── Document-structure diagnostics ──────────────────────────────
-  checkSyntaxErrors(ctx, docUri, locationIndex, syntaxErrors, symbols, symbols && agg ? blocksRun(symbols, agg, docUri) : []);
+  checkSyntaxErrors(ctx, docUri, locationIndex, syntaxErrors, symbols);
   if (diagnosticSettings.duplicateLocations) {
     checkDuplicateLocations(ctx, locationIndex, docUri, projectAgg, libraryOf);
   }
@@ -131,7 +119,21 @@ export function computeDiagnostics(
 
   if (!symbols) return ctx.results();
 
-  if (!agg || !allLocationDefs) return ctx.results();
+  // ── Aggregates ──────────────────────────────────────────────────
+  let agg: SymbolAggregates;
+  let allLocationDefs: Map<string, QspSymbol>;
+
+  if (projectAgg) {
+    agg = projectAgg;
+    allLocationDefs = projectAgg.flatLocationDefs;
+  } else if (cachedFileAgg) {
+    agg = cachedFileAgg;
+    allLocationDefs = symbols.locationDefs;
+  } else {
+    agg = buildFileAggregates(symbols, docUri);
+    allLocationDefs = symbols.locationDefs;
+  }
+
   const { definedActions, definedObjects, referencedObjects } = agg;
   const isProject = !!projectAgg;
 
@@ -158,21 +160,4 @@ export function computeDiagnostics(
   );
 
   return ctx.results();
-}
-
-// The `{…}` blocks of this file that something runs: a `dynamic` or
-// `dyneval` of a variable holding one, here or in another location.
-function blocksRun(symbols: DocumentSymbols, agg: SymbolAggregates, docUri: string): SymbolLocation[] {
-  const blocks: SymbolLocation[] = [];
-  for (const [, locSyms] of symbols.locations) {
-    for (const d of locSyms.resolvedDynamicBlocks) blocks.push(...d.blockLocs);
-  }
-  for (const [, dispatches] of agg.crossLocationDispatches) {
-    for (const d of dispatches) {
-      for (const c of d.candidates) {
-        if (c.providerUri === docUri && c.binding.value.kind === 'code-block') blocks.push(c.binding.value.blockRange);
-      }
-    }
-  }
-  return blocks;
 }

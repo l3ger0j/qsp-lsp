@@ -13,7 +13,6 @@ import {
   findLocationAtLine,
   type DocumentSymbols,
   type LocationEntry,
-  type SymbolLocation,
   type SyntaxError,
 } from '../../parser';
 import type { ProjectAggregates } from '../aggregation';
@@ -21,12 +20,6 @@ import { uriBasename } from '../helpers';
 import { DiagnosticCtx, mapPush } from './diagnosticHelpers';
 
 // ── Syntax errors ─────────────────────────────────────────────────────
-
-function blockHolds(block: SymbolLocation, err: SyntaxError): boolean {
-  const startsAfter = err.startRow > block.line || (err.startRow === block.line && err.startCol >= block.column);
-  const endsBefore = err.endRow < block.endLine || (err.endRow === block.endLine && err.endCol <= block.endColumn);
-  return startsAfter && endsBefore;
-}
 
 /** Tree-sitter parse errors, bucketed per location.  Surfaces ERROR nodes
  *  as diagnostics; locations with too many errors get a single aggregate
@@ -37,8 +30,6 @@ export function checkSyntaxErrors(
   locationIndex: LocationEntry[],
   fileErrors: SyntaxError[] | undefined,
   symbols?: DocumentSymbols,
-  /** The `{…}` blocks something runs (see SyntaxError.inStoredBlock). */
-  blocksRun: readonly SymbolLocation[] = [],
 ): void {
   const maxPerLoc = ctx.settings.maxErrorsPerLocation;
 
@@ -65,9 +56,6 @@ export function checkSyntaxErrors(
   const buckets = new Map<number, SyntaxError[]>();
   for (const err of syntaxErrors) {
     if (endLines.has(err.startRow)) continue;
-    // A block kept in a variable is text until something runs it: games
-    // keep lists of words in them (`{ apple, pear }`).
-    if (err.inStoredBlock && !blocksRun.some(b => blockHolds(b, err))) continue;
     const loc = findLocationAtLine(locationIndex, err.startRow);
     mapPush(buckets, loc ? loc.startLine : -1, err);
   }
@@ -76,7 +64,10 @@ export function checkSyntaxErrors(
     if (errs.length <= maxPerLoc) {
       for (const err of errs) {
         ctx.push(
-          err.inCodeBlock ? DiagnosticSeverity.Information : DiagnosticSeverity.Error,
+          // A block nothing runs where it stands may be text (a list of
+          // words): only a hint. One run in place (`dynamic {…}`) fails.
+          err.inStoredBlock ? DiagnosticSeverity.Hint
+            : err.inCodeBlock ? DiagnosticSeverity.Information : DiagnosticSeverity.Error,
           {
             start: { line: err.startRow, character: err.startCol },
             end: { line: err.endRow, character: err.endCol },
