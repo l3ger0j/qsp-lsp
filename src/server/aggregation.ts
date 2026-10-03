@@ -472,6 +472,8 @@ export function propagateLocals(
    * memoryGuard.ts). The other results are still built.
    */
   shouldStop?: () => boolean,
+  /** Propagate these names only (see reusePropagation). */
+  onlyNames?: ReadonlySet<string>,
 ): void {
   // Step 1: Index all locations and collect call edges
   const locIndex = new Map<string, { locSyms: LocationSymbols; uri: string }>();
@@ -696,6 +698,7 @@ export function propagateLocals(
       }
       for (const [varName, scopeId] of edge.locals) {
         if (NO_PROPAGATE.has(varName)) continue;
+        if (onlyNames && !onlyNames.has(varName)) continue;
         // Find the provider QspSymbol — the local in the caller at the exact scope
         const localKey = `local\0${scopeId}\0${varName}`;
         const localSym = callerInfo.locSyms.variables.get(localKey);
@@ -718,6 +721,8 @@ export function propagateLocals(
     }
   }
 
+  out.propagatedLocals = inCanonicalOrder(result, locIndex.keys());
+  out.shadowedPropagations = inCanonicalOrder(out.shadowedPropagations, locIndex.keys());
 }
 
 /** A propagation (propagateLocals) and the locations it was made from. */
@@ -740,58 +745,137 @@ export function propagationBase(
 }
 
 /**
- * Put `base`'s propagation into `out` instead of running it again, when
- * every location has the interface it had then: the propagation reads only
- * what the interface covers (calls and the locals in scope at them,
- * variables, `local` names), so it would come out the same. The symbols
- * of locations analysed since then are new objects, so its providers are
- * swapped for theirs, found under the same key in `variables` (scope ids
- * are part of the interface). Returns false, having done nothing, when it
- * can't be reused.
+ * Put `base`'s propagation into `out` instead of running it again from
+ * scratch. The propagation reads only what location interfaces cover
+ * (calls and the locals in scope at them, variables, `local` names), and
+ * runs name by name:
+ * - while every location has the interface it had then, it would come out
+ *   the same, and is kept whole;
+ * - when some changed but call the same locations with locals in scope as
+ *   before, only the names whose facts there changed (propagationFacts)
+ *   can come out differently: those are propagated again, the rest kept.
+ * Kept providers of locations analysed since are new objects, so they are
+ * swapped for those under the same key in `variables` (scope ids are part
+ * of the interface). Returns false, having done nothing, when neither
+ * holds.
  */
 export function reusePropagation(
   base: PropagationBase | undefined,
-  allLocations: ReadonlyArray<{ locSyms: LocationSymbols; uri: string }>,
+  allLocations: ReadonlyArray<{ locName: string; locSyms: LocationSymbols; uri: string }>,
   out: SymbolAggregates,
+  /** See {@link propagateLocals}. */
+  shouldStop?: () => boolean,
 ): boolean {
   if (!base || base.locations.length !== allLocations.length) return false;
   const swap = new Map<QspSymbol, QspSymbol>();
+  const redo = new Set<string>();
+  let swapOk = true;
+  const swapByKey = (before: LocationSymbols, now: LocationSymbols, strict: boolean) => {
+    for (const [key, sym] of before.variables) {
+      const next = now.variables.get(key);
+      if (!next) { if (strict) swapOk = false; continue; }
+      if (next !== sym) swap.set(sym, next);
+    }
+  };
   for (let i = 0; i < allLocations.length; i++) {
     const before = base.locations[i];
     const { uri, locSyms } = allLocations[i];
     if (before.locSyms === locSyms) continue;
-    if (before.uri !== uri || before.iface !== locationInterface(locSyms)) return false;
-    for (const [key, sym] of before.locSyms.variables) {
-      const now = locSyms.variables.get(key);
-      if (!now) return false;
-      if (now !== sym) swap.set(sym, now);
+    if (before.uri !== uri || before.locSyms.locationName !== locSyms.locationName) return false;
+    if (before.iface === locationInterface(locSyms)) {
+      swapByKey(before.locSyms, locSyms, true);
+      if (!swapOk) return false;
+      continue;
     }
+    if (!sameLocalsCalls(before.locSyms, locSyms)) return false;
+    const was = propagationFacts(before.locSyms), is = propagationFacts(locSyms);
+    for (const [name, facts] of was) if (is.get(name) !== facts) redo.add(name);
+    for (const name of is.keys()) if (!was.has(name)) redo.add(name);
+    // A name kept has the same symbols under the same keys.
+    swapByKey(before.locSyms, locSyms, false);
   }
   const from = base.agg;
   out.propagationCallers = from.propagationCallers;
-  if (swap.size === 0) {
+  if (swap.size === 0 && redo.size === 0) {
     out.propagatedLocals = from.propagatedLocals;
     out.shadowedPropagations = from.shadowedPropagations;
     out.propagatedSyms = from.propagatedSyms;
     return true;
   }
+
+  const fresh = emptyAggregates();
+  if (redo.size > 0) propagateLocals(allLocations, fresh, shouldStop, redo);
+
   const swapped = (providers: PropagatedLocal[]) => providers.map(p => {
     const sym = swap.get(p.sym);
     return sym ? { ...p, sym } : p;
   });
-  const swapAll = (byTarget: Map<string, Map<string, PropagatedLocal[]>>) => {
-    const copy = new Map<string, Map<string, PropagatedLocal[]>>();
-    for (const [target, byVar] of byTarget) {
+  const merge = (kept: Map<string, Map<string, PropagatedLocal[]>>, redone: Map<string, Map<string, PropagatedLocal[]>>) => {
+    const all = new Map<string, Map<string, PropagatedLocal[]>>();
+    for (const [target, byVar] of kept) {
       const vars = new Map<string, PropagatedLocal[]>();
-      for (const [name, providers] of byVar) vars.set(name, swapped(providers));
-      copy.set(target, vars);
+      for (const [name, providers] of byVar) if (!redo.has(name)) vars.set(name, swap.size > 0 ? swapped(providers) : providers);
+      if (vars.size > 0) all.set(target, vars);
     }
-    return copy;
+    for (const [target, byVar] of redone) {
+      let vars = all.get(target);
+      if (!vars) { vars = new Map(); all.set(target, vars); }
+      for (const [name, providers] of byVar) vars.set(name, providers);
+    }
+    return inCanonicalOrder(all, allLocations.map(l => l.locName.toLowerCase()));
   };
-  out.propagatedLocals = swapAll(from.propagatedLocals);
-  out.shadowedPropagations = swapAll(from.shadowedPropagations);
-  out.propagatedSyms = new Set([...from.propagatedSyms].map(sym => swap.get(sym) ?? sym));
+  out.propagatedLocals = merge(from.propagatedLocals, fresh.propagatedLocals);
+  out.shadowedPropagations = merge(from.shadowedPropagations, fresh.shadowedPropagations);
+  out.propagatedSyms = new Set(fresh.propagatedSyms);
+  for (const sym of from.propagatedSyms) if (!redo.has(sym.nameLower)) out.propagatedSyms.add(swap.get(sym) ?? sym);
   return true;
+}
+
+// What the propagation reads of a location, name by name: its symbols of
+// that name (key, local or not, used, defined, prefixes, given a value),
+// whether it declares the name `local`, and the calls it passes the name
+// to, in order, with the scope it is passed from.
+function propagationFacts(l: LocationSymbols): Map<string, string> {
+  const facts = new Map<string, string>();
+  const add = (name: string, fact: string) => facts.set(name, (facts.get(name) ?? '') + fact + '\n');
+  for (const [key, sym] of l.variables) {
+    const prefixes = sym.prefixes ? [...sym.prefixes].sort().join('') : '';
+    add(sym.nameLower, `${key}\0${sym.isLocal}\0${sym.references.length > 0}\0${!!sym.definition}\0${prefixes}\0${!!sym.hasValueDefinition}`);
+  }
+  for (const name of l.localNames) add(name, 'local');
+  for (const [, ref] of l.locationRefs) {
+    for (const r of ref.references) for (const [name, scopeId] of r.localsInScope ?? []) add(name, `call\0${ref.nameLower}\0${scopeId}`);
+  }
+  return facts;
+}
+
+// Whether two versions of a location call the same locations, in the same
+// order, at places where locals are in scope: the call graph the
+// propagation walks, as far as this location goes.
+function sameLocalsCalls(a: LocationSymbols, b: LocationSymbols): boolean {
+  const targets = (l: LocationSymbols) => {
+    const out: string[] = [];
+    for (const [, ref] of l.locationRefs) if (ref.references.some(r => r.localsInScope)) out.push(ref.nameLower);
+    return out;
+  };
+  const x = targets(a), y = targets(b);
+  return x.length === y.length && x.every((t, i) => t === y[i]);
+}
+
+// Targets in the order of the locations, names in alphabetical order: the
+// same whether the propagation ran whole or a few names of it again (the
+// diagnostics come out in this order).
+function inCanonicalOrder(
+  byTarget: Map<string, Map<string, PropagatedLocal[]>>,
+  locationKeys: Iterable<string>,
+): Map<string, Map<string, PropagatedLocal[]>> {
+  const sorted = new Map<string, Map<string, PropagatedLocal[]>>();
+  for (const key of locationKeys) {
+    const byVar = byTarget.get(key);
+    if (!byVar || sorted.has(key)) continue;
+    sorted.set(key, new Map([...byVar].sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0))));
+  }
+  return sorted;
 }
 
 /**
@@ -1363,7 +1447,7 @@ export function fileAggregates(
   const agg = emptyAggregates();
   collectAggregates(state.symbols.locations.values(), agg);
   const locations = [...state.symbols.locations.values()].map(locSyms => ({ locName: locSyms.locationName, locSyms, uri }));
-  if (!reusePropagation(state.propagation, locations, agg)) propagateLocals(locations, agg, shouldStop);
+  if (!reusePropagation(state.propagation, locations, agg, shouldStop)) propagateLocals(locations, agg, shouldStop);
   finishAggregates(locations, agg);
   state.propagation = propagationBase(locations, agg);
   state.aggCache = agg;

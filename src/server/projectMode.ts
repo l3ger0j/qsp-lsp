@@ -496,7 +496,7 @@ export class ProjectModeService {
       }
       // Seconds in a large game: an edit that changes no location's
       // interface (game text, comments, new lines) keeps the last one.
-      const reused = this.perf.step('propagation reuse', () => reusePropagation(this.propagation, allLocs, agg));
+      const reused = this.perf.step('propagation reuse', () => reusePropagation(this.propagation, allLocs, agg, this.shouldStop));
       if (!reused) this.perf.step('propagation', () => propagateLocals(allLocs, agg, this.shouldStop));
       this.perf.step('aggregates finish', () => finishAggregates(allLocs, agg));
       this.propagation = propagationBase(allLocs, agg);

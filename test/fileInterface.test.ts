@@ -11,7 +11,9 @@
  * - Edits that only move things (game text, comments, new lines) must keep
  *   the interface, or nothing is saved.
  * - While no location's interface changes, the propagation of locals is
- *   kept (reusePropagation), with the edited locations' symbols swapped in:
+ *   kept (reusePropagation), with the edited locations' symbols swapped in;
+ *   while the calls that pass locals stay the same, only the names the
+ *   edited locations hold are propagated again:
  *   the aggregates must equal those built from scratch, positions and all
  *   (hover and navigation read them), in a project and in a single file.
  * - The hash is made once per location and kept with it; an analysis read
@@ -208,7 +210,9 @@ describe('file interface', () => {
       expect(p.service.projectAggregates, `aggregates after editing to:\n${text}`).toEqual(q.service.projectAggregates);
     }
     // Both ways were taken: text edits kept the interface, others changed it.
-    expect(reused).toBe(partial);
+    // The propagation is kept whole while no interface changes, and in part
+    // while the calls that pass locals stay the same.
+    expect(reused).toBeGreaterThan(partial + 100);
     expect(partial).toBeGreaterThan(edits.length / 2);
     expect(partial).toBeLessThan(edits.length * 2);
   });
@@ -229,6 +233,24 @@ describe('file interface', () => {
       before = { ...state, aggCache: agg };
     }
     expect(reused).toBeGreaterThan(100);
+  });
+
+  it('propagates again what an edit changes for the propagation, past its limit of providers too', () => {
+    // Ten callers pass `x` to one location: it takes eight, then only one
+    // that brings what it lacks (a value, a type prefix).
+    const callers = (i: number, decl: string) => `# в${i}\n${decl}\ngs 'цель'\n---\n`;
+    const game = (ninth: string, tenth = 'local x = 1') =>
+      "# цель\npl x\n---\n" + [1, 2, 3, 4, 5, 6, 7, 8].map(i => callers(i, 'local x')).join('') + callers(9, ninth) + callers(10, tenth);
+    const scoped = (inside: boolean) => "# цель\npl y\n---\n# в\nif 1:\n  local y = 1\n" + (inside ? "  gs 'цель'\nend\n" : "end\ngs 'цель'\n") + '---\n';
+    const steps = [game('local x'), game('local x = 2'), game('local $x'), game('local x'), scoped(true), scoped(false), scoped(true)];
+    const p = project();
+    let before: { symbols: DocumentSymbols; propagation?: PropagationBase } | undefined;
+    for (const text of steps) {
+      p.add(A, text);
+      const state = { symbols: p.symbolsOf(A), propagation: before?.propagation };
+      expect(fileAggregates(state, A), text).toEqual(buildFileAggregates(state.symbols, A));
+      before = state;
+    }
   });
 
   it('diagnoses every file when a file is added or removed', () => {

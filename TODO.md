@@ -138,10 +138,11 @@ Next, in order:
   location's interface keeps the propagation of locals (`reusePropagation`
   in `aggregation.ts`), which was nearly all of the aggregates' 5–7 s: the
   10-file game's edit is checked in 1.9 s instead of 11 s. Left:
-  - an edit that changes an interface still propagates everything again;
-    the propagation runs per variable name, so it could redo only the names
-    the edited locations hold or pass on, while the calls between
-    locations stay the same;
+  - an edit that changes an interface propagates again only the names whose
+    facts changed (`propagationFacts`), while the calls that pass locals
+    stay the same: a changed value on the 10-file game, 5 s → 0.2 s. On
+    games from the QSP catalog no locals pass through calls at all, so the
+    whole propagation takes milliseconds there;
   - `finishAggregates` takes 0.7 s on every edit of that game, and an edit
     makes about 260 MB of garbage;
   - keep the propagation in the cache keyed by the files' interfaces, so an
