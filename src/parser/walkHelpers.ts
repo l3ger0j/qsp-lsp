@@ -11,6 +11,7 @@ import type Parser from 'web-tree-sitter';
 import { type SymbolLocation } from './symbolTable';
 import type { LocationSymbols } from './locationSymbols';
 import { blockHasError, isLocationBlock } from './blockTrees';
+import { isDynamicArgCodeBlock } from './scopeUtils';
 
 // ── Constants ─────────────────────────────────────────────────────────
 
@@ -62,13 +63,14 @@ export interface VarMediatedCtx {
 // ── Text helpers ──────────────────────────────────────────────────────
 
 /**
- * Whether `node` is a `{…}` block that doesn't parse as code. QSP keeps a
- * block as text and checks it only when it runs, and games keep lists of
- * text in them (`local $fruit = { apple, pear }`): such a block gives no
- * symbols, or its words would be taken for variables never assigned.
+ * Whether `node` is a stored `{…}` block (not `dynamic`'s or `dyneval`'s
+ * own argument) that doesn't parse as code. QSP keeps a block as a string
+ * and checks it only when it runs, and games keep lists of text in them
+ * (`local $fruit = { apple, pear }`): such a block gives no symbols, or
+ * its words would be taken for variables never assigned.
  */
 export function isTextBlock(node: Parser.SyntaxNode): boolean {
-  return node.type === 'code_block' && blockHasError(node);
+  return node.type === 'code_block' && !isDynamicArgCodeBlock(node) && blockHasError(node);
 }
 
 export { isLocationBlock };

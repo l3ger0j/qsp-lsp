@@ -398,22 +398,27 @@ pl '<<x + >>'
     expect(errors.length).toBeGreaterThan(0);
   });
 
-  it('syntax errors inside code_block are Information severity (downgraded)', () => {
-    const diags = runDiagnostics(parser, `# test\ndynamic {\n  if\n}\n---\n`, { maxErrorsPerLocation: 100 });
-    // All syntax diagnostics in this snippet come from the code block → Information (3)
-    const infoDiags = diags.filter(d => d.severity === 3);
-    const errorDiags = diags.filter(d => d.severity === 1);
-    expect(infoDiags.length).toBeGreaterThan(0);
-    expect(errorDiags).toHaveLength(0);
+  it('reports the syntax errors of a block run where it stands as errors', () => {
+    for (const code of ['dynamic {\n  if\n}', '$x = dyneval({ if })']) {
+      const diags = runDiagnostics(parser, `# test\n${code}\n---\n`, { maxErrorsPerLocation: 100 });
+      expect(diags.length, code).toBeGreaterThan(0);
+      expect(diags.every(d => d.severity === 1 && d.code === 'syntax'), code).toBe(true);
+    }
   });
 
-  // A `{…}` kept in a variable may be text (games keep lists of words in
-  // them): QSP checks it only when something runs it.
-  it('a stored block that is no code gives a hint, and no variables', () => {
-    const diags = runDiagnostics(parser, `# test\nlocal $фрукты = { Яблоко, Банан }\npl $фрукты\n---\n`,
-      { maxErrorsPerLocation: 100, uninitializedVariables: true });
-    expect(diags.length).toBeGreaterThan(0);
-    expect(diags.every(d => d.severity === 4 && d.code === 'syntax')).toBe(true);
+  // A `{…}` kept in a variable is a string, and games keep lists of words
+  // in them: QSP checks it only when something runs it, and so do we.
+  it('a stored block that is no code says nothing, single- or multi-line, until something runs it', () => {
+    const settings = { maxErrorsPerLocation: 100, uninitializedVariables: true };
+    for (const block of ['{ Яблоко, Банан }', '{ \n    Яблоко, Банан, Ананас,\n    Вишня, Папайя,\n}']) {
+      expect(runDiagnostics(parser, `# test\nlocal $фрукты = ${block}\npl $фрукты\n---\n`, settings), block).toEqual([]);
+      const ran = runDiagnostics(parser, `# test\n$фрукты = ${block}\ndynamic $фрукты\n---\n`, settings);
+      expect(ran.filter(d => d.code === 'syntax').length, block).toBeGreaterThan(0);
+      expect(ran.filter(d => d.code === 'syntax').every(d => d.severity === 1), block).toBe(true);
+    }
+    // Run from another location of the file.
+    const elsewhere = runDiagnostics(parser, `# a\n$фрукты = { Яблоко, Банан }\n---\n# b\ndynamic $фрукты\n---\n`, settings);
+    expect(elsewhere.filter(d => d.code === 'syntax' && d.severity === 1).length).toBeGreaterThan(0);
   });
 
   // The shape of a game's word list: a multi-line block whose lines, the
@@ -432,23 +437,16 @@ pl '<<x + >>'
     '--- старт ---',
     '',
   ].join('\n');
-  const blockRows = { open: 2, close: 6 };
 
-  it('a multi-line word list marks nothing outside its block, and its own words only as hints', () => {
+  it('a multi-line word list nothing runs gets no diagnostics at all', () => {
     const diags = runDiagnostics(parser, wordListLocation, {
       maxErrorsPerLocation: 100, uninitializedVariables: true, unusedVariables: true,
       typeMismatch: true, mixedVariablePrefixes: true, invalidBuiltinArgCount: true,
     });
-    expect(diags.length).toBeGreaterThan(0);
-    for (const d of diags) {
-      expect(d.code).toBe('syntax');
-      expect(d.severity).toBe(4);
-      expect(d.range.start.line).toBeGreaterThan(blockRows.open);
-      expect(d.range.end.line).toBeLessThan(blockRows.close);
-    }
+    expect(diags).toEqual([]);
   });
 
-  it('a word list in a file with a BOM gets what it gets without one', async () => {
+  it('a word list in a file with a BOM gets no diagnostics, as without one', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qsp-bom-'));
     const diagnosticsOf = async (text: string) => {
       fs.writeFileSync(path.join(dir, 'main.qsps'), text);
@@ -461,9 +459,8 @@ pl '<<x + >>'
       }
     };
     try {
-      const plain = await diagnosticsOf(wordListLocation);
-      expect(plain.some(d => d.code === 'syntax')).toBe(true);
-      expect(await diagnosticsOf('﻿' + wordListLocation)).toEqual(plain);
+      expect(await diagnosticsOf(wordListLocation)).toEqual([]);
+      expect(await diagnosticsOf('\uFEFF' + wordListLocation)).toEqual([]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
