@@ -8,7 +8,6 @@ import type { Connection } from 'vscode-languageserver';
 import {
   ANALYSIS_STATUS_NOTIFICATION,
   type AnalysisStatus,
-  type PerLocationReason,
 } from '../common/analysisStatus';
 import { safeConnectionCall } from './serverUtils';
 
@@ -19,7 +18,6 @@ export class AnalysisStatusReporter {
   private readonly busy = new Map<string, number>();
   private configured = false;
   private project: AnalysisStatus['project'];
-  private readonly perLocation = new Map<string, PerLocationReason>();
   private reduced: AnalysisStatus['reduced'];
   private live = false;
   private lastSent = '';
@@ -77,12 +75,6 @@ export class AnalysisStatusReporter {
     this.send();
   }
 
-  setPerLocation(uri: string, reason: PerLocationReason | undefined): void {
-    if (reason) this.perLocation.set(uri, reason);
-    else this.perLocation.delete(uri);
-    this.send();
-  }
-
   /** The server switched to reduced analysis (see memoryGuard.ts). */
   setReduced(reduced: NonNullable<AnalysisStatus['reduced']>): void {
     this.reduced = reduced;
@@ -92,7 +84,6 @@ export class AnalysisStatusReporter {
   /** Drop what is known about a closed document. */
   forget(uri: string): void {
     this.busy.delete(uri);
-    this.perLocation.delete(uri);
     this.send();
   }
 
@@ -102,7 +93,6 @@ export class AnalysisStatusReporter {
       busyUris: [...this.busy.keys()],
       configured: this.configured,
       ...(this.project ? { project: { ...this.project } } : {}),
-      perLocation: Object.fromEntries(this.perLocation),
       ...(this.reduced ? { reduced: { ...this.reduced } } : {}),
     };
   }

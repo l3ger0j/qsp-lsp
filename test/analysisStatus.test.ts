@@ -45,7 +45,7 @@ import { createQspServer } from '../src/server/common';
 import { QspTreeSitterParser } from '../src/parser/treeSitter';
 import { loadWasm } from './testHelpers';
 
-const base: AnalysisStatus = { parser: 'full', busyUris: [], configured: true, perLocation: {} };
+const base: AnalysisStatus = { parser: 'full', busyUris: [], configured: true };
 const A = 'file:///a.qsps';
 
 describe('describeAnalysisStatus', () => {
@@ -78,13 +78,6 @@ describe('describeAnalysisStatus', () => {
     expect(describeAnalysisStatus({ ...base, parser: 'failed' }, A)).toMatchObject({ text: 'Limited mode', warning: true });
     expect(describeAnalysisStatus({ ...base, parser: 'lite' }, A)).toMatchObject({ text: 'Lite mode', warning: false });
   });
-
-  it('warns about a timed-out whole-file parse and explains a large file', () => {
-    expect(describeAnalysisStatus({ ...base, perLocation: { [A]: 'timeout' } }, A).warning).toBe(true);
-    const large = describeAnalysisStatus({ ...base, perLocation: { [A]: 'large' } }, A);
-    expect(large).toMatchObject({ text: 'Ready', warning: false });
-    expect(large.detail).toMatch(/one at a time/);
-  });
 });
 
 describe('AnalysisStatusReporter', () => {
@@ -102,7 +95,7 @@ describe('AnalysisStatusReporter', () => {
     r.configure({ state: 'ready', files: 2 });
     expect(sent).toEqual([]);
     r.start();
-    expect(sent).toEqual([{ parser: 'full', busyUris: [], configured: true, project: { state: 'ready', files: 2 }, perLocation: {} }]);
+    expect(sent).toEqual([{ parser: 'full', busyUris: [], configured: true, project: { state: 'ready', files: 2 } }]);
   });
 
   it('reports the settings and the project state they imply in one snapshot', () => {
@@ -117,8 +110,8 @@ describe('AnalysisStatusReporter', () => {
   it('skips a snapshot identical to the last one', () => {
     const { r, sent } = reporter();
     r.start();
-    r.setPerLocation(A, undefined);
-    r.setPerLocation(A, undefined);
+    r.setProject(undefined);
+    r.setProject(undefined);
     expect(sent).toHaveLength(1);
   });
 
@@ -135,9 +128,8 @@ describe('AnalysisStatusReporter', () => {
   it('forgets a closed document', () => {
     const { r } = reporter();
     r.begin(A);
-    r.setPerLocation(A, 'large');
     r.forget(A);
-    expect(r.snapshot()).toMatchObject({ busyUris: [], perLocation: {} });
+    expect(r.snapshot()).toMatchObject({ busyUris: [] });
   });
 });
 
@@ -204,10 +196,10 @@ describe('server analysis status', () => {
     serverOutput.on('data', (chunk: Buffer) => {
       if (chunk.includes(ANALYSIS_STATUS_NOTIFICATION) && chunk.includes('big.qsps')) order.push('busy written');
     });
-    const parse = QspTreeSitterParser.prototype.parse;
-    vi.spyOn(QspTreeSitterParser.prototype, 'parse').mockImplementation(function (this: QspTreeSitterParser, ...args) {
+    const parseOnce = QspTreeSitterParser.prototype.parseOnce;
+    vi.spyOn(QspTreeSitterParser.prototype, 'parseOnce').mockImplementation(function (this: QspTreeSitterParser, ...args) {
       order.push('parse');
-      return parse.apply(this, args);
+      return parseOnce.apply(this, args);
     });
 
     open(client, uri, text);
@@ -220,7 +212,8 @@ describe('server analysis status', () => {
 
   it('parses a newly opened document once, not again on its open-time change event', async () => {
     const { client } = await startServer();
-    const parse = vi.spyOn(QspTreeSitterParser.prototype, 'parse');
+    // One location: one parse per analysis.
+    const parse = vi.spyOn(QspTreeSitterParser.prototype, 'parseOnce');
     open(client, 'file:///once.qsps', '# once\npl 1\n---\n');
     // Past the 500 ms tree-tier debounce the change event would have queued.
     await new Promise(r => setTimeout(r, 900));

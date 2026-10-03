@@ -1,16 +1,12 @@
 /**
- * A whole-file parse that times out must neither freeze the server for
- * long nor drop the document to regex-only analysis.
+ * A location whose parse fails or times out loses only its own analysis.
  *
  * Why
  * ───
- * The server is single-threaded, so it answers nothing while a parse
- * runs. Files under `PER_LOCATION_BYTE_THRESHOLD` are parsed whole, and
- * that parse is bounded by `fullParseTimeoutMicros`, about twice the
- * normal parse time. On timeout the document switches to per-location
- * parsing (full symbols, each location bounded on its own) and stays
- * there while open, so later edits don't pay the timeout again.
- * Project-mode files that aren't open take the same fallback.
+ * Every file is parsed one location at a time, each parse bounded on its
+ * own. One that fails falls back to regex symbols for that location alone;
+ * the others keep their full analysis (references, checks), in an open
+ * document and in a closed project file alike.
  */
 import { describe, it, expect, afterEach, beforeAll, vi } from 'vitest';
 import { PassThrough } from 'stream';
@@ -25,8 +21,6 @@ import {
 } from 'vscode-jsonrpc/node';
 import {
   ConfigurationRequest,
-  DidChangeTextDocumentNotification,
-  DidCloseTextDocumentNotification,
   DidOpenTextDocumentNotification,
   InitializeRequest,
   InitializedNotification,
@@ -56,9 +50,10 @@ describe('fullParseTimeoutMicros', () => {
   });
 });
 
-// `start` calls `second`; `third` is unreferenced. Tree-sitter analysis
-// flags only `third`; regex-only analysis has no references and flags nothing.
+// `start` calls `second`.
 const TEXT = `# start\ngt 'second'\n---\n# second\npl 1\n---\n# third\npl 2\n---\n`;
+// The location whose parse fails below.
+const failing = (text: string) => text.startsWith('# second');
 
 async function startServer() {
   const c2s = new PassThrough();
@@ -85,61 +80,49 @@ async function startServer() {
 
   return {
     client, logs,
-    unreferenced: (uri: string) => (latest.get(uri)?.diagnostics ?? [])
-      .map(d => d.message).filter(m => m.includes('never referenced')),
+    messages: (uri: string) => (latest.get(uri)?.diagnostics ?? []).map(d => d.message),
     stop: () => { client.dispose(); c2s.destroy(); s2c.destroy(); },
   };
 }
 
 const settle = () => new Promise((r) => setTimeout(r, 900)); // tree-tier debounce (500ms) + margin
 
-describe('whole-file parse timeout in an open document', () => {
+describe('a failed location parse in an open document', () => {
   let harness: Awaited<ReturnType<typeof startServer>> | undefined;
   afterEach(() => { harness?.stop(); harness = undefined; vi.restoreAllMocks(); });
 
-  it('falls back to per-location parsing with full references, and stays there', async () => {
-    const parseSpy = vi.spyOn(QspTreeSitterParser.prototype, 'parse').mockReturnValue(null);
+  it('leaves the other locations their full analysis', async () => {
+    const realParseOnce = QspTreeSitterParser.prototype.parseOnce;
+    let failed = 0;
+    vi.spyOn(QspTreeSitterParser.prototype, 'parseOnce').mockImplementation(function (this: QspTreeSitterParser, text, ...rest) {
+      if (!failing(text)) return realParseOnce.call(this, text, ...rest);
+      failed++;
+      return null;
+    });
     harness = await startServer();
     const uri = 'file:///timeout.qsps';
 
+    // `start` reads a variable nothing assigns: only a parsed location says so.
+    const text = TEXT.replace("gt 'second'", "gt 'second'\n*pl никто");
     harness.client.sendNotification(DidOpenTextDocumentNotification.type, {
-      textDocument: { uri, languageId: 'qsp', version: 1, text: TEXT },
+      textDocument: { uri, languageId: 'qsp', version: 1, text },
     });
     await settle();
 
-    expect(harness.logs.some(m => m.includes('switching to per-location parsing'))).toBe(true);
-    expect(harness.logs.some(m => m.includes('Per-location parse:'))).toBe(true);
-    expect(harness.unreferenced(uri)).toEqual([`Location 'third' is defined but never referenced`]);
-
-    const parseCallsAfterOpen = parseSpy.mock.calls.length;
-    harness.client.sendNotification(DidChangeTextDocumentNotification.type, {
-      textDocument: { uri, version: 2 },
-      contentChanges: [{ range: { start: { line: 4, character: 4 }, end: { line: 4, character: 4 } }, text: '0' }],
-    });
-    await settle();
-    expect(parseSpy.mock.calls.length, 'edits must not retry the whole-file parse').toBe(parseCallsAfterOpen);
-    expect(harness.unreferenced(uri)).toEqual([`Location 'third' is defined but never referenced`]);
-
-    harness.client.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
-    parseSpy.mockRestore();
-    harness.client.sendNotification(DidOpenTextDocumentNotification.type, {
-      textDocument: { uri, languageId: 'qsp', version: 3, text: TEXT },
-    });
-    await settle();
-    expect(harness.logs.filter(m => m.includes('switching to per-location parsing')), 'reopening retries the whole-file parse')
-      .toHaveLength(1);
+    expect(failed).toBeGreaterThan(0);
+    expect(harness.messages(uri).filter(m => m.includes('never assigned'))).toEqual([`Variable 'никто' is used but never assigned`]);
   }, 15_000);
 });
 
-describe('whole-file parse timeout in project mode', () => {
+describe('a failed location parse in project mode', () => {
   const tsParser = new QspTreeSitterParser();
   beforeAll(() => initParser(tsParser));
   afterEach(() => { vi.restoreAllMocks(); });
 
-  it('falls back to per-location parsing instead of regex', () => {
+  it('falls back to regex for that location only', () => {
     const realParseOnce = tsParser.parseOnce.bind(tsParser);
     vi.spyOn(tsParser, 'parseOnce').mockImplementation((text, timeoutMicros, oldTree) =>
-      text === TEXT ? null : realParseOnce(text, timeoutMicros, oldTree));
+      failing(text) ? null : realParseOnce(text, timeoutMicros, oldTree));
 
     const connection = { console: { log: () => {}, error: () => {}, warn: () => {}, info: () => {} } } as unknown as Connection;
     const documents = { get: () => undefined, all: () => [] } as unknown as TextDocuments<TextDocument>;
@@ -147,7 +130,9 @@ describe('whole-file parse timeout in project mode', () => {
     const project = new ProjectModeService(connection, documents, documentStates, tsParser);
 
     project.analyzeFile('file:///proj/t.qsps', TEXT);
-    const start = documentStates.get('file:///proj/t.qsps')!.symbols.getLocation('start')!;
+    const symbols = documentStates.get('file:///proj/t.qsps')!.symbols;
+    expect(symbols.getLocation('second')!.regexOnly).toBe(true);
+    const start = symbols.getLocation('start')!;
     expect(start.regexOnly).toBe(false);
     expect([...start.locationRefs.keys()]).toEqual(['second']);
   });

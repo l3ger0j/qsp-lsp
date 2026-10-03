@@ -64,7 +64,7 @@ describe('buildPropagatedLocals stopped for memory', () => {
 
 describe('describeAnalysisStatus: reduced analysis', () => {
   it('warns, with the heap it switched at', () => {
-    const view = describeAnalysisStatus({ parser: 'full', busyUris: [], configured: true, perLocation: {}, reduced: { heapMB: 2950, limitMB: 4144 } }, undefined);
+    const view = describeAnalysisStatus({ parser: 'full', busyUris: [], configured: true, reduced: { heapMB: 2950, limitMB: 4144 } }, undefined);
     expect(view).toMatchObject({ text: 'Reduced analysis', warning: true });
     expect(view.detail).toContain('2950 of 4144 MB');
   });

@@ -1,7 +1,7 @@
 // ── Analysis of one location ─────────────────────────────────────────
 //
-// Files are parsed one location at a time: by the project scan, and by the
-// editor for large ones. Shared here so both get the same symbols.
+// Files are parsed one location at a time, by the project scan and by the
+// editor. Shared here so both get the same symbols.
 
 import { LocationSymbols, extractErrors, extractSymbols, type SyntaxError } from '../parser';
 import { extractLocationSymbolsFromText, mergeActionsFromText, mergeLabelsFromText } from './regexFallback';
@@ -9,9 +9,8 @@ import { extractLocationSymbolsFromText, mergeActionsFromText, mergeLabelsFromTe
 /**
  * The symbols of a location parsed alone (`tree`, of `locText`), in its
  * own coordinates: its header is line 0. Where syntax errors hid actions
- * or labels from tree-sitter, they are added from the text, as for a
- * whole-file parse; a location tree-sitter didn't find at all gets them
- * from the text only (`regexOnly`).
+ * or labels from tree-sitter, they are added from the text; a location
+ * tree-sitter didn't find at all gets them from the text only (`regexOnly`).
  */
 export function extractLocationSymbols(
   tree: Parameters<typeof extractSymbols>[0],

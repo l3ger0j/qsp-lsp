@@ -8,12 +8,6 @@
 /** Custom notification carrying an {@link AnalysisStatus} snapshot. */
 export const ANALYSIS_STATUS_NOTIFICATION = 'qsp/analysisStatus';
 
-/**
- * Why an open document is parsed one location at a time instead of as a
- * whole: it is too large, or its whole-file parse ran out of time.
- */
-export type PerLocationReason = 'large' | 'timeout';
-
 export interface AnalysisStatus {
   /**
    * `full`: tree-sitter is loaded. `lite`: the host runs without it by
@@ -31,8 +25,6 @@ export interface AnalysisStatus {
   configured: boolean;
   /** Absent when project mode is off (once `configured`). */
   project?: { state: 'loading' | 'ready'; files: number };
-  /** Open documents parsed per location, with the reason. */
-  perLocation: Record<string, PerLocationReason>;
   /**
    * The server ran short of memory and dropped the analysis it can do
    * without, until it restarts: the heap then, and its limit, in MB.
@@ -98,18 +90,6 @@ export function describeAnalysisStatus(status: AnalysisStatus, activeUri: string
   }
   if (status.parser === 'lite') {
     return { text: 'Lite mode', detail: `Regex-only analysis in this environment · ${scope}`, busy: false, warning: false };
-  }
-  const reason = activeUri !== undefined ? status.perLocation[activeUri] : undefined;
-  if (reason === 'timeout') {
-    return {
-      text: 'Per-location parsing',
-      detail: 'Parsing the whole file took too long, so its locations are parsed one at a time until it is reopened.',
-      busy: false,
-      warning: true,
-    };
-  }
-  if (reason === 'large') {
-    return { text: 'Ready', detail: `Large file: locations are parsed one at a time · ${scope}`, busy: false, warning: false };
   }
   return { text: 'Ready', detail: scope, busy: false, warning: false };
 }

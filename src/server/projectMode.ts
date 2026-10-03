@@ -359,8 +359,8 @@ export class ProjectModeService {
     });
   }
 
-  // One location at a time, like the editor's large files
-  // (locationAnalysis.ts): a closed file gets the symbols an open one does.
+  // One location at a time, like the editor (locationAnalysis.ts): a
+  // closed file gets the symbols an open one does.
   private analyzePerLocation(
     uri: string,
     text: string,

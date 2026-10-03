@@ -41,7 +41,7 @@ export function registerAnalysisStatus(context: vscode.ExtensionContext, client:
     vscode.commands.registerCommand('qsp.showServerLog', () => client.outputChannel.show(true)),
   );
 
-  let status: AnalysisStatus = { parser: 'starting', busyUris: [], configured: false, perLocation: {} };
+  let status: AnalysisStatus = { parser: 'starting', busyUris: [], configured: false };
   let busyTimer: ReturnType<typeof setTimeout> | undefined;
 
   const render = () => {

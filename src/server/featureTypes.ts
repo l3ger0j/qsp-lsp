@@ -27,7 +27,7 @@ import type {
 // Per-location cache
 // ──────────────────────────────────────────────────────────────────────
 
-/** Per-location parse cache entry (only for large files). */
+/** Per-location parse cache entry: one per location of an open document. */
 export interface PerLocationParseResult {
   text: string;
   /**
@@ -78,9 +78,9 @@ export interface DocumentState {
    */
   positionsApproximate?: boolean;
   /**
-   * Syntax errors of a file that has no whole-file tree to read them from:
-   * a project file not open in the editor (its tree is freed right after
-   * the scan), or an open file parsed location by location.
+   * The file's syntax errors, in its coordinates: no tree holds them (a
+   * closed project file's location trees are freed right after the scan,
+   * an open file's are made only when needed).
    */
   syntaxErrors?: SyntaxError[];
   /**

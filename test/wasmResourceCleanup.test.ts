@@ -100,33 +100,30 @@ describe('tree-sitter WASM resource cleanup', () => {
   let harness: Awaited<ReturnType<typeof startServer>> | undefined;
   afterEach(() => { harness?.stop(); harness = undefined; vi.restoreAllMocks(); });
 
-  it('frees retained per-location trees when a file shrinks below the per-location threshold', async () => {
+  it('frees a retained location tree when its location goes away', async () => {
     const trees = trackAllocations<Parser.Tree>(QspTreeSitterParser.prototype, 'parseOnce');
     harness = await startServer();
     const uri = 'file:///shrink.qsps';
-    // One location ≥ 50 KB (tree retained) plus padding to cross 500 KB.
-    const big = '! ' + 'x'.repeat(120) + '\n';
-    const bigLoc = `# big\n${big.repeat(Math.ceil(60_000 / big.length))}---\n`;
-    const pad = `# pad\n${big.repeat(Math.ceil(460_000 / big.length))}---\n`;
-    const large = bigLoc + pad;
-    expect(large.length).toBeGreaterThan(500_000);
+    // A location of 50 KB or more keeps its tree for incremental edits.
+    const line = '! ' + 'x'.repeat(120) + '\n';
+    const bigLoc = `# big\n${line.repeat(Math.ceil(60_000 / line.length))}---\n`;
+    const small = `# small\npl 1\n---\n`;
 
     harness.client.sendNotification(DidOpenTextDocumentNotification.type, {
-      textDocument: { uri, languageId: 'qsp', version: 1, text: large },
+      textDocument: { uri, languageId: 'qsp', version: 1, text: bigLoc + small },
     });
     await settle();
-    expect(harness.logs.some(m => m.includes('Per-location parse:'))).toBe(true);
-    expect(trees.leaked().length, 'the ≥50 KB location keeps its tree while in per-location mode').toBeGreaterThan(0);
+    expect(trees.leaked().length, 'the ≥50 KB location keeps its tree').toBeGreaterThan(0);
 
     harness.client.sendNotification(DidChangeTextDocumentNotification.type, {
       textDocument: { uri, version: 2 },
-      contentChanges: [{ text: bigLoc }],
+      contentChanges: [{ text: small }],
     });
     await settle();
     expect(trees.leakedStacks()).toEqual([]);
   }, 30_000);
 
-  it('frees every tree cursor, including the folding-range one', async () => {
+  it('frees every tree cursor', async () => {
     const fromTree = trackAllocations<Parser.TreeCursor>(protos.tree, 'walk');
     const fromNode = trackAllocations<Parser.TreeCursor>(protos.node, 'walk');
     harness = await startServer();

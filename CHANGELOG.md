@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### New
+- Every file is now analysed one location at a time, open or closed and whatever its size, so a file shows the same symbols and warnings either way, a syntax error in one location no longer affects the others, and an edit re-parses only its location. The status bar's "Per-location parsing" and "Large file" states are gone with the whole-file parse they described.
 - Opening a large file (past 500 KB) that was analysed before, by the project or in an earlier session, reuses that analysis and parses nothing up front: a location is parsed when its highlighting is asked for, the visible lines first (a 12.8 M-character file: diagnostics after 3 s instead of 23 s). A large file that stays open between sessions is stored in the cache too.
 - Closing a project file whose text is unchanged on disk keeps the editor's analysis of it instead of analysing it again (seconds for a large file).
 - **Analysis cache**: each project file's analysis is kept on disk (VS Code's workspace storage) and read back when the file hasn't changed, and an unchanged project shows the diagnostics it had last time at once, replacing them when the cross-file analysis has run, so a project opens much faster the second time (on a 20 MB game, diagnostics after 5.4 s instead of 36 s). `qsp.cache.enabled`, **QSP: Clear Analysis Cache**.

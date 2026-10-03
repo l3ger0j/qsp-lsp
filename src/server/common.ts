@@ -17,7 +17,6 @@ import {
   DocumentSymbols,
   LocationSymbols,
   extractErrors,
-  extractSymbols,
   LocationEntry,
   QspTreeSitterParser,
   computeTreeEdit,
@@ -29,8 +28,6 @@ import { collectSemanticTokenTuples, SEMANTIC_TOKENS_LEGEND, GOTO_MODIFIER_BIT, 
 import {
   buildRegexSymbols,
   extractLocationSymbolsFromText,
-  mergeActionsFromText,
-  mergeLabelsFromText,
 } from './regexFallback';
 import { type SymbolAggregates, buildFileAggregates, collectCallTypesPerTarget as collectCallTypesPerTargetFromSymbols, isAggContributionStable } from './aggregation';
 import { computeDiagnostics, type DiagnosticSettings } from './diagnostics';
@@ -817,7 +814,6 @@ export function createQspServer(
     releasePerLocationTrees(documentStates.get(uri));
     documentStates.delete(uri);
     tsParser.removeTree(uri);
-    fullParseFailedUris.delete(uri);
 
     // In project mode, re-read the file from disk so its symbols remain
     // in the project aggregates (the editor no longer holds the text).
@@ -905,12 +901,6 @@ export function createQspServer(
       }
     }
   }
-
-  // ── Per-location parsing threshold ─────────────────────────────────
-  // Files above this byte count use per-location parsing instead of the
-  // single full-document tree.  This avoids O(n²+) GLR explosion and
-  // keeps incremental edits O(single_location_size).
-  const PER_LOCATION_BYTE_THRESHOLD = 500_000; // 500 KB
 
   // Locations above this size keep their tree-sitter tree in memory
   // for incremental re-parsing (avoids ~1s full parse for 200KB locations).
@@ -1022,123 +1012,35 @@ export function createQspServer(
     }
   }
 
-  // Documents whose whole-file parse failed or timed out. They stay on per-location
-  // parsing until closed: retrying the whole-file parse after every edit
-  // would block the server for the full timeout each time.
-  const fullParseFailedUris = new Set<string>();
-
   function analyzeDocument(doc: TextDocument): void {
     const text = stripBom(doc.getText());
-
-    if (tsParser.isReady && (text.length >= PER_LOCATION_BYTE_THRESHOLD || fullParseFailedUris.has(doc.uri))) {
+    if (tsParser.isReady) {
       analyzeDocumentPerLocation(doc, text);
-    } else {
-      trackFile(doc.uri, buildLocationIndex(text));
-      try {
-        perf.phase('whole-file analysis', () => analyzeDocumentFullTree(doc, text), () => formatChars(text.length));
-      } finally {
-        trackFile(undefined);
-      }
+      return;
     }
-    // After the analysis: a whole-file parse that times out switches the
-    // document to per-location parsing on the way.
-    status.setPerLocation(
-      doc.uri,
-      fullParseFailedUris.has(doc.uri) ? 'timeout'
-        : tsParser.isReady && text.length >= PER_LOCATION_BYTE_THRESHOLD ? 'large'
-          : undefined,
-    );
+    trackFile(doc.uri, buildLocationIndex(text));
+    try {
+      perf.phase('regex analysis', () => analyzeDocumentByRegex(doc, text), () => formatChars(text.length));
+    } finally {
+      trackFile(undefined);
+    }
   }
 
-  function analyzeDocumentFullTree(doc: TextDocument, text: string): void {
+  // Without tree-sitter (the browser's lite mode, or before it has loaded):
+  // symbols from the text only.
+  function analyzeDocumentByRegex(doc: TextDocument, text: string): void {
     const locationIndex = buildLocationIndex(text);
-    let symbols: DocumentSymbols;
-
-    // Get previous state for incremental symbol extraction
-    const previousState = documentStates.get(doc.uri);
-
-    // Use tree-sitter for symbol extraction if available
-    let treeHasErrors = false;
-    let reusedLocationNames = new Set<string>();
-    if (tsParser.isReady) {
-      const tree = perf.step('parse', () => tsParser.parse(doc.uri, text));
-      if (!tree) {
-        const label = doc.uri.split('/').pop() ?? doc.uri;
-        log.warn(`[QSP] Whole-file parse of ${label} failed or timed out, switching to per-location parsing`);
-        fullParseFailedUris.add(doc.uri);
-        analyzeDocumentPerLocation(doc, text);
-        return;
-      }
-      // Reuse previous symbols for unchanged locations (incremental only)
-      const prevSymbols = tsParser.wasLastParseIncremental
-        ? previousState?.symbols : undefined;
-      const result = perf.step('symbols', () => extractSymbols(
-        tree, doc.uri, prevSymbols, tsParser.lastEdit,
-        settings.embeddedExec.enabled ? (t) => tsParser.parseOnce(t) : undefined,
-      ));
-      symbols = result.symbols;
-      reusedLocationNames = result.reusedLocations;
-      treeHasErrors = tree.rootNode.hasError;
-    } else {
-      symbols = buildRegexSymbols(doc.uri, locationIndex, text);
-    }
-
-    // Regex backfill: only when tree-sitter had parse errors.
-    //
-    // Why guard on treeHasErrors?  The regex locationIndex treats every
-    // `#` at line-start as a location header, but inside a location body
-    // `#var` (array-count operator) is valid code, not a header.
-    // Tree-sitter's grammar knows the difference.  When the tree is
-    // error-free, tree-sitter symbols are authoritative — running the
-    // merge would risk injecting phantom locations from regex
-    // false-positives.
-    //
-    // When tree-sitter DOES have errors, some location_block nodes end
-    // up inside ERROR nodes (missed entirely by extractSymbols) or have
-    // ERROR sub-nodes that swallow their act_block/label children.
-    // The regex index is more resilient in that case — we bridge the
-    // gap here so the Outline view stays complete during mid-edit.
-    if (treeHasErrors) {
-      const label = doc.uri.split('/').pop() ?? doc.uri;
-      log.log(`[QSP] Tree-sitter: parse errors in ${label}`);
-      for (const loc of locationIndex) {
-        // Skip locations reused from a previous incremental parse —
-        // they already contain merge results from the previous cycle.
-        if (reusedLocationNames.has(loc.nameLower)) continue;
-
-        const existing = symbols.getLocation(loc.name);
-        if (!existing) {
-          // Location completely missed by tree-sitter — add it with
-          // regex-extracted actions and labels.
-          const locSymbols = symbols.addLocation(loc.name, makeLocSymLoc(doc.uri, text, loc));
-          extractLocationSymbolsFromText(text, loc, locSymbols, doc.uri);
-        } else if (existing.hasErrors) {
-          // Tree-sitter found the location but ERROR sub-nodes
-          // swallowed some children — merge regex results with
-          // what tree-sitter found.  We keep TS's good actions
-          // (it's more accurate for valid syntax) and add only
-          // regex-found actions on lines TS missed.
-          mergeActionsFromText(text, loc, existing, doc.uri);
-          mergeLabelsFromText(text, loc, existing, doc.uri);
-        }
-      }
-    }
-
-    // Whole-file analysis doesn't use perLocationCache, so trees retained
-    // while the file was above PER_LOCATION_BYTE_THRESHOLD must go now.
-    releasePerLocationTrees(previousState);
-    // Invalidate semantic token cache — tokens are built lazily on request.
+    const symbols = buildRegexSymbols(doc.uri, locationIndex, text);
+    releasePerLocationTrees(documentStates.get(doc.uri));
     documentStates.set(doc.uri, {
       locationIndex, symbols, cachedSemanticTokens: undefined, suppressions: parseSuppressions(text, locationIndex),
     });
 
-    // In project mode, rebuild aggregates and re-diagnose all files
     if (settings.project.enabled && project.projectAggregates) {
       projectRebuildAndReanalyze();
     } else if (projectLoadPending) {
       deferredDiagnostics.add(doc.uri);
     } else {
-      // Send diagnostics for this file only
       const state = documentStates.get(doc.uri)!;
       const fileAgg = perf.step('file aggregates', () => buildOrReuseFileAgg(state, doc.uri, tightOnMemory));
       const diagnostics = diagnose(
@@ -1150,23 +1052,20 @@ export function createQspServer(
       );
       safeSendDiagnostics(connection, { uri: doc.uri, diagnostics });
     }
-
-    // Tell VS Code to re-request semantic tokens — a prior request may
-    // have been served with stale cached tokens (wrong line positions)
-    // before the tree-sitter re-parse completed.
     refreshSemanticTokens();
   }
 
-  // ── Per-location analysis for large files ──────────────────────────
+  // ── Per-location analysis ──────────────────────────────────────────
   //
-  // Instead of parsing the entire 5MB+ document as one tree-sitter tree
-  // (which can take 20s+ for GLR with error recovery), we parse each
-  // QSP location independently (~4KB average, ~1-5ms each).  On edits,
-  // only the changed location is re-parsed; all others reuse cached
-  // symbols/errors/tokens with adjusted line numbers.
+  // Every document is parsed one QSP location at a time (~4KB average,
+  // ~1-5ms each), never as one tree: a multi-MB file as one tree can take
+  // 20s+ (GLR with error recovery), and a closed project file is analysed
+  // the same way (locationAnalysis.ts). On edits, only the changed
+  // location is re-parsed; all others reuse cached symbols/errors/tokens
+  // with adjusted line numbers: ~10-40ms per edit.
   //
-  // This reduces the per-edit cost from ~1.2s (incremental full-tree)
-  // to ~10-40ms (single location re-parse + merge + diagnostics).
+  // Locations taken from a stored analysis aren't parsed at all until a
+  // feature needs their tree, tokens or fold ranges.
 
   type StoredLocation = Pick<PerLocationParseResult, 'symbols' | 'symbolsLine' | 'errors'>;
 
@@ -1249,7 +1148,7 @@ export function createQspServer(
       const { symbols: locSymbols, errors } = analyzeParsedLocation(
         parsed, docUri, locationName, locText, embedParseFn, (name, fn) => perf.step(name, fn),
       );
-      // Short of memory, large files go without semantic highlighting
+      // Short of memory, files go without semantic highlighting
       // (TextMate still colours them).
       const tokens = tightOnMemory() ? new Uint32Array(0)
         : perf.step('semantic tokens', () => Uint32Array.from(collectSemanticTokenTuples(parsed, undefined, embedParseFn)));
@@ -1415,18 +1314,6 @@ export function createQspServer(
       if (perf.phase('location update', () => tryIncrementalPerLocationUpdate(doc, text, prevState))) return;
     }
 
-    // Per-location parsing owns location-level trees, not a single
-    // document-wide one. If this document was previously analysed by
-    // analyzeDocumentFullTree (below the threshold, or on first load
-    // before this size check ran), tsParser still holds that whole-file
-    // tree keyed by doc.uri. Release it now: otherwise it lingers,
-    // leaking WASM memory, AND `getTree(doc.uri)` (used by hover /
-    // document-highlight in lspFeatures.ts) keeps returning that stale
-    // tree instead of falling back to `perLocationCache` as intended.
-    // Idempotent — a no-op once this document is already in
-    // per-location mode.
-    tsParser.removeTree(doc.uri);
-
     perf.phase(
       'per-location analysis',
       () => analyzeAllLocations(doc, text, prevState),
@@ -1455,7 +1342,7 @@ export function createQspServer(
     // retained tree, if any) is silently overwritten/leaked by the other.
     const cacheKeys = perLocationCacheKeys(locationIndex);
     // Opened from scratch: the analysis may be stored already, or worth storing.
-    const analysisKey = prevCache || text.length < PER_LOCATION_BYTE_THRESHOLD ? undefined : project.analysisKey(doc.uri, text);
+    const analysisKey = prevCache ? undefined : project.analysisKey(doc.uri, text);
     const stored = analysisKey ? perf.step('stored analysis', () => storedLocations(analysisKey, prevState, locationIndex)) : undefined;
     let complete = true;
 
@@ -1502,8 +1389,7 @@ export function createQspServer(
     // request (see lspFeatures.ts) — flattening tokens from every
     // location into a single merged `data` array is expensive memory-wise
     // for huge files (millions of token tuples) and matches the lazy
-    // behavior of both `analyzeDocumentFullTree` and
-    // `tryIncrementalPerLocationUpdate`.
+    // behavior of `tryIncrementalPerLocationUpdate`.
 
     // Clean up retained trees from the old cache that weren't carried
     // over to the new cache (deleted/renamed locations).

@@ -62,8 +62,10 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
 ❌ Don't: store derived data that outlives `DocumentState`, or reuse `aggCache`/`cachedCallTypes` after the state object is replaced.
 ✅ Do: hang caches off `DocumentState` (`featureTypes.ts`) so they get invalidated when the state is replaced. Check `isAggContributionStable` before reusing aggregates.
 
-❌ Don't: bypass per-location parsing for large files (≥ `PER_LOCATION_BYTE_THRESHOLD`, 500 KB).
-✅ Do: keep incremental edits proportional to one location's size (`perLocationCache`, `INCREMENTAL_LOC_THRESHOLD`).
+❌ Don't: parse a document as one tree. Every file, open or closed, is parsed one location at a time
+   (`locationAnalysis.ts`, `analyzeAllLocations` in `common.ts`, `projectMode.analyzePerLocation`).
+✅ Do: keep incremental edits proportional to one location's size (`perLocationCache`, `INCREMENTAL_LOC_THRESHOLD`),
+   and make trees, tokens and fold ranges of a location only when a feature needs them.
 
 ❌ Don't: assume tree-sitter is ready (browser mode, initial load).
 ✅ Do: guard with `tsParser.isReady` and fall back to `regexFallback.ts`.
@@ -79,7 +81,7 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
    `test/performanceReport.test.ts`, `test/crashPackage.test.ts` and `test/anonymize.test.ts` checking that no
    name leaks. To reproduce a user's game, generate one of the same shape: `npm run stress:gen -- --shape report.json`.
 
-**Analysis cache** (`src/server/nodeCache.ts`, used by `projectMode.analyzeFileNow` and, for large open files, `analyzeAllLocations` in `common.ts`)
+**Analysis cache** (`src/server/nodeCache.ts`, used by `projectMode.analyzeFileNow` and, for open files, `analyzeAllLocations` in `common.ts`)
 ❌ Don't: leave out of a cache key anything the cached result depends on (text, URI, a setting that changes it),
    or let cache entries, their keys or the cache path reach `[perf]` lines, crash reports or zips: entries hold the game's text and names.
 ✅ Do: build keys with `AnalysisCache.key(...)` over every input; the analyser itself (server bundle, grammar) already salts
