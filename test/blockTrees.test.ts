@@ -80,6 +80,14 @@ describe('block trees', () => {
     tree.delete();
   });
 
+  it('report a block never closed at its brace, as QSP does', () => {
+    const tree = parser.parseOnce('# старт\n$x = { a, b\npl 2\n--- старт ---\n')!;
+    expect(extractErrors(tree)).toEqual([
+      expect.objectContaining({ startRow: 1, startCol: 5, message: "Unclosed '{'" }),
+    ]);
+    tree.delete();
+  });
+
   it('leave a quote the block leaves open an error, as QSP does', () => {
     const tree = parser.parseOnce("# старт\n$s = {\n  О'Хара,\n}\n--- старт ---\n")!;
     expect(extractErrors(tree).some(e => !e.inCodeBlock)).toBe(true);

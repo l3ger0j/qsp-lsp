@@ -179,14 +179,7 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
 
   function visit(): void {
     const node = cursor.currentNode;
-    const isCodeBlock = node.type === 'code_block';
-    const isStoredBlock = isCodeBlock && !isDynamicArgCodeBlock(node);
-    if (isStoredBlock) storedBlockDepth++;
-    // Track raw_code_block too: errors inside a comment's { … } region
-    // are secondary (the outer comment is still valid).
-    const isRawCodeBlock = node.type === 'raw_code_block';
     const isInterpolation = node.type === 'string_interpolation';
-    if (isCodeBlock || isRawCodeBlock) codeBlockDepth++;
     if (isInterpolation) interpolationDepth++;
 
     if (node.isError) {
@@ -209,8 +202,6 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
       // each child statement's error surfaces individually (and so the
       // threshold-collapse path can kick in for pathological files).
       if (summarized) {
-        if (isCodeBlock || isRawCodeBlock) codeBlockDepth--;
-        if (isStoredBlock) storedBlockDepth--;
         if (isInterpolation) interpolationDepth--;
         return;
       }
@@ -227,15 +218,14 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
       });
     }
 
-    // Recurse into children only if this subtree has errors
-    // Blocks are walked on their own, below.
-    if (!isCodeBlock && node.hasError && cursor.gotoFirstChild()) {
+    // Recurse into children only if this subtree has errors. A block's
+    // inside is a tree of its own, walked below; here a block holds only
+    // its braces and body token (and a missing `}` when it is unclosed).
+    if (node.hasError && cursor.gotoFirstChild()) {
       do { visit(); } while (cursor.gotoNextSibling());
       cursor.gotoParent();
     }
 
-    if (isCodeBlock || isRawCodeBlock) codeBlockDepth--;
-    if (isStoredBlock) storedBlockDepth--;
     if (isInterpolation) interpolationDepth--;
   }
 
@@ -316,8 +306,8 @@ function runMergedLintPasses(tree: Parser.Tree): SyntaxError[] {
   function visit(): void {
     const n = cursor.currentNode;
     const t = n.type;
-    const isCB = t === 'code_block' || t === 'raw_code_block';
-    const isStored = t === 'code_block' && !isDynamicArgCodeBlock(n);
+    const isCB = t === 'code_block';
+    const isStored = isCB && !isDynamicArgCodeBlock(n);
     const isIntp = t === 'string_interpolation';
     const isErr = n.isError;
     if (isCB) codeBlockDepth++;

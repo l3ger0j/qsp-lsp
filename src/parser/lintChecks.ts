@@ -100,7 +100,7 @@ export function checkFunctionNameAsLvalue(tree: Parser.Tree): SyntaxError[] {
   let interpolationDepth = 0;
 
   forEachDescendant(tree.rootNode, (n) => {
-    const isCB = n.type === 'code_block' || n.type === 'raw_code_block';
+    const isCB = n.type === 'code_block';
     const isIntp = n.type === 'string_interpolation';
     if (isCB) codeBlockDepth++;
     if (isIntp) interpolationDepth++;
@@ -131,7 +131,7 @@ export function checkFunctionNameAsLvalue(tree: Parser.Tree): SyntaxError[] {
       }
     }
   }, (n) => {
-    if (n.type === 'code_block' || n.type === 'raw_code_block') codeBlockDepth--;
+    if (n.type === 'code_block') codeBlockDepth--;
     if (n.type === 'string_interpolation') interpolationDepth--;
   });
   return errors;
@@ -178,14 +178,11 @@ export function checkReservedWordMisuse(tree: Parser.Tree): SyntaxError[] {
     if (node.type === 'identifier_text' && node.parent?.type === 'variable_ref') {
       const text = node.text.toLowerCase();
       if (RESERVED_WORDS.has(text) && !isOrphanBlockMarker(node.parent, text)) {
-        // Demote to Information when nested inside a code_block or
-        // raw_code_block — the enclosing braces signal that the inner
-        // text might be raw / non-syntactic, so treat the lint as a
-        // non-blocking hint (mirrors the parser-error demotion in
-        // extractErrors / diagnostics.ts).
+        // Tagged when nested inside a code_block, as the parser's own
+        // errors are (extractErrors).
         let inCB = false, inIntp = false;
         for (let a: Parser.SyntaxNode | null = parentOf(node); a; a = parentOf(a)) {
-          if (a.type === 'code_block' || a.type === 'raw_code_block') { inCB = true; }
+          if (a.type === 'code_block') { inCB = true; }
           if (a.type === 'string_interpolation') { inIntp = true; }
         }
         errors.push({

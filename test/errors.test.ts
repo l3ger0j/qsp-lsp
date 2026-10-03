@@ -413,8 +413,8 @@ pl '<<x + >>'
     for (const block of ['{ Яблоко, Банан }', '{ \n    Яблоко, Банан, Ананас,\n    Вишня, Папайя,\n}']) {
       expect(runDiagnostics(parser, `# test\nlocal $фрукты = ${block}\npl $фрукты\n---\n`, settings), block).toEqual([]);
       const ran = runDiagnostics(parser, `# test\n$фрукты = ${block}\ndynamic $фрукты\n---\n`, settings);
-      expect(ran.filter(d => d.code === 'syntax').length, block).toBeGreaterThan(0);
-      expect(ran.filter(d => d.code === 'syntax').every(d => d.severity === 1), block).toBe(true);
+      expect(ran.length, block).toBeGreaterThan(0);
+      expect(ran.every(d => d.code === 'syntax' && d.severity === 1), block).toBe(true);
     }
     // Run from another location of the file.
     const elsewhere = runDiagnostics(parser, `# a\n$фрукты = { Яблоко, Банан }\n---\n# b\ndynamic $фрукты\n---\n`, settings);

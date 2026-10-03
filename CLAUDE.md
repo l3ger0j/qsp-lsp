@@ -77,6 +77,15 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
 ❌ Don't: assume tree-sitter is ready (browser mode, initial load).
 ✅ Do: guard with `tsParser.isReady` and fall back to `regexFallback.ts`.
 
+**Code blocks** (`{…}`)
+❌ Don't: read a `code_block`'s statements through `node.children` or a `TreeCursor`, find a node inside one with
+   `descendantForPosition`/`descendantsOfType` on the outer tree, or climb out of one with `node.parent`. The grammar
+   keeps a block's inside as one `block_body` token (QSP finds a block's end by its braces and quotes, whatever is inside),
+   and the inside is a tree of its own.
+✅ Do: go in with `blockStatements`, `forEachDescendant`, `descendantsOfType` or `descendantAt`, and up with `parentOf`
+   (`src/parser/blockTrees.ts`). A stored block that isn't code is a string (`isTextBlock`): no symbols, and its syntax
+   errors are shown only when something runs it (`blocksRun` in `diagnostics.ts`).
+
 **Performance data and crash reports users send us**
 ❌ Don't: put real file, location, variable, object or action names, or any game text, into `[perf]` log lines,
    `qsp/performanceReport` (`performanceReport.ts`), the crash recorder's files (`nodeRecorder.ts`), crash report zips

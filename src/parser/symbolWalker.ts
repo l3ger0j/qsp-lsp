@@ -364,6 +364,9 @@ export function walkLocationBody(
   // Topological order: a callee block is walked only after every
   // caller block has propagated its locals in.
   const walkBlock = (entry: { node: Parser.SyntaxNode; locals: Map<string, import('./symbolTable').QspSymbol> }) => {
+    // Running a block that isn't code fails on its syntax, reported as such:
+    // its words are no variables.
+    if (isTextBlock(entry.node)) return;
     const outer = newScope(0, /* isolated */ true);
     for (const [name, sym] of entry.locals) {
       locSymbols.injectLocalIntoScope(name, outer, sym);
