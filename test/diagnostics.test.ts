@@ -7,6 +7,12 @@
  *   - uninitializedVariables
  *   - mixedVariablePrefixes
  *   - inconsistentLocalPropagation
+ *   - unusedLocations / unusedObjects / unusedVariables for names given as
+ *     text: a location, object or variable whose name is a string written
+ *     to a variable or passed to a call is used through it (`gt $to`,
+ *     `arrsize(args[0])`), and so is a location a jump target built from
+ *     text fits (`gs 'eat<<n>>'`). Real games do this all the time; each
+ *     such name was reported as never used.
  */
 import { extractErrors } from '../src/parser/extractErrors';
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -3668,6 +3674,27 @@ dynamic $never
 
     it('flags local code-block assigned to numeric local', () => {
       expect(mismatch(`# a\nlocal x = {y+1}\n---\n`)).toHaveLength(1);
+    });
+  });
+
+  // ── Names given as text ──────────────────────────────────────────
+  describe('names given as text', () => {
+    const unused = (code: string) => run(code, { unusedLocations: true, unusedObjects: true, unusedVariables: true })
+      .filter(d => / never (referenced|read)/.test(d.message)).map(d => d.message);
+
+    it('counts a location whose name is written to a variable or passed to a call', () => {
+      expect(unused("# старт\n$куда = 'Лес'\ngs 'идти', 'Поле'\nact 'в путь': gt $куда\n---\n# идти\ngt $args[0]\n---\n# лес\n---\n# поле\n---\n# пустошь\n---\n"))
+        .toEqual(["Location 'пустошь' is defined but never referenced"]);
+    });
+
+    it('counts a location a jump target built from text fits', () => {
+      expect(unused("# старт\nn = rand(1, 2)\ngs 'еда<<n>>'\ngt 'конец_' + $к\n---\n# еда1\n---\n# еда2\n---\n# конец_игры\n---\n# прочее\n---\n"))
+        .toEqual(["Location 'прочее' is defined but never referenced"]);
+    });
+
+    it('counts an object or a variable named in a string', () => {
+      const code = "# старт\naddobj 'Фонарь'\naddobj 'Ключ'\n$выбор = 'Фонарь'\n$список[] = 'а'\nсчёт = 1\ngs 'печать', 'список'\n---\n# печать\npl args[0], $выбор\n---\n";
+      expect(unused(code)).toEqual(["Object 'Ключ' is added but never referenced", "Variable 'счёт' is assigned but never read"]);
     });
   });
 });

@@ -161,6 +161,8 @@ export function checkUnusedLocations(
   locationIndex: Array<{ nameLower: string }>,
   referencedLocations: ReadonlySet<string>,
   firstLocationKey?: string,
+  namedInText: ReadonlySet<string> = new Set(),
+  dynamicTargetShapes: ReadonlyArray<{ prefix: string; suffix: string }> = [],
 ): void {
   if (locationIndex.length === 0) return;
   const skipKey = firstLocationKey ?? locationIndex[0].nameLower;
@@ -168,6 +170,10 @@ export function checkUnusedLocations(
   for (const [key, def] of symbols.locationDefs) {
     if (key === skipKey) continue;
     if (referencedLocations.has(key)) continue;
+    // Its name is a value in the code: some jump may go there through a variable.
+    if (namedInText.has(key)) continue;
+    if (dynamicTargetShapes.some(s => key.length >= s.prefix.length + s.suffix.length
+      && key.startsWith(s.prefix) && key.endsWith(s.suffix))) continue;
     ctx.push(
       DiagnosticSeverity.Hint,
       ctx.locRange(def.definition!),
@@ -504,7 +510,7 @@ export function checkPropagation(
   if (ctx.settings.unusedLocations && !agg.hasRegexOnlyLocations) {
     checkUnusedLocations(
       ctx, symbols, locationIndex, referencedLocations,
-      firstLocationKey,
+      firstLocationKey, agg.namedInText, agg.dynamicTargetShapes,
     );
   }
 }

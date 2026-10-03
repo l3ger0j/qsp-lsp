@@ -274,7 +274,7 @@ export function checkUnusedVariables(
   agg: SymbolAggregates,
   docUri: string,
 ): void {
-  const { globallyRead, propagatedSyms, propagatedLocals, crossCallWrites } = agg;
+  const { globallyRead, propagatedSyms, propagatedLocals, crossCallWrites, namedInText } = agg;
 
   for (const [, locSyms] of symbols.locations) {
     if (locSyms.hasErrors) continue;
@@ -302,6 +302,10 @@ export function checkUnusedVariables(
         if (crossCallWrites.has(writeKey)) continue;
 
         if (agg.hasRegexOnlyLocations) continue;
+
+        // Named in a string (`gs 'print', 'list'`): read by name, through
+        // `dynamic`, `arrsize(args[0])` and the like.
+        if (namedInText.has(sym.nameLower)) continue;
 
         // A global is used if it is read (isProperUsage) anywhere in the
         // project — globallyRead aggregates isProperUsage refs across all

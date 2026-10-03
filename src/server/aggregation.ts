@@ -33,6 +33,7 @@ import type { SymbolLocation } from '../parser/symbolTypes';
 import { heartbeat } from './perfLog';
 import { bindingsOfLocal } from '../parser/variableBindings';
 import { locationInterface } from '../parser/locationInterface';
+import { literalOf, type TargetPattern } from '../parser/targetPattern';
 
 /**
  * Project-wide aggregated data from all files.
@@ -78,6 +79,19 @@ export interface SymbolAggregates {
   definedObjects: Set<string>;
   referencedLocations: Set<string>;
   referencedObjects: Set<string>;
+  /**
+   * Lowercase, trimmed string literals written to variables or passed to
+   * calls. A location named by one may be reached through it (`$to =
+   * 'hall'`, then `gt $to` somewhere), so it isn't reported as never
+   * referenced even when the jump graph can't follow the value there.
+   */
+  namedInText: Set<string>;
+  /**
+   * The literal start and end of dynamic jump targets built from text and
+   * variables (`gs 'eat<<n>>'` starts with `eat`): a location whose name fits
+   * one may be reached through it.
+   */
+  dynamicTargetShapes: Array<{ prefix: string; suffix: string }>;
   /**
    * True when any contributing location is `regexOnly`. Its references
    * are missing from `referencedLocations` / `referencedObjects` /
@@ -309,6 +323,8 @@ export function emptyAggregates(): SymbolAggregates {
     definedObjects: new Set(),
     referencedLocations: new Set(),
     referencedObjects: new Set(),
+    namedInText: new Set(),
+    dynamicTargetShapes: [],
     hasRegexOnlyLocations: false,
     globalPrefixes: new Map(),
     propagatedLocals: new Map(),
@@ -357,9 +373,50 @@ export function collectAggregates(
       if (obj.definition) out.definedObjects.add(key);
       if (!obj.definition || obj.references.length > 1) out.referencedObjects.add(key);
     }
-    for (const [key] of locSyms.locationRefs) {
+    for (const [key, ref] of locSyms.locationRefs) {
       out.referencedLocations.add(key);
+      for (const r of ref.references) for (const p of r.argPatterns ?? []) if (p) addLiterals(p, out.namedInText);
     }
+    for (const [, bindings] of locSyms.variableBindings) {
+      for (const b of bindings) if (b.value.kind === 'expr' && b.value.pattern) addLiterals(b.value.pattern, out.namedInText);
+    }
+    for (const d of locSyms.dynamicLocationRefs) {
+      const shape = d.target && shapeOf(d.target);
+      if (shape) out.dynamicTargetShapes.push(shape);
+    }
+  }
+}
+
+// The literal text a pattern starts and ends with, when it has some and
+// isn't all literal (that one is a plain jump).
+function shapeOf(pattern: TargetPattern): { prefix: string; suffix: string } | undefined {
+  let start = 0;
+  let prefix = '';
+  for (; start < pattern.length; start++) {
+    const p = pattern[start];
+    if (!('lit' in p)) break;
+    prefix += p.lit;
+  }
+  if (start === pattern.length) return undefined;
+  let suffix = '';
+  for (let i = pattern.length - 1; i > start; i--) {
+    const p = pattern[i];
+    if (!('lit' in p)) break;
+    suffix = p.lit + suffix;
+  }
+  prefix = prefix.trimStart().toLowerCase();
+  suffix = suffix.trimEnd().toLowerCase();
+  return prefix || suffix ? { prefix, suffix } : undefined;
+}
+
+// The values a pattern is one of when they are all literals (`'hall'`,
+// `iif(x, 'a', 'b')`).
+function addLiterals(pattern: TargetPattern, into: Set<string>): void {
+  const literal = literalOf(pattern);
+  if (literal !== undefined) {
+    into.add(literal.trim().toLowerCase());
+  } else if (pattern.length === 1 && 'alt' in pattern[0]) {
+    for (const arm of pattern[0].alt) addLiterals(arm, into);
   }
 }
 

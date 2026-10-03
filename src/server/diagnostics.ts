@@ -143,7 +143,7 @@ export function computeDiagnostics(
     checkLocationSymbols(
       ctx, locSyms, allLocationDefs,
       definedActions, definedObjects, referencedObjects,
-      callTypesPerTarget, isProject, agg.hasRegexOnlyLocations,
+      callTypesPerTarget, isProject, agg.hasRegexOnlyLocations, agg.namedInText,
     );
   }
 

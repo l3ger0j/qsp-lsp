@@ -256,10 +256,13 @@ export function checkUnusedObjects(
   ctx: DiagnosticCtx,
   locSyms: LocationSymbols,
   referencedObjects: ReadonlySet<string>,
+  namedInText: ReadonlySet<string> = new Set(),
 ): void {
   for (const [key, obj] of locSyms.objectRefs) {
     if (!obj.definition) continue;
     if (referencedObjects.has(key)) continue;
+    // Its name is a value in the code (`$item = 'lamp'`, `gs 'drop', 'lamp'`): used through it.
+    if (namedInText.has(key)) continue;
     ctx.push(
       DiagnosticSeverity.Information,
       ctx.locRange(obj.definition),
@@ -340,6 +343,7 @@ export function checkLocationSymbols(
   callTypesPerTarget: ReadonlyMap<string, { name: string; types: Set<string> }>,
   isProject: boolean,
   referencesIncomplete: boolean,
+  namedInText: ReadonlySet<string> = new Set(),
 ): void {
   if (ctx.settings.duplicateLabels)            checkDuplicateLabels(ctx, locSyms);
   if (ctx.settings.duplicateActions)           checkDuplicateActions(ctx, locSyms);
@@ -349,7 +353,7 @@ export function checkLocationSymbols(
   if (ctx.settings.unresolvedActionRefs)       checkUnresolvedActionRefs(ctx, locSyms, definedActions);
   if (ctx.settings.unresolvedObjectRefs)       checkUnresolvedObjectRefs(ctx, locSyms, definedObjects);
   if (ctx.settings.unusedLabels)               checkUnusedLabels(ctx, locSyms);
-  if (ctx.settings.unusedObjects && !referencesIncomplete) checkUnusedObjects(ctx, locSyms, referencedObjects);
+  if (ctx.settings.unusedObjects && !referencesIncomplete) checkUnusedObjects(ctx, locSyms, referencedObjects, namedInText);
   if (ctx.settings.invalidFunctionPrefix)      checkInvalidFunctionPrefix(ctx, locSyms);
   if (ctx.settings.invalidBuiltinArgCount)     checkInvalidArgCount(ctx, locSyms);
   if (ctx.settings.mixedLocationCallTypes)     checkMixedCallTypes(ctx, locSyms, callTypesPerTarget);
