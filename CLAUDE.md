@@ -60,7 +60,8 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
 ✅ Do: respect the two-tier debounce in `common.ts` (fast 150 ms index rebuild / tree 500 ms full parse).
 
 ❌ Don't: store derived data that outlives `DocumentState`, or reuse `aggCache`/`cachedCallTypes` after the state object is replaced.
-✅ Do: hang caches off `DocumentState` (`featureTypes.ts`) so they get invalidated when the state is replaced. Check `isAggContributionStable` before reusing aggregates.
+✅ Do: hang caches off `DocumentState` (`featureTypes.ts`) so they get invalidated when the state is replaced. Reuse aggregates only through `reusePropagation`
+   (`aggregation.ts`), which checks the locations' interfaces and swaps in the edited locations' symbols.
 
 ❌ Don't: parse a document as one tree. Every file, open or closed, is parsed one location at a time
    (`locationAnalysis.ts`, `analyzeAllLocations` in `common.ts`, `projectMode.analyzePerLocation`).

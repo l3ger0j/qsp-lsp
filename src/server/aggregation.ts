@@ -32,6 +32,7 @@ import type { DocumentSymbols, VariableBinding } from '../parser/symbolTable';
 import type { SymbolLocation } from '../parser/symbolTypes';
 import { heartbeat } from './perfLog';
 import { bindingsOfLocal } from '../parser/variableBindings';
+import { locationInterface } from '../parser/locationInterface';
 
 /**
  * Project-wide aggregated data from all files.
@@ -322,82 +323,6 @@ export function emptyAggregates(): SymbolAggregates {
   };
 }
 
-/**
- * Returns true when the aggregate contribution of a location has not
- * changed between two `LocationSymbols` instances.  Used to decide
- * whether the cached `SymbolAggregates` for a document is still valid
- * after a single-location incremental re-parse.
- *
- * Checks only the fields that feed into `collectAggregates` and
- * `buildPropagatedLocals` — the expensive post-passes.  Per-location
- * diagnostics that depend solely on the location's own symbols (labels,
- * local variables, …) are unaffected by the aggregate cache.
- */
-export function isAggContributionStable(
-  prev: LocationSymbols,
-  next: LocationSymbols,
-): boolean {
-  if (prev.regexOnly !== next.regexOnly) return false;
-
-  // ── Global variables (non-local) ────────────────────────────────
-  const prevGlobals = new Map<string, { valueDef: boolean; prefixes: string }>();
-  for (const sym of prev.ownedVariables) {
-    if (sym.isLocal) continue;
-    const px = sym.prefixes ? [...sym.prefixes].sort().join('') : '';
-    prevGlobals.set(sym.nameLower, { valueDef: !!sym.hasValueDefinition, prefixes: px });
-  }
-  for (const sym of next.ownedVariables) {
-    if (sym.isLocal) continue;
-    const px = sym.prefixes ? [...sym.prefixes].sort().join('') : '';
-    const prev_ = prevGlobals.get(sym.nameLower);
-    if (!prev_) return false;
-    if (prev_.valueDef !== !!sym.hasValueDefinition) return false;
-    if (prev_.prefixes !== px) return false;
-    prevGlobals.delete(sym.nameLower);
-  }
-  if (prevGlobals.size > 0) return false;
-
-  // ── Actions ────────────────────────────────────────────────────
-  if (prev.actions.length !== next.actions.length) return false;
-  for (let i = 0; i < prev.actions.length; i++) {
-    if (prev.actions[i].nameLower !== next.actions[i].nameLower) return false;
-  }
-
-  // ── Object refs (adds/removes definedObjects / referencedObjects)
-  if (prev.objectRefs.size !== next.objectRefs.size) return false;
-  for (const [key, obj] of prev.objectRefs) {
-    const nObj = next.objectRefs.get(key);
-    if (!nObj) return false;
-    if (!!obj.definition !== !!nObj.definition) return false;
-  }
-
-  // ── Location refs (drives propagation edges + referencedLocations)
-  // Compare the call-graph fingerprint: same targets with same
-  // localsInScope names and same callTypes.
-  if (prev.locationRefs.size !== next.locationRefs.size) return false;
-  for (const [key, ref] of prev.locationRefs) {
-    const nRef = next.locationRefs.get(key);
-    if (!nRef) return false;
-    // Compare callTypes and localsInScope sets across all references
-    if (ref.references.length !== nRef.references.length) return false;
-    for (let i = 0; i < ref.references.length; i++) {
-      const r = ref.references[i];
-      const nr = nRef.references[i];
-      if (r.callType !== nr.callType) return false;
-      // localsInScope: same set of base-names (scopeId changes don't
-      // affect which names get propagated, only which binding is used)
-      const rLS = r.localsInScope;
-      const nrLS = nr.localsInScope;
-      if (!rLS && !nrLS) continue;
-      if (!rLS || !nrLS) return false;
-      if (rLS.size !== nrLS.size) return false;
-      for (const [name] of rLS) { if (!nrLS.has(name)) return false; }
-    }
-  }
-
-  return true;
-}
-
 /** Collect symbol aggregates from a set of LocationSymbols into `out`. */
 export function collectAggregates(
   locations: Iterable<LocationSymbols>,
@@ -481,7 +406,7 @@ export function collectCallTypesPerTarget(
  *   for every location across all files.  In single-file mode this iterates
  *   one DocumentSymbols; in project mode it iterates all project files.
  */
-export function buildPropagatedLocals(
+export function propagateLocals(
   allLocations: Iterable<{ locName: string; locSyms: LocationSymbols; uri: string }>,
   out: SymbolAggregates,
   /**
@@ -735,6 +660,113 @@ export function buildPropagatedLocals(
       }
     }
   }
+
+}
+
+/** A propagation (propagateLocals) and the locations it was made from. */
+export interface PropagationBase {
+  /** In the order given, with their interface hashes (locationInterface). */
+  locations: Array<{ uri: string; locSyms: LocationSymbols; iface: string }>;
+  /** The aggregates it was run into. */
+  agg: SymbolAggregates;
+}
+
+/** Remember the propagation in `agg` of `allLocations`, for reusePropagation. */
+export function propagationBase(
+  allLocations: ReadonlyArray<{ locSyms: LocationSymbols; uri: string }>,
+  agg: SymbolAggregates,
+): PropagationBase {
+  return {
+    locations: allLocations.map(({ uri, locSyms }) => ({ uri, locSyms, iface: locationInterface(locSyms) })),
+    agg,
+  };
+}
+
+/**
+ * Put `base`'s propagation into `out` instead of running it again, when
+ * every location has the interface it had then: the propagation reads only
+ * what the interface covers (calls and the locals in scope at them,
+ * variables, `local` names), so it would come out the same. The symbols
+ * of locations analysed since then are new objects, so its providers are
+ * swapped for theirs, found under the same key in `variables` (scope ids
+ * are part of the interface). Returns false, having done nothing, when it
+ * can't be reused.
+ */
+export function reusePropagation(
+  base: PropagationBase | undefined,
+  allLocations: ReadonlyArray<{ locSyms: LocationSymbols; uri: string }>,
+  out: SymbolAggregates,
+): boolean {
+  if (!base || base.locations.length !== allLocations.length) return false;
+  const swap = new Map<QspSymbol, QspSymbol>();
+  for (let i = 0; i < allLocations.length; i++) {
+    const before = base.locations[i];
+    const { uri, locSyms } = allLocations[i];
+    if (before.locSyms === locSyms) continue;
+    if (before.uri !== uri || before.iface !== locationInterface(locSyms)) return false;
+    for (const [key, sym] of before.locSyms.variables) {
+      const now = locSyms.variables.get(key);
+      if (!now) return false;
+      if (now !== sym) swap.set(sym, now);
+    }
+  }
+  const from = base.agg;
+  out.propagationCallers = from.propagationCallers;
+  if (swap.size === 0) {
+    out.propagatedLocals = from.propagatedLocals;
+    out.shadowedPropagations = from.shadowedPropagations;
+    out.propagatedSyms = from.propagatedSyms;
+    return true;
+  }
+  const swapped = (providers: PropagatedLocal[]) => providers.map(p => {
+    const sym = swap.get(p.sym);
+    return sym ? { ...p, sym } : p;
+  });
+  const swapAll = (byTarget: Map<string, Map<string, PropagatedLocal[]>>) => {
+    const copy = new Map<string, Map<string, PropagatedLocal[]>>();
+    for (const [target, byVar] of byTarget) {
+      const vars = new Map<string, PropagatedLocal[]>();
+      for (const [name, providers] of byVar) vars.set(name, swapped(providers));
+      copy.set(target, vars);
+    }
+    return copy;
+  };
+  out.propagatedLocals = swapAll(from.propagatedLocals);
+  out.shadowedPropagations = swapAll(from.shadowedPropagations);
+  out.propagatedSyms = new Set([...from.propagatedSyms].map(sym => swap.get(sym) ?? sym));
+  return true;
+}
+
+/**
+ * propagateLocals, then finishAggregates: every aggregate the call graph
+ * gives.
+ */
+export function buildPropagatedLocals(
+  allLocations: Iterable<{ locName: string; locSyms: LocationSymbols; uri: string }>,
+  out: SymbolAggregates,
+  /** See {@link propagateLocals}. */
+  shouldStop?: () => boolean,
+): void {
+  const locations = [...allLocations];
+  propagateLocals(locations, out, shouldStop);
+  finishAggregates(locations, out);
+}
+
+/**
+ * Everything the aggregates take from the propagation (see
+ * propagateLocals, already run into `out`) and the locations' symbols as
+ * they are now: write-backs into callers' locals, dispatches of stored
+ * code blocks, the refined `globallyRead`, `result` writers and `args`
+ * use. Cheap next to the propagation, and the only part that holds
+ * positions, so a propagation reused across an edit gets them right.
+ */
+export function finishAggregates(
+  allLocations: Iterable<{ locName: string; locSyms: LocationSymbols; uri: string }>,
+  out: SymbolAggregates,
+): void {
+  const locIndex = new Map<string, { locSyms: LocationSymbols; uri: string }>();
+  for (const { locName, locSyms, uri } of allLocations) locIndex.set(locName.toLowerCase(), { locSyms, uri });
+  const result = out.propagatedLocals;
 
   // ────────────────────────────────────────────────────────────────────
   // Post-pass: call-graph-sensitive dataflow.
@@ -1256,6 +1288,29 @@ function locContains(
   if (inner.endLine > outer.endLine) return false;
   if (inner.endLine === outer.endLine && inner.endColumn > outer.endColumn) return false;
   return true;
+}
+
+/**
+ * The single-file aggregates of an open document, made once per state
+ * (`aggCache`) and reusing the propagation of the state before it while
+ * no location's interface changed (`propagation`, carried over by the
+ * server; see reusePropagation).
+ */
+export function fileAggregates(
+  state: { symbols: DocumentSymbols; aggCache?: SymbolAggregates; propagation?: PropagationBase },
+  uri: string,
+  /** See {@link propagateLocals}. */
+  shouldStop?: () => boolean,
+): SymbolAggregates {
+  if (state.aggCache) return state.aggCache;
+  const agg = emptyAggregates();
+  collectAggregates(state.symbols.locations.values(), agg);
+  const locations = [...state.symbols.locations.values()].map(locSyms => ({ locName: locSyms.locationName, locSyms, uri }));
+  if (!reusePropagation(state.propagation, locations, agg)) propagateLocals(locations, agg, shouldStop);
+  finishAggregates(locations, agg);
+  state.propagation = propagationBase(locations, agg);
+  state.aggCache = agg;
+  return agg;
 }
 
 /**

@@ -128,15 +128,25 @@ objects into literals of their keys, for 1.2 s. Each location carries a
 hash of what other files can see of it (`locationInterface.ts`: its symbols
 without positions), so an edit that leaves a file's interface alone
 diagnoses only that file: on a 15.6 M-character game in 10 files, an edit
-is checked in 7 s instead of 11 s, of which 6 s are the aggregates.
+is checked in 7 s instead of 11 s, of which 6 s are the aggregates (now
+1.9 s, see below).
 
 Every file is now analysed one way, location by location, open or closed:
 "open" only changes where the text comes from and how soon it is analysed.
 Next, in order:
-- **Incremental aggregates.** Update the project aggregates by the changed
-  file's contribution instead of rebuilding them (5 s on a 12.8 M-character
-  file), and keep them in the cache keyed by the files' interfaces (see also
-  **Incremental project aggregates**).
+- **Incremental aggregates, the rest.** An edit that changes no
+  location's interface keeps the propagation of locals (`reusePropagation`
+  in `aggregation.ts`), which was nearly all of the aggregates' 5–7 s: the
+  10-file game's edit is checked in 1.9 s instead of 11 s. Left:
+  - an edit that changes an interface still propagates everything again;
+    the propagation runs per variable name, so it could redo only the names
+    the edited locations hold or pass on, while the calls between
+    locations stay the same;
+  - `finishAggregates` takes 0.7 s on every edit of that game, and an edit
+    makes about 260 MB of garbage;
+  - keep the propagation in the cache keyed by the files' interfaces, so an
+    unchanged project skips it on start (4–5 s);
+  (see also **Incremental project aggregates**).
 - **Yield during the aggregates and diagnostics.** On first open the server
   answers nothing for their ~10 s (hover, navigation, status updates all
   wait; on the 12.8 M-character file, the 26 ms range request for the

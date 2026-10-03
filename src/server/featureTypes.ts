@@ -21,6 +21,7 @@ import type {
 import type {
   SymbolAggregates,
   ProjectAggregates,
+  PropagationBase,
 } from './aggregation';
 
 // ──────────────────────────────────────────────────────────────────────
@@ -69,6 +70,12 @@ export interface DocumentState {
   rawText?: string;
   /** Cached single-file aggregates (invalidated when the state object is replaced). */
   aggCache?: SymbolAggregates;
+  /**
+   * The propagation of locals behind the last single-file aggregates of
+   * this document, carried over to the states that replace this one so an
+   * edit can reuse it (fileAggregates).
+   */
+  propagation?: PropagationBase;
   /** Cached call-types-per-target for THIS document. Lazily built. */
   cachedCallTypes?: Map<string, { name: string; types: Set<string> }>;
   /**

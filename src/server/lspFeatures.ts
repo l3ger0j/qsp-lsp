@@ -46,7 +46,7 @@ import {
 import type {
   SymbolAggregates,
 } from './aggregation';
-import { buildFileAggregates } from './aggregation';
+import { fileAggregates } from './aggregation';
 import { buildLocationIndex } from '../common/locations';
 import { formatLines, getWordInfo, inferIndentLevel, startsWithKeyword, uriBasename as basename } from './helpers';
 import { locationNameCol } from './regexFallback';
@@ -251,9 +251,7 @@ function findLocationDef(ctx: ServerContext, name: string, currentState: Documen
 /** Lazily build or reuse aggregates. */
 function getOrBuildAgg(ctx: ServerContext, state: DocumentState, uri: string): SymbolAggregates {
   if (ctx.projectAggregates) return ctx.projectAggregates;
-  if (state.aggCache) return state.aggCache;
-  state.aggCache = buildFileAggregates(state.symbols, uri);
-  return state.aggCache;
+  return fileAggregates(state, uri);
 }
 
 // ──────────────────────────────────────────────────────────────────────

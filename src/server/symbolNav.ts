@@ -35,7 +35,7 @@ import type {
   QspSymbol,
   SymbolLocation,
 } from '../parser';
-import { buildFileAggregates } from './aggregation';
+import { fileAggregates } from './aggregation';
 import { getWordInfo } from './helpers';
 import type {
   ServerContext,
@@ -142,9 +142,7 @@ function findLocationDef(ctx: ServerContext, name: string, currentState: Documen
 
 function getOrBuildAgg(ctx: ServerContext, state: DocumentState, uri: string): import('./aggregation').SymbolAggregates {
   if (ctx.projectAggregates) return ctx.projectAggregates;
-  if (state.aggCache) return state.aggCache;
-  state.aggCache = buildFileAggregates(state.symbols, uri);
-  return state.aggCache;
+  return fileAggregates(state, uri);
 }
 
 // ──────────────────────────────────────────────────────────────────────

@@ -38,8 +38,12 @@ import {
 import {
   type ProjectAggregates,
   collectAggregates,
-  buildPropagatedLocals,
   emptyAggregates,
+  finishAggregates,
+  propagateLocals,
+  propagationBase,
+  reusePropagation,
+  type PropagationBase,
 } from './aggregation';
 import type { DiagnosticSettings } from './diagnostics';
 import type { DocumentState } from './lspFeatures';
@@ -91,6 +95,9 @@ export class ProjectModeService {
    * files' diagnostics as they are.
    */
   private diagnosedInterfaces = new Map<string, string>();
+
+  /** The last propagation of locals across the project, reused while it holds. */
+  private propagation: PropagationBase | undefined;
 
   /**
    * Whether to sub-parse `<a href="exec:...">` link bodies during
@@ -216,6 +223,7 @@ export class ProjectModeService {
 
     this.projectFileUris.clear();
     this.diagnosedInterfaces.clear();
+    this.propagation = undefined;
     this.projectAggregates = null;
   }
 
@@ -486,7 +494,12 @@ export class ProjectModeService {
           allLocs.push({ locName: locSyms.locationName, locSyms, uri });
         }
       }
-      buildPropagatedLocals(allLocs, agg, this.shouldStop);
+      // Seconds in a large game: an edit that changes no location's
+      // interface (game text, comments, new lines) keeps the last one.
+      const reused = this.perf.step('propagation reuse', () => reusePropagation(this.propagation, allLocs, agg));
+      if (!reused) this.perf.step('propagation', () => propagateLocals(allLocs, agg, this.shouldStop));
+      this.perf.step('aggregates finish', () => finishAggregates(allLocs, agg));
+      this.propagation = propagationBase(allLocs, agg);
     }
 
     // Build the flat map once (used by computeDiagnostics)

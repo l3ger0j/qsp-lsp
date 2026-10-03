@@ -28,7 +28,7 @@ import {
   buildRegexSymbols,
   extractLocationSymbolsFromText,
 } from './regexFallback';
-import { type SymbolAggregates, buildFileAggregates, collectCallTypesPerTarget as collectCallTypesPerTargetFromSymbols, isAggContributionStable } from './aggregation';
+import { fileAggregates, collectCallTypesPerTarget as collectCallTypesPerTargetFromSymbols } from './aggregation';
 import { computeDiagnostics, type DiagnosticSettings } from './diagnostics';
 import { registerLspFeatures, type DocumentState, type PerLocationParseResult } from './lspFeatures';
 import { stripBom, shiftErrors, dropIdleTrees, makeLocSymLoc, perLocationCacheKeys, safeSendDiagnostics, safeConnectionCall, safeConsole, QSP_FILE_EXTENSIONS, type FsProvider } from './serverUtils';
@@ -85,21 +85,6 @@ function collectCallTypesPerTarget(
     }
   }
   return merged;
-}
-
-/**
- * Build (or reuse) the per-document SymbolAggregates cache used in
- * single-file (non-project) mode.  Replaces the implicit rebuild that
- * computeDiagnostics() does on every call — dominated by
- * `buildPropagatedLocals` on huge files.
- *
- * The cache lives on `state.aggCache` and is invalidated by a fresh
- * DocumentState (analyzeDocument creates a new object each parse).
- */
-function buildOrReuseFileAgg(state: DocumentState, uri: string, shouldStop?: () => boolean): SymbolAggregates {
-  if (state.aggCache) return state.aggCache;
-  state.aggCache = buildFileAggregates(state.symbols, uri, shouldStop);
-  return state.aggCache;
 }
 
 /**
@@ -875,6 +860,7 @@ export function createQspServer(
       rawText: text,
       positionsApproximate,
       storedAnalysis: previousState?.storedAnalysis,
+      propagation: previousState?.propagation,
       suppressions: parseSuppressions(text, locationIndex),
     });
 
@@ -1033,9 +1019,11 @@ export function createQspServer(
   function analyzeDocumentByRegex(doc: TextDocument, text: string): void {
     const locationIndex = buildLocationIndex(text);
     const symbols = buildRegexSymbols(doc.uri, locationIndex, text);
-    releasePerLocationTrees(documentStates.get(doc.uri));
+    const previous = documentStates.get(doc.uri);
+    releasePerLocationTrees(previous);
     documentStates.set(doc.uri, {
       locationIndex, symbols, cachedSemanticTokens: undefined, suppressions: parseSuppressions(text, locationIndex),
+      propagation: previous?.propagation,
     });
 
     if (settings.project.enabled && project.projectAggregates) {
@@ -1044,7 +1032,7 @@ export function createQspServer(
       deferredDiagnostics.add(doc.uri);
     } else {
       const state = documentStates.get(doc.uri)!;
-      const fileAgg = perf.step('file aggregates', () => buildOrReuseFileAgg(state, doc.uri, tightOnMemory));
+      const fileAgg = perf.step('file aggregates', () => fileAggregates(state, doc.uri, tightOnMemory));
       const diagnostics = diagnose(
         doc, doc.uri, locationIndex, settings.diagnostics,
         collectCallTypesPerTarget(documentStates), symbols,
@@ -1262,22 +1250,13 @@ export function createQspServer(
 
     // ── 6. Store state (semantic tokens are built lazily on request) ──
 
-    // Reuse the previous aggregate cache when the changed location's
-    // contribution to the call graph and global variables is unchanged.
-    // This avoids re-running buildPropagatedLocals (O(N) over all locs)
-    // on every single-location keystroke for large files.
-    const prevLocSyms = prevState.symbols.getLocation(affLoc.name);
-    const aggCache = (prevState.aggCache && prevLocSyms && isAggContributionStable(prevLocSyms, result.symbols))
-      ? prevState.aggCache
-      : undefined;
-
     documentStates.set(doc.uri, {
       locationIndex: currentIndex,
       symbols,
       cachedSemanticTokens: undefined,   // rebuilt lazily
       perLocationCache: newCache,
       rawText: text,
-      aggCache,
+      propagation: prevState.propagation,
       // No whole-file tree to read them from: project re-diagnoses need them here.
       syntaxErrors: allErrors,
       suppressions: parseSuppressions(text, currentIndex),
@@ -1290,7 +1269,7 @@ export function createQspServer(
       deferredDiagnostics.add(doc.uri);
     } else {
       const state = documentStates.get(doc.uri)!;
-      const fileAgg = perf.step('file aggregates', () => buildOrReuseFileAgg(state, doc.uri, tightOnMemory));
+      const fileAgg = perf.step('file aggregates', () => fileAggregates(state, doc.uri, tightOnMemory));
       const diagnostics = diagnose(
         doc, doc.uri, currentIndex, settings.diagnostics,
         collectCallTypesPerTarget(documentStates), symbols,
@@ -1420,6 +1399,7 @@ export function createQspServer(
       rawText: text,
       // No whole-file tree to read them from: project re-diagnoses need them here.
       syntaxErrors: allErrors,
+      propagation: documentStates.get(doc.uri)?.propagation,
       suppressions: parseSuppressions(text, locationIndex),
     });
     // From here the file is in documentStates, so a report counts it there.
@@ -1433,7 +1413,7 @@ export function createQspServer(
       deferredDiagnostics.add(doc.uri);
     } else {
       const state = documentStates.get(doc.uri)!;
-      const fileAgg = perf.step('file aggregates', () => buildOrReuseFileAgg(state, doc.uri, tightOnMemory));
+      const fileAgg = perf.step('file aggregates', () => fileAggregates(state, doc.uri, tightOnMemory));
       const diagnostics = diagnose(
         doc, doc.uri, locationIndex, settings.diagnostics,
         collectCallTypesPerTarget(documentStates), symbols,

@@ -992,3 +992,41 @@ describe('LSP e2e: folding blocks of a large file', () => {
     expect(await blockFolds(makeBigDocument('большой') + room, 'file:///fold-big.qsps')).toEqual(small);
   }, 60_000);
 });
+
+// ──────────────────────────────────────────────────────────────────────
+// Aggregates kept across an edit of one location
+// ──────────────────────────────────────────────────────────────────────
+//
+// An edit that changes nothing other locations see keeps the propagation
+// of locals; the edited location's symbols are new objects, so the kept
+// one must point at them, or `x`, read by the location it is passed to,
+// is reported as never read.
+describe('LSP e2e: a local passed to a call, after an edit of its location', () => {
+  it('is still read by the callee', async () => {
+    const h = await startServer();
+    try {
+      const uri = 'file:///single/passed.qsps';
+      // `никто` is never assigned: a warning to wait for.
+      const text = "# старт\nlocal x = 1\ngs 'вызов'\n---\n# вызов\npl x, никто\n---\n";
+      const unread = (p: PublishDiagnosticsParams) => p.diagnostics.filter(d => d.code === 'unusedVariables').map(d => d.message);
+      h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text } });
+      expect(unread(await h.diagnosticsFor(uri))).toEqual([]);
+
+      await new Promise(r => setTimeout(r, 900)); // the open's analysis is over
+      // The edit clears the diagnostics (fast tier), then sends the checked ones.
+      const checked = (async () => {
+        while ((await h.nextDiagnosticsFor(uri)).diagnostics.length > 0) { /* still the open's */ }
+        return h.nextDiagnosticsFor(uri);
+      })();
+      h.client.sendNotification(DidChangeTextDocumentNotification.type, {
+        textDocument: { uri, version: 2 },
+        contentChanges: [{ range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } }, text: "pl 'привет'\n" }],
+      });
+      const after = await checked;
+      expect(after.diagnostics.map(d => d.message)).toContain("Variable 'никто' is used but never assigned");
+      expect(unread(after)).toEqual([]);
+    } finally {
+      h.shutdown();
+    }
+  }, 30_000);
+});
