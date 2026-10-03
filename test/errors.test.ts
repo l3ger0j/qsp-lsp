@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { QspTreeSitterParser, extractErrors } from '../src/parser/treeSitter';
-import { WASM_PATH, runDiagnostics, diagnosticsMatching } from './testHelpers';
+import { WASM_PATH, loadWasm, runDiagnostics, diagnosticsMatching } from './testHelpers';
+import { QspHost } from '../src/mcp/qspHost';
 
 describe('extractErrors — error classification', () => {
   const parser = new QspTreeSitterParser();
@@ -411,6 +414,58 @@ pl '<<x + >>'
       { maxErrorsPerLocation: 100, uninitializedVariables: true });
     expect(diags.length).toBeGreaterThan(0);
     expect(diags.every(d => d.severity === 4 && d.code === 'syntax')).toBe(true);
+  });
+
+  // The shape of a game's word list: a multi-line block whose lines end in
+  // a comma, split into an array by `scanstr`, in a UTF-8 file with a BOM.
+  const wordListLocation = [
+    '# старт',
+    "killvar '$названия'",
+    'local $сырой_список = {',
+    '    Яблоко, Груша, Слива, Персик, Абрикос,',
+    '    Вишня, Черешня, Малина, Ежевика, Клубника,',
+    '    Айва, Инжир, Финик, Лимон, Апельсин',
+    '}',
+    "scanstr '$названия', $сырой_список, '[\\w-]+'",
+    'pl $названия[rand(0, arrsize(\'$названия\') - 1)]',
+    '--- старт ---',
+    '',
+  ].join('\n');
+  const blockRows = { open: 2, close: 6 };
+
+  it('a multi-line word list marks nothing outside its block, and its own words only as hints', () => {
+    const diags = runDiagnostics(parser, wordListLocation, {
+      maxErrorsPerLocation: 100, uninitializedVariables: true, unusedVariables: true,
+      typeMismatch: true, mixedVariablePrefixes: true, invalidBuiltinArgCount: true,
+    });
+    expect(diags.length).toBeGreaterThan(0);
+    for (const d of diags) {
+      expect(d.code).toBe('syntax');
+      expect(d.severity).toBe(4);
+      expect(d.range.start.line).toBeGreaterThan(blockRows.open);
+      expect(d.range.end.line).toBeLessThan(blockRows.close);
+    }
+  });
+
+  it('a word list in a file with a BOM gets what it gets without one', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qsp-bom-'));
+    const diagnosticsOf = async (text: string) => {
+      fs.writeFileSync(path.join(dir, 'main.qsps'), text);
+      const host = new QspHost(dir, { wasmLoader: loadWasm });
+      try {
+        await host.start();
+        return [...host.allDiagnostics()].flatMap(([, ds]) => ds);
+      } finally {
+        host.dispose();
+      }
+    };
+    try {
+      const plain = await diagnosticsOf(wordListLocation);
+      expect(plain.some(d => d.code === 'syntax')).toBe(true);
+      expect(await diagnosticsOf('﻿' + wordListLocation)).toEqual(plain);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('accepts unary plus, also right after a binary plus', () => {
