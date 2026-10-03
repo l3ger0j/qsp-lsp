@@ -7,7 +7,7 @@
 // scripts/stress/genGame.mjs.
 //
 //   node scripts/stress/bench.mjs <project dir> [--open <file>] [--graph] [--tokens]
-//       [--edits N] [--edit-in string] [--heap-mb N] [--timeout S] [--json <out.json>]
+//       [--edits N] [--edit-in string|value] [--heap-mb N] [--timeout S] [--json <out.json>]
 //       [--max-seconds S] [--max-heap-mb N]
 //
 // --open     file to open like an editor tab (default: the largest one;
@@ -20,7 +20,8 @@
 //            long each takes to be re-diagnosed: its diagnostics cleared,
 //            then checked again, and how many other files were re-published
 // --edit-in string  type inside a `pl '…'` string (text only) instead of
-//            a `!` at the start of a line
+//            a `!` at the start of a line; value: a digit into a number
+//            assigned to a variable (the code changes, its calls don't)
 // --heap-mb  the server's heap limit (Node's default otherwise)
 // --crash    directory for the always-on crash recorder, as the extension
 //            passes it (breadcrumbs, memory, trail, report)
@@ -48,7 +49,7 @@ function parseArgs(argv) {
 const args = parseArgs(process.argv.slice(2));
 const project = args._[0] && path.resolve(args._[0]);
 if (!project || !fs.existsSync(project)) {
-  console.error('usage: bench.mjs <project dir> [--open <file>|none] [--graph] [--tokens] [--edits N] [--edit-in string] [--heap-mb N] [--crash <dir>] [--cache <dir>] [--timeout S] [--json out.json] [--max-seconds S] [--max-heap-mb N]');
+  console.error('usage: bench.mjs <project dir> [--open <file>|none] [--graph] [--tokens] [--edits N] [--edit-in string|value] [--heap-mb N] [--crash <dir>] [--cache <dir>] [--timeout S] [--json out.json] [--max-seconds S] [--max-heap-mb N]');
   process.exit(2);
 }
 const server = path.join(root, 'out', 'server', 'nodeMain.js');
@@ -261,6 +262,10 @@ try {
       while (line < lines.length - 1 && !/^\s*\*?pl\s+'/i.test(lines[line])) line++;
       character = lines[line].indexOf("'") + 1;
       text = 'x';
+    } else if (args['edit-in'] === 'value') {
+      while (line < lines.length - 1 && !/=\s*\d/.test(lines[line])) line++;
+      character = lines[line].search(/=\s*\d/) + 1;
+      text = '1';
     }
     const latencies = [];
     const settled = [];
