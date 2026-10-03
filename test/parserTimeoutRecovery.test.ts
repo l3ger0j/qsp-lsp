@@ -15,9 +15,8 @@ import * as fs from 'fs';
 import { QspTreeSitterParser } from '../src/parser/treeSitter';
 import { WASM_PATH } from './testHelpers';
 
-// Deterministically exceeds a small timeout budget (verified to time out
-// 10/10 runs at 1000us on this grammar) without needing a huge input.
-const PATHOLOGICAL_INPUT = '# a\n' + 'dynamic {'.repeat(400) + '}'.repeat(400) + '\n---\n';
+// Far more than a small timeout budget parses: a location of 50 000 lines.
+const PATHOLOGICAL_INPUT = '# a\n' + 'x = (1 + 2) * 3\n'.repeat(50_000) + '---\n';
 const TINY_TIMEOUT_MICROS = 1_000;
 
 const CLEAN_DOC = `# clean\npl 'hello'\n---\n`;

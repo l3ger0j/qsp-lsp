@@ -6,11 +6,11 @@
  * 1. LINE_CONTINUATION_EXT (" _\n")
  * 2. LOCATION_END_MARK_EXT ("--" at column 0)
  * 3. LOCATION_START_MARK_EXT ("#" at column 0)
- * 4. NEWLINE_OR_RBRACE_EXT
- * 5. INTP_RAW_BODY_SQ (raw `<<…>>` body with `''` inside a '-quoted string)
- * 6. INTP_RAW_BODY_DQ (raw `<<…>>` body with `""` inside a "-quoted string)
- * 7. ML_NL_OR … ML_NL_MUL (newlines before a binary operator in a
+ * 4. INTP_RAW_BODY_SQ (raw `<<…>>` body with `''` inside a '-quoted string)
+ * 5. INTP_RAW_BODY_DQ (raw `<<…>>` body with `""` inside a "-quoted string)
+ * 6. ML_NL_OR … ML_NL_MUL (newlines before a binary operator in a
  *    multiline expression, one token per precedence level)
+ * 7. BLOCK_BODY (the inside of a `{…}`, up to its closing brace)
  */
 
 #include "tree_sitter/parser.h"
@@ -19,7 +19,6 @@ enum {
   LINE_CONTINUATION,
   LOCATION_END_MARK,
   LOCATION_START_MARK,
-  NEWLINE_OR_RBRACE,
   INTP_RAW_BODY_SQ,
   INTP_RAW_BODY_DQ,
   ML_NL_OR,
@@ -29,6 +28,7 @@ enum {
   ML_NL_ADD,
   ML_NL_MOD,
   ML_NL_MUL,
+  BLOCK_BODY,
 };
 
 static bool is_hspace(int32_t c) { return c == ' ' || c == '\t'; }
@@ -244,6 +244,34 @@ void tree_sitter_qsp_external_scanner_deserialize(void *payload, const char *buf
   (void)length;
 }
 
+// The inside of a `{…}`, up to its closing brace, found the way QSP finds
+// it: by balancing braces and quotes, whatever the text is. A doubled
+// quote inside a string closes and reopens it, which leaves the same state.
+static bool scan_block_body(TSLexer *lexer) {
+  unsigned depth = 0;
+  bool any = false;
+  while (!lexer->eof(lexer)) {
+    int32_t c = lexer->lookahead;
+    if (c == '}') {
+      if (depth == 0) break;
+      depth--;
+    } else if (c == '{') {
+      depth++;
+    } else if (c == '\'' || c == '"') {
+      lexer->advance(lexer, false);
+      while (!lexer->eof(lexer) && lexer->lookahead != c) lexer->advance(lexer, false);
+      if (lexer->eof(lexer)) {
+        any = true;
+        break;
+      }
+    }
+    lexer->advance(lexer, false);
+    any = true;
+  }
+  lexer->mark_end(lexer);
+  return any;
+}
+
 bool tree_sitter_qsp_external_scanner_scan(void *payload, TSLexer *lexer, const bool *valid_symbols) {
   (void)payload;
 
@@ -251,6 +279,12 @@ bool tree_sitter_qsp_external_scanner_scan(void *payload, TSLexer *lexer, const 
   // raw-body scan is greedy, so it must never run in recovery mode —
   // outside of recovery the _sq/_dq tokens are mutually exclusive.
   bool in_recovery = valid_symbols[INTP_RAW_BODY_SQ] && valid_symbols[INTP_RAW_BODY_DQ];
+
+  if (!in_recovery && valid_symbols[BLOCK_BODY]) {
+    if (!scan_block_body(lexer)) return false;
+    lexer->result_symbol = BLOCK_BODY;
+    return true;
+  }
 
   uint32_t col = lexer->get_column(lexer);
 
@@ -342,30 +376,6 @@ bool tree_sitter_qsp_external_scanner_scan(void *payload, TSLexer *lexer, const 
     // it must reach the LINE_CONTINUATION scan below instead. On false the
     // lexer rewinds and lexes a plain `_newline`.
     return scan_ml_newline(lexer, valid_symbols);
-  }
-
-  if (valid_symbols[NEWLINE_OR_RBRACE]) {
-    while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
-      lexer->advance(lexer, true);
-    }
-
-    if (lexer->lookahead == '}') {
-      lexer->mark_end(lexer);
-      lexer->result_symbol = NEWLINE_OR_RBRACE;
-      return true;
-    }
-
-    if (lexer->lookahead == '\r') {
-      lexer->advance(lexer, false);
-    }
-    if (lexer->lookahead == '\n') {
-      lexer->advance(lexer, false);
-      lexer->mark_end(lexer);
-      lexer->result_symbol = NEWLINE_OR_RBRACE;
-      return true;
-    }
-
-    return false;
   }
 
   if (!valid_symbols[LINE_CONTINUATION]) return false;

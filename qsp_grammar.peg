@@ -352,14 +352,10 @@ QSP {
        ====================
     */
 
-    codeBlock                  = syntacticCodeBlock | rawCodeBlock /* Try to parse it as proper code */
-    syntacticCodeBlock         = "{" statementGroupInCodeBlock* "}"
-
-    statementGroupInCodeBlock  = ws (singleLineCodeBlock | multiLineCodeBlock | newline)
-
-    singleLineCodeBlock        = singleLineGroup ws (newline | &("}"))
-    multiLineCodeBlock         = statementUnitMultiLine ws (statementSeparator ws singleLineGroup ws)? (newline | &("}"))
-
+    /* A block is a string whose end is found by its braces and quotes; what's
+       inside is code only when something runs it (dynamic, dyneval), and is
+       then parsed as a location body on its own. */
+    codeBlock                  = rawCodeBlock
     rawCodeBlock               = "{" (rawStringLiteral | rawCodeBlock | rawCodeBlockChar)* "}"
     rawCodeBlockChar           = ~("{" | "}" | "'" | "\"") any
 

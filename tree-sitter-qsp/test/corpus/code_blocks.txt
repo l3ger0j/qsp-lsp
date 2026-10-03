@@ -1,5 +1,5 @@
 ================
-Syntactic code block in expression
+Code block in expression
 ================
 # test
 dynamic {
@@ -17,16 +17,7 @@ dynamic {
       (statement
         name: (statement_name)
         (code_block
-          (assignment_statement
-            variables: (variable_list
-              (variable_ref
-                name: (identifier_text)))
-            operator: (assignment_operator)
-            value: (number_literal))
-          (statement
-            name: (statement_name)
-            (variable_ref
-              name: (identifier_text))))))
+          (block_body))))
     (location_end)))
 
 ================
@@ -49,10 +40,7 @@ $code = { pl 'hello' }
             name: (identifier_text)))
         operator: (assignment_operator)
         value: (code_block
-          (statement
-            name: (statement_name)
-            (string
-              (single_quoted_string))))))
+          (block_body))))
     (location_end)))
 
 ================
@@ -71,16 +59,7 @@ dynamic { x = 1 & pl x }
       (statement
         name: (statement_name)
         (code_block
-          (assignment_statement
-            variables: (variable_list
-              (variable_ref
-                name: (identifier_text)))
-            operator: (assignment_operator)
-            value: (number_literal))
-          (statement
-            name: (statement_name)
-            (variable_ref
-              name: (identifier_text))))))
+          (block_body))))
     (location_end)))
 
 ================
@@ -106,16 +85,7 @@ $code = {
             name: (identifier_text)))
         operator: (assignment_operator)
         value: (code_block
-          (assignment_statement
-            variables: (variable_list
-              (variable_ref
-                name: (identifier_text)))
-            operator: (assignment_operator)
-            value: (number_literal))
-          (statement
-            name: (statement_name)
-            (variable_ref
-              name: (identifier_text))))))
+          (block_body))))
     (location_end)))
 
 ================
@@ -141,16 +111,7 @@ $s = {
             name: (identifier_text)))
         operator: (assignment_operator)
         value: (code_block
-          (assignment_statement
-            variables: (variable_list
-              (variable_ref
-                name: (identifier_text)))
-            operator: (assignment_operator)
-            value: (number_literal))
-          (statement
-            name: (statement_name)
-            (variable_ref
-              name: (identifier_text)))))
+          (block_body)))
       (statement
         name: (statement_name)
         (string
@@ -177,13 +138,7 @@ dynamic {
       (statement
         name: (statement_name)
         (code_block
-          (statement
-            name: (statement_name)
-            (code_block
-              (statement
-                name: (statement_name)
-                (string
-                  (single_quoted_string))))))))
+          (block_body))))
     (location_end)))
 
 ================
@@ -211,22 +166,7 @@ $code = {
             name: (identifier_text)))
         operator: (assignment_operator)
         value: (code_block
-          (assignment_statement
-            variables: (variable_list
-              (variable_ref
-                prefix: (type_prefix)
-                name: (identifier_text)))
-            operator: (assignment_operator)
-            value: (code_block
-              (statement
-                name: (statement_name)
-                (string
-                  (single_quoted_string)))))
-          (statement
-            name: (statement_name)
-            (variable_ref
-              prefix: (type_prefix)
-              name: (identifier_text))))))
+          (block_body))))
     (location_end)))
 
 ================
@@ -251,16 +191,7 @@ dynamic {
       (statement
         name: (statement_name)
         (code_block
-          (statement
-            name: (statement_name)
-            (code_block
-              (statement
-                name: (statement_name)
-                (code_block
-                  (statement
-                    name: (statement_name)
-                    (string
-                      (single_quoted_string))))))))))
+          (block_body))))
     (location_end)))
 
 ================
@@ -279,13 +210,7 @@ dynamic { dynamic { pl 'inner' } }
       (statement
         name: (statement_name)
         (code_block
-          (statement
-            name: (statement_name)
-            (code_block
-              (statement
-                name: (statement_name)
-                (string
-                  (single_quoted_string))))))))
+          (block_body))))
     (location_end)))
 
 ================
@@ -306,20 +231,7 @@ dynamic {
       (statement
         name: (statement_name)
         (code_block
-          (if_inline
-            keyword: (if_keyword)
-            condition: (ext_binary
-              (variable_ref
-                name: (identifier_text))
-              (op_cmp)
-              (number_literal))
-            then: (statement
-              name: (statement_name)
-              (code_block
-                (statement
-                  name: (statement_name)
-                  (variable_ref
-                    name: (identifier_text)))))))))
+          (block_body))))
     (location_end)))
 
 ================
@@ -338,19 +250,7 @@ dynamic { x = 1 & dynamic { pl x } }
       (statement
         name: (statement_name)
         (code_block
-          (assignment_statement
-            variables: (variable_list
-              (variable_ref
-                name: (identifier_text)))
-            operator: (assignment_operator)
-            value: (number_literal))
-          (statement
-            name: (statement_name)
-            (code_block
-              (statement
-                name: (statement_name)
-                (variable_ref
-                  name: (identifier_text))))))))
+          (block_body))))
     (location_end)))
 
 ================
@@ -380,33 +280,7 @@ $code = {
             name: (identifier_text)))
         operator: (assignment_operator)
         value: (code_block
-          (assignment_statement
-            variables: (variable_list
-              (variable_ref
-                name: (identifier_text)))
-            operator: (assignment_operator)
-            value: (number_literal))
-          (statement
-            name: (statement_name)
-            (code_block
-              (assignment_statement
-                variables: (variable_list
-                  (variable_ref
-                    name: (identifier_text)))
-                operator: (assignment_operator)
-                value: (number_literal))
-              (statement
-                name: (statement_name)
-                (na_binary
-                  (variable_ref
-                    name: (identifier_text))
-                  (op_arith)
-                  (variable_ref
-                    name: (identifier_text))))))
-          (statement
-            name: (statement_name)
-            (string
-              (single_quoted_string))))))
+          (block_body))))
     (location_end)))
 
 ================
@@ -424,11 +298,12 @@ dynamic { }
     (single_line_block
       (statement
         name: (statement_name)
-        (code_block)))
+        (code_block
+          (block_body))))
     (location_end)))
 
 ================
-Code block with bare string parses syntactically
+Code block with a bare string
 ================
 # test
 dynamic { 'hello' }
@@ -443,13 +318,11 @@ dynamic { 'hello' }
       (statement
         name: (statement_name)
         (code_block
-          (implicit_statement
-            (string
-              (single_quoted_string))))))
+          (block_body))))
     (location_end)))
 
 ================
-Code block with string containing braces parses syntactically
+Code block with a string containing braces
 ================
 # test
 dynamic { 'text {with} braces' }
@@ -464,7 +337,42 @@ dynamic { 'text {with} braces' }
       (statement
         name: (statement_name)
         (code_block
-          (implicit_statement
-            (string
-              (single_quoted_string))))))
+          (block_body))))
+    (location_end)))
+
+================
+Code block holding a word list
+================
+# test
+local $list = {
+  apple, pear,
+  plum, cherry,
+}
+scanstr '$names', $list, '[\w-]+'
+--
+---
+
+(source_file
+  (location_block
+    (location_header
+      (location_name))
+    (single_line_block
+      (local_statement
+        keyword: (local_keyword)
+        variables: (variable_list
+          (variable_ref
+            prefix: (type_prefix)
+            name: (identifier_text)))
+        value: (code_block
+          (block_body))))
+    (single_line_block
+      (statement
+        name: (statement_name)
+        (string
+          (single_quoted_string))
+        (variable_ref
+          prefix: (type_prefix)
+          name: (identifier_text))
+        (string
+          (single_quoted_string))))
     (location_end)))

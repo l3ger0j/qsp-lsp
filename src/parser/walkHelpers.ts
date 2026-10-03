@@ -10,6 +10,7 @@
 import type Parser from 'web-tree-sitter';
 import { type SymbolLocation } from './symbolTable';
 import type { LocationSymbols } from './locationSymbols';
+import { blockHasError, isLocationBlock } from './blockTrees';
 
 // ── Constants ─────────────────────────────────────────────────────────
 
@@ -67,20 +68,10 @@ export interface VarMediatedCtx {
  * symbols, or its words would be taken for variables never assigned.
  */
 export function isTextBlock(node: Parser.SyntaxNode): boolean {
-  return node.type === 'code_block' && node.hasError;
+  return node.type === 'code_block' && blockHasError(node);
 }
 
-/**
- * Whether `node` holds a location: a `location_block`, or an ERROR node
- * that starts with a location header. A syntax error tree-sitter can't
- * recover from (prose written into the code, an `if` never closed) leaves
- * no `location_block`: the location parsed alone gets an ERROR root
- * holding its header and statements, which still give symbols.
- */
-export function isLocationBlock(node: Parser.SyntaxNode): boolean {
-  return node.type === 'location_block'
-    || (node.type === 'ERROR' && node.namedChild(0)?.type === 'location_header');
-}
+export { isLocationBlock };
 
 /** The nodes under `root` that hold a location (see isLocationBlock), `root` itself included. */
 export function locationBlocksOf(root: Parser.SyntaxNode): Parser.SyntaxNode[] {

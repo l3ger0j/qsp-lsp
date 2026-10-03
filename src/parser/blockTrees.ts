@@ -1,31 +1,144 @@
 /**
- * The way into and out of `{…}` blocks.
+ * The insides of `{…}` blocks, each a tree of its own.
  *
- * Every walk that goes into a `code_block` gets its statements from
- * {@link blockStatements}, and every walk up the tree goes through
- * {@link parentOf}, so the walks don't depend on where a block's
- * statements are kept.
+ * QSP finds a block's end by its braces and quotes, whatever is inside,
+ * and the grammar does the same: a `code_block` holds one opaque
+ * `block_body` token. What's inside is parsed apart, on first use, as the
+ * body of the location the block stands in: the parser reads the
+ * location's header line, the block's body and the location's end line of
+ * the same text (included ranges), so every node keeps the row and column
+ * it has in the document. A body that isn't code (a list of words) has
+ * errors in its own tree only.
+ *
+ * A block's tree belongs to the tree it was parsed for, and goes when that
+ * one is deleted. Walks go into a block through {@link blockStatements}
+ * and up out of one through {@link parentOf}.
  */
 import type Parser from 'web-tree-sitter';
 
-/** The statements of a `code_block`, in order. */
+/** Parses `text` within `ranges`, the parser's included ranges. */
+export type RangeParseFn = (text: string, ranges: Parser.Range[]) => Parser.Tree | null;
+
+interface Forest {
+  text: string;
+  parse: RangeParseFn;
+  /** Every block's tree, by the offset of its `{`; null when it has none. */
+  blocks: Map<number, Parser.Tree | null>;
+  owned: Parser.Tree[];
+  end?: Parser.Point;
+}
+
+// The forest of the tree a parse made, and of every block tree in it.
+const forests = new WeakMap<Parser.Tree, Forest>();
+// A block tree's `code_block`.
+const hosts = new WeakMap<Parser.Tree, Parser.SyntaxNode>();
+
+/**
+ * Make `tree`, parsed from `text`, give its blocks trees of their own,
+ * parsed by `parse`; `tree.delete()` deletes them too.
+ */
+export function adoptTree(tree: Parser.Tree, text: string, parse: RangeParseFn): void {
+  const forest: Forest = { text, parse, blocks: new Map(), owned: [] };
+  forests.set(tree, forest);
+  const deleteTree = tree.delete.bind(tree);
+  tree.delete = () => {
+    for (const t of forest.owned) t.delete();
+    forest.owned.length = 0;
+    forest.blocks.clear();
+    deleteTree();
+  };
+}
+
+/**
+ * Whether `node` holds a location: a `location_block`, or an ERROR node
+ * that starts with a location header. A syntax error tree-sitter can't
+ * recover from (prose written into the code, an `if` never closed) leaves
+ * no `location_block`: the location parsed alone gets an ERROR root
+ * holding its header and statements, which still give symbols.
+ */
+export function isLocationBlock(node: Parser.SyntaxNode): boolean {
+  return node.type === 'location_block'
+    || (node.type === 'ERROR' && node.namedChild(0)?.type === 'location_header');
+}
+
+/** The tree of a `code_block`'s inside, or null (an empty block, a tree not from a parse). */
+export function blockTree(block: Parser.SyntaxNode): Parser.Tree | null {
+  if (block.type !== 'code_block') return null;
+  const forest = forests.get(block.tree);
+  if (!forest) return null;
+  const key = block.startIndex;
+  const known = forest.blocks.get(key);
+  if (known !== undefined) return known;
+  let tree: Parser.Tree | null = null;
+  const body = block.namedChild(0);
+  const location = body?.type === 'block_body' ? enclosingLocation(block) : null;
+  const header = location?.namedChild(0);
+  if (body && header?.type === 'location_header') {
+    const ranges: Parser.Range[] = [rangeOf(header), rangeOf(body)];
+    const end = location!.lastChild;
+    if (end?.type === 'location_end' && !end.isMissing) ranges.push(lineBreakAndRest(forest, end));
+    tree = forest.parse(forest.text, ranges);
+    if (tree) {
+      forests.set(tree, forest);
+      hosts.set(tree, block);
+      forest.owned.push(tree);
+    }
+  }
+  forest.blocks.set(key, tree);
+  return tree;
+}
+
+/** The node holding the location a block's tree parsed: its statements, after the header. */
+export function blockLocation(block: Parser.SyntaxNode): Parser.SyntaxNode | null {
+  const tree = blockTree(block);
+  if (!tree) return null;
+  const root = tree.rootNode;
+  for (const child of root.namedChildren) if (isLocationBlock(child)) return child;
+  return root;
+}
+
+/** The statements of a `code_block`, in order: the statement groups of its tree. */
 export function blockStatements(block: Parser.SyntaxNode): Parser.SyntaxNode[] {
-  return block.children;
+  const location = blockLocation(block);
+  if (!location) return [];
+  return location.children.filter(c => c.type !== 'location_header' && c.type !== 'location_end');
+}
+
+/** Whether a `code_block`'s inside doesn't parse as code. */
+export function blockHasError(block: Parser.SyntaxNode): boolean {
+  return blockLocation(block)?.hasError ?? false;
 }
 
 /** `node`'s parent; for a block's statement, the `code_block`. */
 export function parentOf(node: Parser.SyntaxNode): Parser.SyntaxNode | null {
-  return node.parent;
+  const parent = node.parent;
+  const host = hosts.get(node.tree);
+  if (!host) return parent;
+  // The root of a block's tree, or the location node under it.
+  if (!parent || !parent.parent || (isLocationBlock(parent) && !parent.parent.parent)) return host;
+  return parent;
 }
 
 /** The smallest node at `point` under `root`, inside its blocks too. */
 export function descendantAt(root: Parser.SyntaxNode, point: Parser.Point): Parser.SyntaxNode {
-  return root.descendantForPosition(point);
+  let node = root.descendantForPosition(point);
+  while (node.type === 'block_body' && node.parent) {
+    const location = blockLocation(node.parent);
+    if (!location) break;
+    const inner = location.descendantForPosition(point);
+    if (inner.id === location.id) break;
+    node = inner;
+  }
+  return node;
 }
 
 /** The nodes of `types` under `root`, inside its blocks too, found by tree-sitter. */
 export function descendantsOfType(root: Parser.SyntaxNode, types: string | string[]): Parser.SyntaxNode[] {
-  return root.descendantsOfType(types);
+  const found = root.descendantsOfType(types);
+  for (const block of root.descendantsOfType('code_block')) {
+    for (const stmt of blockStatements(block)) found.push(...descendantsOfType(stmt, types));
+  }
+  return found;
 }
 
 /**
@@ -56,4 +169,49 @@ export function forEachDescendant(
   } finally {
     cursor.delete();
   }
+}
+
+// The location around `node`, across block trees.
+function enclosingLocation(node: Parser.SyntaxNode): Parser.SyntaxNode | null {
+  for (let n: Parser.SyntaxNode | null = parentOf(node); n; n = parentOf(n)) {
+    if (!isLocationBlock(n)) continue;
+    // A block's own tree holds a location too: the one it stands in is
+    // further up, past the block.
+    const host = hosts.get(n.tree);
+    if (!host) return n;
+    n = host;
+  }
+  return null;
+}
+
+function rangeOf(node: Parser.SyntaxNode): Parser.Range {
+  return {
+    startIndex: node.startIndex, endIndex: node.endIndex,
+    startPosition: node.startPosition, endPosition: node.endPosition,
+  };
+}
+
+// The end line with the line break before it, so the body's last line ends
+// before the end mark, which only counts at the start of a line.
+function lineBreakAndRest(forest: Forest, end: Parser.SyntaxNode): Parser.Range {
+  const text = forest.text;
+  let start = end.startIndex;
+  let row = end.startPosition.row;
+  let column = 0;
+  if (start > 0 && text.charCodeAt(start - 1) === 0x0a) {
+    start--;
+    if (start > 0 && text.charCodeAt(start - 1) === 0x0d) start--;
+    row--;
+    column = start - (text.lastIndexOf('\n', start - 1) + 1);
+  }
+  return {
+    startIndex: start, endIndex: text.length,
+    startPosition: { row, column }, endPosition: forest.end ??= endOf(text),
+  };
+}
+
+function endOf(text: string): Parser.Point {
+  let row = 0;
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) row++;
+  return { row, column: text.length - (text.lastIndexOf('\n') + 1) };
 }

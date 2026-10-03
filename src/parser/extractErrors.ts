@@ -14,7 +14,7 @@ import {
   checkPrefixWhitespace,
 } from './lintChecks';
 import { isDynamicArgCodeBlock } from './scopeUtils';
-import { blockStatements } from './blockTrees';
+import { blockLocation, blockStatements, descendantsOfType, parentOf } from './blockTrees';
 
 export { checkFunctionNameAsLvalue, checkReservedWordMisuse, checkPrefixWhitespace };
 
@@ -34,20 +34,6 @@ export interface SyntaxError {
    */
   inStoredBlock?: boolean;
   inInterpolation?: boolean;
-}
-
-// Errors of `{…}` blocks blanked out of a tree (`blockContainment.ts`):
-// the tree no longer holds them.
-const containedBlockErrors = new WeakMap<Parser.Tree, SyntaxError[]>();
-
-/** Attach the errors of the blocks blanked out of `tree`. */
-export function setContainedBlockErrors(tree: Parser.Tree, errors: SyntaxError[]): void {
-  containedBlockErrors.set(tree, errors);
-}
-
-/** True when `tree` was parsed from a text with blocks blanked out. */
-export function hasContainedBlocks(tree: Parser.Tree): boolean {
-  return containedBlockErrors.has(tree);
 }
 
 /** Map raw tree-sitter node types to human-friendly descriptions. */
@@ -168,21 +154,27 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
   let storedBlockDepth = 0;
   let interpolationDepth = 0;
 
-  // A block's statements, each walked with a cursor of its own.
-  function visitStatements(block: Parser.SyntaxNode): void {
+  // The tree of a block's inside, from its location node down (an inside
+  // that is no code can leave an ERROR there). Only errors within the
+  // body count: the header and end lines are the location's own.
+  function visitBlock(block: Parser.SyntaxNode): void {
+    const location = blockLocation(block);
+    const body = block.namedChild(0);
+    if (!location || !body) return;
     const outer = cursor;
+    const mark = errors.length;
+    cursor = location.walk();
     try {
-      for (const stmt of blockStatements(block)) {
-        cursor = stmt.walk();
-        try {
-          visit();
-        } finally {
-          cursor.delete();
-        }
-      }
+      visit();
     } finally {
+      cursor.delete();
       cursor = outer;
     }
+    const from = body.startPosition, to = body.endPosition;
+    const inside = errors.splice(mark).filter(e =>
+      (e.startRow > from.row || (e.startRow === from.row && e.startCol >= from.column))
+      && (e.startRow < to.row || (e.startRow === to.row && e.startCol <= to.column)));
+    errors.push(...inside);
   }
 
   function visit(): void {
@@ -236,9 +228,8 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
     }
 
     // Recurse into children only if this subtree has errors
-    if (isCodeBlock) {
-      visitStatements(node);
-    } else if (node.hasError && cursor.gotoFirstChild()) {
+    // Blocks are walked on their own, below.
+    if (!isCodeBlock && node.hasError && cursor.gotoFirstChild()) {
       do { visit(); } while (cursor.gotoNextSibling());
       cursor.gotoParent();
     }
@@ -254,12 +245,25 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
     cursor.delete();
   }
 
+  // Every block's own tree, nested ones too, in the context its place gives it.
+  for (const block of descendantsOfType(tree.rootNode, 'code_block')) {
+    codeBlockDepth = storedBlockDepth = interpolationDepth = 0;
+    for (let a: Parser.SyntaxNode | null = block; a; a = parentOf(a)) {
+      if (a.type === 'code_block') {
+        codeBlockDepth++;
+        if (!isDynamicArgCodeBlock(a)) storedBlockDepth++;
+      } else if (a.type === 'string_interpolation') {
+        interpolationDepth++;
+      }
+    }
+    visitBlock(block);
+  }
+
   // Run the three additional lint passes (reserved-word misuse,
   // prefix-whitespace, function-name-as-lvalue) in a SINGLE shared tree
   // walk for performance. Public per-pass exports below remain so tests
   // (and external callers) can invoke each in isolation.
   errors.push(...runMergedLintPasses(tree));
-  for (const e of containedBlockErrors.get(tree) ?? []) errors.push({ ...e });
 
   return errors;
 }

@@ -115,7 +115,6 @@ module.exports = grammar({
     $.line_continuation_ext,
     $._location_end_mark_ext,
     $._location_start_mark_ext,
-    $._newline_or_rbrace_ext,
     // Raw `<<…>>` body containing doubled host quotes (`''` in a
     // single-quoted host, `""` in a double-quoted host).  The scanner
     // only emits these when a doubled host quote is actually present in
@@ -138,6 +137,10 @@ module.exports = grammar({
     $._ml_nl_add,
     $._ml_nl_mod,
     $._ml_nl_mul,
+    // The inside of a `{…}` up to its closing brace, as one token: QSP
+    // finds a block's end by its braces and quotes, whatever is inside.
+    // The LSP parses the inside as code on its own (src/parser/blockTrees.ts).
+    $.block_body,
   ],
 
   word: $ => $.identifier_text,
@@ -165,7 +168,6 @@ module.exports = grammar({
     // ml_variable_ref without prec.right: after identifier, seeing '\n'
     // the parser must GLR-fork between "newline before [" vs "bare variable".
     [$.ml_variable_ref],
-    [$.code_block, $.raw_code_block],
   ],
 
   rules: {
@@ -254,24 +256,6 @@ module.exports = grammar({
       $._stmt_multi,
       optional(seq('&', $._single_line_group)),
       $._newline,
-    )),
-
-    // ── Code-block statement groups (terminate at "}" not EOF) ──────────────
-
-    _stmt_group_in_code_block: $ => choice(
-      $._single_line_code_block,
-      $._multi_line_code_block,
-      $._newline,
-    ),
-
-    // PEG: singleLineCodeBlock = singleLineGroup ws (newline | &"}"))
-    _single_line_code_block: $ => prec.right(seq($._single_line_group, $._newline_or_rbrace_ext)),
-
-    // PEG: multiLineCodeBlock = statementUnitMultiLine (...) (newline | &"}")
-    _multi_line_code_block: $ => prec.right(seq(
-      $._stmt_multi,
-      optional(seq('&', $._single_line_group)),
-      $._newline_or_rbrace_ext,
     )),
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -900,56 +884,14 @@ module.exports = grammar({
     // CODE BLOCKS
     // ══════════════════════════════════════════════════════════════════════════
 
-    // PEG: codeBlock = syntacticCodeBlock | rawCodeBlock
-    //   Try syntactic first; fall back to raw when syntactic fails to balance.
-    //
-    // Tree-sitter is GLR (not PEG).  We unify both alternatives in one
-    // rule by listing the syntactic statement-group first (preferred via
-    // higher static prec) and the raw-text fallbacks last.  When the
-    // syntactic alternative produces a valid parse, it wins; when it
-    // would introduce ERROR/MISSING (e.g. an unbalanced `if a=0:` inside
-    // `{<qhtml>... if a=0: ...</qhtml>}`), the raw alternative absorbs
-    // the offending span as anonymous text instead, preventing the
-    // unclosed block from swallowing the rest of the location.
-    //
-    // The per-char raw token uses `token(prec(-10, ...))` so it loses
-    // the lexer race against every normal lexical token (identifiers,
-    // keywords, numbers, operators, …).  It only fires when the
-    // syntactic branch can't make progress at the current position.
-    code_block: $ => seq(
-      '{',
-      repeat(choice(
-        prec(2, $._stmt_group_in_code_block),
-        // raw_code_block (nested `{...}`) and per-char text are the only
-        // raw fallbacks here.  We deliberately do NOT include
-        // `_raw_string` — that token is greedy and would beat the
-        // syntactic `string` rule at lex time, regressing bare-string
-        // code blocks.  Strings still parse via the syntactic path's
-        // `string` primary; only the gaps BETWEEN strings (or other
-        // syntactic constructs) need raw fallback.
-        prec(0, $.raw_code_block),
-        // Exclude whitespace from the per-char raw token so the lexer
-        // doesn't consume leading spaces as raw text (which would pull
-        // them into adjacent token spans like `statement_name` and
-        // break downstream consumers that compare keyword text).
-        // Whitespace continues to be handled by `extras`.
-        prec(-1, token(prec(-10, /[^{}'"\s]/))),
-      )),
-      '}',
-    ),
+    // PEG: codeBlock = "{" rawCodeBlockBody "}"
+    // A block is a string: what's inside is code only when something runs
+    // it (`dynamic`, `dyneval`), so its parse can't spill out of the block.
+    code_block: $ => seq('{', optional($.block_body), '}'),
 
-    // PEG: rawCodeBlock = "{" (rawStringLiteral | rawCodeBlock | rawCodeBlockChar)* "}"
-    // PEG: rawCodeBlockChar = ~("{" | "}" | "'" | "\"") any
-    // Recursive, handles balanced braces. Also used inside comments/noteStrings.
-    raw_code_block: $ => prec(-1, seq(
-      '{',
-      repeat(choice(
-        $._raw_string,                   // string literals (balance quotes)
-        $.raw_code_block,                // nested
-        /[^{}'"][^{}]*/,                 // regular chars (bulk match)
-      )),
-      '}',
-    )),
+    // PEG: rawCodeBlock = "{" rawCodeBlockBody "}"
+    // The same in comments, labels and note strings, where it stays text.
+    raw_code_block: $ => seq('{', optional($.block_body), '}'),
 
     // Raw string literal — used in comments, noteStrings, and rawCodeBlock.
     // NOT the same as $.string (which has interpolation support).

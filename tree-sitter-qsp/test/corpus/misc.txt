@@ -243,7 +243,8 @@ Comment with code block
     (single_line_block
       (comment_statement
         (comment_text
-          (raw_code_block))))
+          (raw_code_block
+            (block_body)))))
     (location_end)))
 
 ================
@@ -699,16 +700,7 @@ dynamic $code
             name: (identifier_text)))
         operator: (assignment_operator)
         value: (code_block
-          (assignment_statement
-            variables: (variable_list
-              (variable_ref
-                name: (identifier_text)))
-            operator: (assignment_operator)
-            value: (number_literal))
-          (statement
-            name: (statement_name)
-            (variable_ref
-              name: (identifier_text))))))
+          (block_body))))
     (single_line_block
       (statement
         name: (statement_name)
@@ -771,7 +763,8 @@ spanning lines}
     (single_line_block
       (comment_statement
         (comment_text
-          (raw_code_block))))
+          (raw_code_block
+            (block_body)))))
     (location_end)))
 
 ================
@@ -828,7 +821,8 @@ block} and more text
     (single_line_block
       (comment_statement
         (comment_text
-          (raw_code_block))))
+          (raw_code_block
+            (block_body)))))
     (location_end)))
 
 ================
@@ -884,8 +878,10 @@ Comment with multiple brace blocks
     (single_line_block
       (comment_statement
         (comment_text
-          (raw_code_block)
-          (raw_code_block))))
+          (raw_code_block
+            (block_body))
+          (raw_code_block
+            (block_body)))))
     (location_end)))
 
 ================
@@ -904,7 +900,8 @@ Comment with mixed string and brace block
       (comment_statement
         (comment_text
           (raw_string)
-          (raw_code_block))))
+          (raw_code_block
+            (block_body)))))
     (location_end)))
 
 ================
