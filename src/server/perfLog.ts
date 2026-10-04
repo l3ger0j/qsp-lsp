@@ -16,6 +16,8 @@ export interface MemorySample {
   external?: number;
 }
 
+import type { Steps } from './slices';
+
 export type MemoryReader = () => MemorySample;
 
 /** One location of a file being analysed, under its pseudonym. */
@@ -202,6 +204,83 @@ export class PerfLog {
       this.currentStep = outerStep;
       this.tracker?.step(outerStep);
       heartbeat();
+    }
+  }
+
+  /**
+   * `phase` for work in slices (slices.ts). Only the time its slices run
+   * counts, and only the steps run inside them: what the server does
+   * between slices (answering requests) is timed apart. When the work was
+   * spread out, the line also gives the time from start to end.
+   */
+  *phaseSteps<T>(name: string, steps: Steps<T>, details?: (result: T) => string): Steps<T> {
+    const own = new Map<string, StepTotal>();
+    const before = this.sampleMemory();
+    const started = this.now();
+    let ms = 0;
+    let outcome = 'cancelled';
+    let result: T | undefined;
+    try {
+      for (;;) {
+        // Set for this slice only: phases may run between slices.
+        const outer = this.steps;
+        const outerPhase = this.enterPhase(name);
+        this.steps = own;
+        const t = this.now();
+        let r: IteratorResult<void, T>;
+        try {
+          r = steps.next();
+        } catch (e) {
+          outcome = 'failed';
+          throw e;
+        } finally {
+          ms += this.now() - t;
+          this.steps = outer;
+          this.enterPhase(outerPhase);
+        }
+        if (r.done) {
+          if (outer) addStep(outer, name, ms);
+          result = r.value;
+          outcome = details ? safeDetails(details, result) : '';
+          return result;
+        }
+        yield;
+      }
+    } finally {
+      // Closed early (cancelled): close the work too.
+      steps.return(undefined as T);
+      const wall = this.now() - started;
+      const spread = wall - ms >= 1 ? `${formatMs(wall)} in all` : '';
+      this.report(name, ms, own, before, [outcome, spread].filter(Boolean).join(', '));
+    }
+  }
+
+  /** `step` for work in slices: adds the time its slices run to the enclosing phase. */
+  *stepSteps<T>(name: string, steps: Steps<T>): Steps<T> {
+    let ms = 0;
+    let into: Map<string, StepTotal> | undefined;
+    try {
+      for (;;) {
+        into ??= this.steps;
+        const outerStep = this.currentStep;
+        this.currentStep = name;
+        this.tracker?.step(name);
+        const t = this.now();
+        let r: IteratorResult<void, T>;
+        try {
+          r = steps.next();
+        } finally {
+          ms += this.now() - t;
+          this.currentStep = outerStep;
+          this.tracker?.step(outerStep);
+          heartbeat();
+        }
+        if (r.done) return r.value;
+        yield;
+      }
+    } finally {
+      steps.return(undefined as T);
+      if (into) addStep(into, name, ms);
     }
   }
 

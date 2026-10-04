@@ -28,7 +28,8 @@ import {
 
 import { libraryIdOfUri } from '../common/libraryConfig';
 import type { Suppressions } from '../common/suppressions';
-import { DiagnosticSeverity } from 'vscode-languageserver';
+import { DiagnosticSeverity, type Diagnostic } from 'vscode-languageserver';
+import { runNow, type Steps } from './slices';
 import { DiagnosticCtx } from './diagnosticPasses/diagnosticHelpers';
 import { checkSyntaxErrors, checkDuplicateLocations, checkLocationBounds } from './diagnosticPasses/structureDiagnostics';
 import { checkLocationSymbols } from './diagnosticPasses/symbolDiagnostics';
@@ -81,7 +82,12 @@ export interface DiagnosticSettings {
 // ── Main entry point ──────────────────────────────────────────────────
 
 /** Compute all diagnostics for a single document. */
-export function computeDiagnostics(
+export function computeDiagnostics(...args: Parameters<typeof diagnosticsSteps>): Diagnostic[] {
+  return runNow(diagnosticsSteps(...args));
+}
+
+/** {@link computeDiagnostics} in steps, about one per location of each pass (see slices.ts). */
+export function* diagnosticsSteps(
   doc: TextDocument | null,
   docUri: string,
   locationIndex: LocationEntry[],
@@ -94,7 +100,7 @@ export function computeDiagnostics(
   cachedFileAgg?: SymbolAggregates,
   projectDocs: DocumentSymbols[] = [],
   suppressions?: Suppressions,
-): import('vscode-languageserver').Diagnostic[] {
+): Steps<Diagnostic[]> {
   const libraryFolders = diagnosticSettings.libraryFolders ?? [];
   const libraryOf = (uri: string) => libraryIdOfUri(uri, libraryFolders);
   const ctx = new DiagnosticCtx(doc, diagnosticSettings, libraryOf(docUri) !== undefined, suppressions);
@@ -137,6 +143,7 @@ export function computeDiagnostics(
 
   // ── Per-location: symbol def/ref diagnostics ────────────────────
   for (const [, locSyms] of symbols.locations) {
+    yield;
     if (locSyms.hasErrors) continue;
     checkLocationSymbols(
       ctx, locSyms, allLocationDefs,
@@ -146,13 +153,13 @@ export function computeDiagnostics(
   }
 
   // ── Variable dataflow diagnostics ────────────────────────────────
-  checkVariables(ctx, symbols, agg, docUri, projectDocs);
+  yield* checkVariables(ctx, symbols, agg, docUri, projectDocs);
 
   // ── Dynamic/dyneval call diagnostics ────────────────────────────
   checkDynamicCalls(ctx, symbols);
 
   // ── Cross-location propagation diagnostics ──────────────────────
-  checkPropagation(
+  yield* checkPropagation(
     ctx, symbols, agg, locationIndex, allLocationDefs,
     projectAgg?.firstLocationKey,
   );

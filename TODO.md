@@ -137,16 +137,18 @@ analysis cache for the next start when it took long (`reusePropagation`,
 is checked in 1.5 s, a changed value's aggregates take 0.6 s instead of
 5 s, and an unchanged project's take 0.9 s on start instead of 6.6 s. On
 games from the QSP catalog the propagation takes milliseconds: no locals
-pass through calls there.
+pass through calls there. The aggregates and diagnostics run in slices of
+about 20 ms (`slices.ts`: generators that yield after a location, a call
+edge or a file), answering requests between them: on the 12.8 M-character
+file the visible lines' tokens are answered in 33 ms (44 ms at 90%) while
+they run, instead of after 6 s. A rebuild started meanwhile takes over, the
+files an edit changed are diagnosed first, and `qsp/settled` tells the MCP
+server when every file's diagnostics are out. What still blocks is a file's
+own analysis (reading that file back from the cache: 3 s).
 
 Every file is now analysed one way, location by location, open or closed:
 "open" only changes where the text comes from and how soon it is analysed.
 Next, in order:
-- **Yield during the aggregates and diagnostics.** On first open the server
-  answers nothing for their ~10 s (hover, navigation, status updates all
-  wait; on the 12.8 M-character file, the 26 ms range request for the
-  visible lines' tokens is answered after 8 s); doing them in slices, as
-  the jump graph layout does, would keep it responsive.
 - **The first analysis in worker threads,** like clangd's background index:
   files analysed in parallel, results handed to the main thread through the
   cache format; the server answers requests meanwhile.

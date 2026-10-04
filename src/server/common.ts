@@ -9,6 +9,7 @@ import {
   TextDocumentSyncKind,
   TextDocuments,
   SemanticTokensBuilder,
+  type Diagnostic,
 } from 'vscode-languageserver';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import {
@@ -28,14 +29,15 @@ import {
   buildRegexSymbols,
   extractLocationSymbolsFromText,
 } from './regexFallback';
-import { fileAggregates, collectCallTypesPerTarget as collectCallTypesPerTargetFromSymbols } from './aggregation';
-import { computeDiagnostics, type DiagnosticSettings } from './diagnostics';
+import { fileAggregatesSteps, collectCallTypesPerTarget as collectCallTypesPerTargetFromSymbols } from './aggregation';
+import { diagnosticsSteps, type DiagnosticSettings } from './diagnostics';
 import { registerLspFeatures, type DocumentState, type PerLocationParseResult } from './lspFeatures';
 import { stripBom, shiftErrors, dropIdleTrees, makeLocSymLoc, perLocationCacheKeys, safeSendDiagnostics, safeConnectionCall, safeConsole, QSP_FILE_EXTENSIONS, type FsProvider } from './serverUtils';
-import { ProjectModeService } from './projectMode';
+import { ProjectModeService, type RebuildOptions } from './projectMode';
+import { runInSlices, type Steps } from './slices';
 import { analyzeParsedLocation, collectFoldLines } from './locationAnalysis';
 import { AnalysisStatusReporter } from './analysisStatus';
-import { ANALYSIS_STATUS_MIN_BYTES } from '../common/analysisStatus';
+import { ANALYSIS_STATUS_MIN_BYTES, SETTLED_REQUEST } from '../common/analysisStatus';
 import { libraryFolderPrefixes } from '../common/libraryConfig';
 import { parseSuppressions } from '../common/suppressions';
 import { PerfLog, formatChars, type ServerHost } from './perfLog';
@@ -188,7 +190,6 @@ export function createQspServer(
     status.setReduced({ heapMB, limitMB });
   });
   const tightOnMemory = () => memoryGuard.tight();
-  const diagnose = (...args: Parameters<typeof computeDiagnostics>) => perf.step('diagnostics', () => computeDiagnostics(...args));
   const startedAt = Date.now();
   // The file analysis running right now, for reports written mid-analysis
   // (a run that crashes never finishes it).
@@ -491,7 +492,7 @@ export function createQspServer(
     // hundreds of full project rebuilds). Fire-and-forget: this is a notification
     // handler, so nothing awaits its result; rejections are caught here
     // so they can't become unhandled rejections that crash the server.
-    project.handleWatchedFileChanges(
+    running(project.handleWatchedFileChanges(
       params.changes, fsProvider, fileEncoding,
       settings.diagnostics,
       () => collectCallTypesPerTarget(documentStates),
@@ -499,7 +500,7 @@ export function createQspServer(
     ).then(
       reportProjectSize,
       (err: unknown) => { console.error('[QSP] Failed to handle watched file changes:', err); },
-    );
+    ));
   });
 
   connection.onDidChangeConfiguration((_change) => {
@@ -611,58 +612,69 @@ export function createQspServer(
   // again only if one of them changed what they can see (fileInterface).
   const projectRebuildAndReanalyze = (changed?: string) => {
     cancelProjectRediagnose();
-    project.rebuildAndReanalyzeAll(
+    runProjectRebuild({ changed: changed === undefined ? undefined : [changed] }, changed);
+  };
+
+  // The project's aggregates and diagnostics, in slices (see
+  // ProjectModeService.rebuildAndReanalyzeAll); when they take more than
+  // one, `busyUri` shows as busy until they are sent.
+  function runProjectRebuild(options: RebuildOptions, busyUri?: string): void {
+    const busy = busyWhilePausing(busyUri);
+    running(project.rebuildAndReanalyzeAll(
       settings.diagnostics,
       () => collectCallTypesPerTarget(documentStates),
       (ownUri: string) => collectPeerDocs(documentStates, ownUri),
-      undefined,
-      changed === undefined ? undefined : [changed],
-    );
-  };
+      { ...options, pause: busy.pause },
+    ).catch((err: unknown) => {
+      log.error(`[QSP] Project diagnostics failed: ${err}`);
+    }).finally(busy.end));
+  }
+
+  // Aggregates and diagnostics running in slices, until they end.
+  const inFlight = new Set<Promise<unknown>>();
+  function running(work: Promise<unknown>): void {
+    inFlight.add(work);
+    void work.finally(() => inFlight.delete(work));
+  }
+
+  // The MCP server reads every file's diagnostics after an edit: only
+  // once the slices of the work it started have all run.
+  connection.onRequest(SETTLED_REQUEST, async () => {
+    while (inFlight.size > 0) await Promise.all(inFlight);
+  });
+
+  // A pause between slices that reports `uri` as busy from the first one
+  // on: work done in one slice is too short to show.
+  function busyWhilePausing(uri: string | undefined): { pause: () => Promise<void>; end: () => void } {
+    let busy = false;
+    return {
+      pause: () => {
+        if (!busy && uri) { busy = true; status.begin(uri); }
+        return pauseForWrites();
+      },
+      end: () => { if (busy) status.end(uri!); },
+    };
+  }
 
   // ── Fast-tier cross-file re-diagnosis ─────────────────────────────
   // When an edit changes a file's location names, the other project files
   // are re-diagnosed on a follow-up timer so their cross-file duplicate
   // errors update before the tree tier. One run is pending at a time:
-  // files whose fast tiers fire together share it, and the files that
-  // triggered it are skipped (their own diagnostics were just cleared and
-  // the tree tier re-sends them).
+  // files whose fast tiers fire together share it. The edited files are
+  // left out (their symbols lag behind; their diagnostics were just
+  // cleared and the tree tier re-sends them).
   let projectRediagnoseTimer: ReturnType<typeof setTimeout> | undefined;
-  const projectRediagnoseSkip = new Set<string>();
 
   function cancelProjectRediagnose(): void {
     if (projectRediagnoseTimer) clearTimeout(projectRediagnoseTimer);
     projectRediagnoseTimer = undefined;
-    projectRediagnoseSkip.clear();
   }
 
-  function scheduleProjectRediagnose(editedUri: string): void {
-    projectRediagnoseSkip.add(editedUri);
+  function scheduleProjectRediagnose(): void {
     if (projectRediagnoseTimer) return;
     projectRediagnoseTimer = setTimeout(() => {
-      const skip = new Set(projectRediagnoseSkip);
       projectRediagnoseTimer = undefined;
-      projectRediagnoseSkip.clear();
-      const liveAgg = project.projectAggregates;
-      if (!liveAgg || !settings.project.enabled) return;
-      // From symbols that lag behind the edit: not a state to compare with.
-      project.forgetDiagnosedInterfaces();
-      for (const uri of project.projectFileUris) {
-        if (skip.has(uri)) continue;
-        const st = documentStates.get(uri);
-        if (!st) continue;
-        const otherDoc = documents.get(uri);
-        const d = diagnose(
-          otherDoc ?? null, uri, st.locationIndex,
-          settings.diagnostics,
-          liveAgg.callTypesPerTarget ?? collectCallTypesPerTarget(documentStates),
-          st.symbols, st.syntaxErrors, liveAgg,
-          undefined,
-          collectPeerDocs(documentStates, uri),
-          st.suppressions,
-        );
-        safeSendDiagnostics(connection, { uri, diagnostics: d });
-      }
+      if (project.projectAggregates && settings.project.enabled) runProjectRebuild({});
     }, 0);
   }
 
@@ -693,6 +705,15 @@ export function createQspServer(
   const afterPendingWrites: (fn: () => void) => void = typeof setImmediate === 'function'
     ? (fn) => { setImmediate(fn); }
     : (fn) => { setTimeout(fn, 0); };
+  // A pause between slices of work (slices.ts). vscode-jsonrpc handles a
+  // request that came in from one turn and writes its answer from the
+  // next: two turns let both through before the work goes on (on a
+  // 12.8 M-character file, answers in 32 ms instead of 80 ms).
+  const pauseForWrites = async () => {
+    await new Promise<void>((resolve) => afterPendingWrites(resolve));
+    await new Promise<void>((resolve) => afterPendingWrites(resolve));
+  };
+  project.pause = pauseForWrites;
 
   /**
    * Analyze an open document, reporting it as busy when it is big enough
@@ -783,6 +804,7 @@ export function createQspServer(
     fastTimers.clear();
     treeTimers.clear();
     cancelProjectRediagnose();
+    project.stopRebuild();
     for (const state of documentStates.values()) releasePerLocationTrees(state);
     tsParser.dispose();
   });
@@ -885,10 +907,7 @@ export function createQspServer(
           if (oldIdx[i].nameLower !== newIdx[i].nameLower) { changed = true; break; }
         }
       }
-      if (changed) {
-        project.rebuildAggregates(() => collectCallTypesPerTarget(documentStates));
-        scheduleProjectRediagnose(doc.uri);
-      }
+      if (changed) scheduleProjectRediagnose();
     }
   }
 
@@ -986,7 +1005,7 @@ export function createQspServer(
       completeLocation(entry);
       made++;
       if (Date.now() - sliceStarted >= SLICE_MS) {
-        await new Promise<void>((resolve) => afterPendingWrites(resolve));
+        await pauseForWrites();
         sliceStarted = Date.now();
       }
     }
@@ -998,6 +1017,34 @@ export function createQspServer(
     for (const entry of state.perLocationCache.values()) {
       if (entry.tree) { entry.tree.delete(); entry.tree = undefined; }
     }
+  }
+
+  // The diagnostics of an open file outside a project, in slices (see
+  // slices.ts) so requests are answered meanwhile. A run stops when the
+  // file's analysis is replaced: the next one's run sends them instead.
+  function diagnoseFile(uri: string): void {
+    const state = documentStates.get(uri);
+    const doc = documents.get(uri);
+    if (!state || !doc) return;
+    const busy = busyWhilePausing(uri);
+    running(runInSlices(
+      perf.phaseSteps('file diagnostics', fileDiagnosticsSteps(doc, uri, state), (d) => `${d.length} diagnostics`),
+      { sliceMs: SLICE_MS, pause: busy.pause, cancelled: () => shuttingDown || documentStates.get(uri) !== state },
+    ).then(
+      (done) => { if (done) safeSendDiagnostics(connection, { uri, diagnostics: done.value }); },
+      (err: unknown) => { log.error(`[QSP] Diagnostics failed: ${err}`); },
+    ).finally(busy.end));
+  }
+
+  function* fileDiagnosticsSteps(doc: TextDocument, uri: string, state: DocumentState): Steps<Diagnostic[]> {
+    const fileAgg = yield* perf.stepSteps('file aggregates', fileAggregatesSteps(state, uri, tightOnMemory));
+    return yield* perf.stepSteps('diagnostics', diagnosticsSteps(
+      doc, uri, state.locationIndex, settings.diagnostics,
+      collectCallTypesPerTarget(documentStates), state.symbols,
+      state.syntaxErrors, undefined, fileAgg,
+      collectPeerDocs(documentStates, uri),
+      state.suppressions,
+    ));
   }
 
   function analyzeDocument(doc: TextDocument): void {
@@ -1031,16 +1078,7 @@ export function createQspServer(
     } else if (projectLoadPending) {
       deferredDiagnostics.add(doc.uri);
     } else {
-      const state = documentStates.get(doc.uri)!;
-      const fileAgg = perf.step('file aggregates', () => fileAggregates(state, doc.uri, tightOnMemory));
-      const diagnostics = diagnose(
-        doc, doc.uri, locationIndex, settings.diagnostics,
-        collectCallTypesPerTarget(documentStates), symbols,
-        undefined, undefined, fileAgg,
-        collectPeerDocs(documentStates, doc.uri),
-        state.suppressions,
-      );
-      safeSendDiagnostics(connection, { uri: doc.uri, diagnostics });
+      diagnoseFile(doc.uri);
     }
     refreshSemanticTokens();
   }
@@ -1268,16 +1306,7 @@ export function createQspServer(
     } else if (projectLoadPending) {
       deferredDiagnostics.add(doc.uri);
     } else {
-      const state = documentStates.get(doc.uri)!;
-      const fileAgg = perf.step('file aggregates', () => fileAggregates(state, doc.uri, tightOnMemory));
-      const diagnostics = diagnose(
-        doc, doc.uri, currentIndex, settings.diagnostics,
-        collectCallTypesPerTarget(documentStates), symbols,
-        allErrors, undefined, fileAgg,
-        collectPeerDocs(documentStates, doc.uri),
-        state.suppressions,
-      );
-      safeSendDiagnostics(connection, { uri: doc.uri, diagnostics });
+      diagnoseFile(doc.uri);
     }
 
     // Tell VS Code to re-request semantic tokens.
@@ -1412,16 +1441,7 @@ export function createQspServer(
     } else if (projectLoadPending) {
       deferredDiagnostics.add(doc.uri);
     } else {
-      const state = documentStates.get(doc.uri)!;
-      const fileAgg = perf.step('file aggregates', () => fileAggregates(state, doc.uri, tightOnMemory));
-      const diagnostics = diagnose(
-        doc, doc.uri, locationIndex, settings.diagnostics,
-        collectCallTypesPerTarget(documentStates), symbols,
-        allErrors, undefined, fileAgg,
-        collectPeerDocs(documentStates, doc.uri),
-        state.suppressions,
-      );
-      safeSendDiagnostics(connection, { uri: doc.uri, diagnostics });
+      diagnoseFile(doc.uri);
     }
 
     // Tell VS Code to re-request semantic tokens.

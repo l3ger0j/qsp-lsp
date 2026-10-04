@@ -39,18 +39,19 @@ import {
   type ProjectAggregates,
   collectAggregates,
   emptyAggregates,
-  finishAggregates,
-  propagateLocals,
+  finishAggregatesSteps,
+  propagateLocalsSteps,
   propagationBase,
-  reusePropagation,
-  loadPropagation,
-  storedPropagation,
+  reusePropagationSteps,
+  loadPropagationSteps,
+  storedPropagationSteps,
   type PropagationBase,
   type SymbolAggregates,
 } from './aggregation';
 import type { DiagnosticSettings } from './diagnostics';
 import type { DocumentState } from './lspFeatures';
-import { computeDiagnostics } from './diagnostics';
+import { diagnosticsSteps } from './diagnostics';
+import { runInSlices, runNow, timed, type Steps } from './slices';
 import { analyzeParsedLocation } from './locationAnalysis';
 import { parseSuppressions } from '../common/suppressions';
 import { PerfLog, formatChars } from './perfLog';
@@ -66,6 +67,16 @@ function yieldToEventLoop(): Promise<void> {
 
 /** What the analysis cache keeps for a whole project: each file's diagnostics. */
 type StoredDiagnostics = Array<[uri: string, diagnostics: Diagnostic[]]>;
+
+/** What {@link ProjectModeService.rebuildAndReanalyzeAll} diagnoses, and where it puts the results. */
+export interface RebuildOptions {
+  /** Gets every file's diagnostics as they are sent. */
+  collected?: Map<string, Diagnostic[]>;
+  /** The files whose text changed; see rebuildAndReanalyzeAll. */
+  changed?: readonly string[];
+  /** Pauses between slices in place of {@link ProjectModeService.pause}. */
+  pause?: () => Promise<void>;
+}
 
 /** What the analysis cache keeps for one project file. */
 export interface CachedFileAnalysis {
@@ -115,6 +126,18 @@ export class ProjectModeService {
   perf = new PerfLog(() => {});
   /** True when the server is short of memory (see memoryGuard.ts). */
   shouldStop: (() => boolean) | undefined;
+  /**
+   * Lets the event loop run between slices of the aggregates and
+   * diagnostics (slices.ts); the server makes it wait for the replies
+   * it is writing.
+   */
+  pause: () => Promise<void> = yieldToEventLoop;
+  /** The aggregates and diagnostics run this long before letting requests in. */
+  sliceMs = 20;
+  // Counts the rebuilds of the aggregates: one in slices stops when a later one starts.
+  private rebuilds = 0;
+  // The rebuild in slices started last.
+  private latestRebuild: Promise<boolean> | undefined;
   /** Told which file's per-location analysis is running, for the crash recorder. */
   tracking: {
     /** The per-location analysis running now, or undefined when it ends. */
@@ -203,8 +226,8 @@ export class ProjectModeService {
 
     // Build aggregates and re-diagnose everything
     const published = diagnosticsKey ? new Map<string, Diagnostic[]>() : undefined;
-    this.rebuildAndReanalyzeAll(diagnosticsSettings, collectCallTypes, collectPeerDocs, published);
-    if (diagnosticsKey && published && this.analysisCache) {
+    const done = await this.rebuildAndReanalyzeAll(diagnosticsSettings, collectCallTypes, collectPeerDocs, { collected: published });
+    if (done && diagnosticsKey && published && this.analysisCache) {
       const entry: StoredDiagnostics = [...published];
       this.perf.step('cache write', () => this.analysisCache!.put(diagnosticsKey, entry));
     }
@@ -212,6 +235,12 @@ export class ProjectModeService {
     this.log.log(
       `[QSP] Project mode initialized with ${this.projectFileUris.size} files`,
     );
+  }
+
+  /** Stop a rebuild running in slices (see rebuildAndReanalyzeAll), e.g. on shutdown. */
+  stopRebuild(): void {
+    this.rebuilds++;
+    this.latestRebuild = undefined;
   }
 
   /** Tear down project mode: clear non-open file states, clear aggregates. */
@@ -226,6 +255,7 @@ export class ProjectModeService {
       }
     }
 
+    this.stopRebuild();
     this.projectFileUris.clear();
     this.diagnosedInterfaces.clear();
     this.propagation = undefined;
@@ -442,6 +472,17 @@ export class ProjectModeService {
   rebuildAggregates(
     collectCallTypes: () => Map<string, { name: string; types: Set<string> }>,
   ): ProjectAggregates {
+    this.stopRebuild();
+    return runNow(this.rebuildAggregatesSteps(collectCallTypes));
+  }
+
+  /**
+   * {@link rebuildAggregates} in steps (see slices.ts). The aggregates
+   * take the place of the current ones at the end only.
+   */
+  *rebuildAggregatesSteps(
+    collectCallTypes: () => Map<string, { name: string; types: Set<string> }>,
+  ): Steps<ProjectAggregates> {
     const agg: ProjectAggregates = {
       locationDefs: new Map(),
       ...emptyAggregates(),
@@ -463,7 +504,8 @@ export class ProjectModeService {
       }
     }
 
-    for (const uri of this.projectFileUris) {
+    for (const uri of [...this.projectFileUris]) {
+      yield;
       const state = this.documentStates.get(uri);
       if (!state) continue;
 
@@ -501,17 +543,17 @@ export class ProjectModeService {
       }
       // Seconds in a large game: an edit that changes no location's
       // interface (game text, comments, new lines) keeps the last one.
-      const reused = this.perf.step('propagation reuse', () => reusePropagation(this.propagation, allLocs, agg, this.shouldStop))
-        || this.perf.step('propagation cache read', () => this.readPropagation(allLocs, agg));
+      const reused = (yield* this.perf.stepSteps('propagation reuse', reusePropagationSteps(this.propagation, allLocs, agg, this.shouldStop)))
+        || (yield* this.perf.stepSteps('propagation cache read', this.readPropagation(allLocs, agg)));
       if (!reused) {
-        const started = performance.now();
-        this.perf.step('propagation', () => propagateLocals(allLocs, agg, this.shouldStop));
+        const time = { ms: 0 };
+        yield* this.perf.stepSteps('propagation', timed(propagateLocalsSteps(allLocs, agg, this.shouldStop), time));
         // Most games' propagation takes milliseconds, less than reading it back.
-        if (performance.now() - started >= this.propagationCacheMinMs && !this.shouldStop?.()) {
-          this.perf.step('propagation cache write', () => this.storePropagation(allLocs, agg));
+        if (time.ms >= this.propagationCacheMinMs && !this.shouldStop?.()) {
+          yield* this.perf.stepSteps('propagation cache write', this.storePropagation(allLocs, agg));
         }
       }
-      this.perf.step('aggregates finish', () => finishAggregates(allLocs, agg));
+      yield* this.perf.stepSteps('aggregates finish', finishAggregatesSteps(allLocs, agg));
       this.propagation = propagationBase(allLocs, agg);
     }
 
@@ -534,14 +576,14 @@ export class ProjectModeService {
       `${uri}\n${locSyms.locationName}\n${locationInterface(locSyms)}`));
   }
 
-  private readPropagation(allLocs: ReadonlyArray<{ locName: string; locSyms: LocationSymbols; uri: string }>, agg: SymbolAggregates): boolean {
+  private *readPropagation(allLocs: ReadonlyArray<{ locName: string; locSyms: LocationSymbols; uri: string }>, agg: SymbolAggregates): Steps<boolean> {
     const key = this.propagationKey(allLocs);
-    return key !== undefined && loadPropagation(this.analysisCache!.get(key), allLocs, agg);
+    return key !== undefined && (yield* loadPropagationSteps(this.analysisCache!.get(key), allLocs, agg));
   }
 
-  private storePropagation(allLocs: ReadonlyArray<{ locName: string; locSyms: LocationSymbols; uri: string }>, agg: SymbolAggregates): void {
+  private *storePropagation(allLocs: ReadonlyArray<{ locName: string; locSyms: LocationSymbols; uri: string }>, agg: SymbolAggregates): Steps {
     const key = this.propagationKey(allLocs);
-    const stored = key !== undefined ? storedPropagation(agg, allLocs) : undefined;
+    const stored = key !== undefined ? yield* storedPropagationSteps(agg, allLocs) : undefined;
     if (stored) this.analysisCache!.put(key!, stored);
   }
 
@@ -558,18 +600,40 @@ export class ProjectModeService {
     collected?: Map<string, Diagnostic[]>,
     only?: ReadonlySet<string>,
   ): number {
-    if (!this.projectAggregates) return 0;
+    return runNow(this.reanalyzeSteps(diagnosticsSettings, collectCallTypes, collectPeerDocs, getDoc, collected, only));
+  }
+
+  /** {@link reanalyzeAll} in steps (see slices.ts): each file's diagnostics are sent when made. */
+  *reanalyzeSteps(
+    diagnosticsSettings: DiagnosticSettings,
+    collectCallTypes: () => Map<string, { name: string; types: Set<string> }>,
+    collectPeerDocs: (ownUri: string) => DocumentSymbols[],
+    getDoc: (uri: string) => TextDocument | undefined,
+    collected?: Map<string, Diagnostic[]>,
+    only?: ReadonlySet<string>,
+    /** Diagnosed before the others, e.g. the files an edit changed. */
+    first: readonly string[] = [],
+  ): Steps<number> {
+    const agg = this.projectAggregates;
+    if (!agg) return 0;
     let published = 0;
 
-    const callTypes = this.projectAggregates.callTypesPerTarget ?? collectCallTypes();
+    const callTypes = agg.callTypesPerTarget ?? collectCallTypes();
 
-    for (const uri of this.projectFileUris) {
+    // What the user looks at gets its diagnostics first: the files just
+    // changed, then the open ones.
+    const order = new Set(first.filter(uri => this.projectFileUris.has(uri)));
+    for (const uri of this.projectFileUris) if (this.documents.get(uri)) order.add(uri);
+    for (const uri of this.projectFileUris) order.add(uri);
+    for (const uri of order) {
       if (only && !only.has(uri)) continue;
       const state = this.documentStates.get(uri);
-      if (!state) continue;
+      // Positions from an older parse: the file's diagnostics were cleared
+      // and come when its analysis catches up.
+      if (!state || state.positionsApproximate) continue;
 
       const doc = getDoc(uri);
-      const diagnostics = computeDiagnostics(
+      const diagnostics = yield* diagnosticsSteps(
         doc ?? null,
         uri,
         state.locationIndex,
@@ -577,7 +641,7 @@ export class ProjectModeService {
         callTypes,
         state.symbols,
         state.syntaxErrors,
-        this.projectAggregates,
+        agg,
         undefined,
         collectPeerDocs(uri),
         state.suppressions,
@@ -593,16 +657,41 @@ export class ProjectModeService {
    * Rebuild the aggregates, then diagnose the project files again: only
    * `changed` when no file's interface differs from when they were all last
    * diagnosed (the others' diagnostics can't have changed), every file
-   * otherwise or without `changed`.
+   * otherwise or without `changed`. Files whose symbols lag behind their
+   * text (the fast tier) are left out: they are diagnosed when they catch up.
+   *
+   * Runs in slices, answering requests between them, and stops when another
+   * rebuild starts, which covers it. Resolves when the project's diagnostics
+   * are sent, by this run or the one that took over, to whether this run
+   * ran to the end.
    */
   rebuildAndReanalyzeAll(
     diagnosticsSettings: DiagnosticSettings,
     collectCallTypes: () => Map<string, { name: string; types: Set<string> }>,
     collectPeerDocs: (ownUri: string) => DocumentSymbols[],
-    collected?: Map<string, Diagnostic[]>,
-    changed?: readonly string[],
-  ): void {
-    this.perf.phase('project aggregates', () => this.rebuildAggregates(collectCallTypes), () => `${this.projectFileUris.size} files`);
+    options: RebuildOptions = {},
+  ): Promise<boolean> {
+    const run = ++this.rebuilds;
+    const rebuild: Promise<boolean> = runInSlices(
+      this.rebuildAndReanalyzeSteps(diagnosticsSettings, collectCallTypes, collectPeerDocs, options),
+      { sliceMs: this.sliceMs, pause: options.pause ?? this.pause, cancelled: () => run !== this.rebuilds },
+    ).then(async (done) => {
+      if (done) return true;
+      const next = this.latestRebuild;
+      if (next && next !== rebuild) await next;
+      return false;
+    });
+    this.latestRebuild = rebuild;
+    return rebuild;
+  }
+
+  private *rebuildAndReanalyzeSteps(
+    diagnosticsSettings: DiagnosticSettings,
+    collectCallTypes: () => Map<string, { name: string; types: Set<string> }>,
+    collectPeerDocs: (ownUri: string) => DocumentSymbols[],
+    { collected, changed }: RebuildOptions,
+  ): Steps {
+    yield* this.perf.phaseSteps('project aggregates', this.rebuildAggregatesSteps(collectCallTypes), () => `${this.projectFileUris.size} files`);
     const interfaces = new Map<string, string>();
     for (const uri of this.projectFileUris) {
       const iface = this.fileInterface(uri);
@@ -613,19 +702,14 @@ export class ProjectModeService {
       && [...interfaces].every(([uri, iface]) => this.diagnosedInterfaces.get(uri) === iface)
       ? new Set(changed)
       : undefined;
-    this.perf.phase('project diagnostics', () => this.reanalyzeAll(
+    // Files are diagnosed one after another, and a run stopped midway
+    // leaves the rest as they were: until this one ends, no state holds.
+    if (!only) this.diagnosedInterfaces = new Map();
+    yield* this.perf.phaseSteps('project diagnostics', this.reanalyzeSteps(
       diagnosticsSettings, collectCallTypes, collectPeerDocs,
-      uri => this.documents.get(uri), collected, only,
+      uri => this.documents.get(uri), collected, only, changed,
     ), (n) => `${only ? `${only.size} of ` : ''}${this.projectFileUris.size} files, ${n} diagnostics`);
     if (!only) this.diagnosedInterfaces = interfaces;
-  }
-
-  /**
-   * The project files were diagnosed apart from rebuildAndReanalyzeAll (the
-   * fast tier's re-diagnosis): the next edit diagnoses every file again.
-   */
-  forgetDiagnosedInterfaces(): void {
-    this.diagnosedInterfaces.clear();
   }
 
   /**
@@ -725,6 +809,6 @@ export class ProjectModeService {
     for (const change of changes) {
       await this.applyFileChange(change.uri, change.type, fsProvider, fileEncoding);
     }
-    this.rebuildAndReanalyzeAll(diagnosticsSettings, collectCallTypes, collectPeerDocs, undefined, changes.map(c => c.uri));
+    await this.rebuildAndReanalyzeAll(diagnosticsSettings, collectCallTypes, collectPeerDocs, { changed: changes.map(c => c.uri) });
   }
 }

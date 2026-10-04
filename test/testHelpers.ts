@@ -84,6 +84,11 @@ export const ALL_DIAGS_OFF: DiagnosticSettings = {
   maxLocationLines: 0,
 };
 
+/** DiagnosticSettings with every check enabled. */
+export const ALL_DIAGS_ON = Object.fromEntries(
+  Object.entries(ALL_DIAGS_OFF).map(([k, v]) => [k, typeof v === 'boolean' ? true : v]),
+) as unknown as DiagnosticSettings;
+
 /**
  * Parse QSP source and run the real `computeDiagnostics`.
  *

@@ -15,6 +15,9 @@
  * - Until the server has read the settings it doesn't know whether project
  *   mode is on, so the item must not claim "Single file" in the meantime
  *   (a file opened first, which starts the server, used to show it).
+ * - A large file's aggregates and diagnostics run in slices: a request
+ *   that comes in meanwhile is answered before they end, and qsp/settled
+ *   (what the MCP server waits for) only after they are sent.
  * - The client shows degraded modes (tree-sitter failed, a whole-file
  *   parse timed out) as warnings, but regex-only mode on vscode.dev is
  *   by design and is not a warning.
@@ -37,6 +40,7 @@ import {
 import {
   ANALYSIS_STATUS_MIN_BYTES,
   ANALYSIS_STATUS_NOTIFICATION,
+  SETTLED_REQUEST,
   describeAnalysisStatus,
   type AnalysisStatus,
 } from '../src/common/analysisStatus';
@@ -209,6 +213,29 @@ describe('server analysis status', () => {
     const last = events.filter(e => e.kind === 'status').at(-1);
     expect(last?.kind === 'status' && last.status.busyUris).toEqual([]);
   }, 15_000);
+
+  it('answers requests while a large file is diagnosed, and settles once its diagnostics are sent', async () => {
+    const { client, events } = await startServer();
+    // Locals passed along a chain of calls: the propagation and the checks
+    // take many slices.
+    const n = 3000;
+    const text = Array.from({ length: n }, (_, i) =>
+      `# loc${i}\nlocal a${i % 7} = ${i}\nx = a${i % 7} + y${i}\ngs 'loc${(i + 1) % n}'\npl z${i}\n---\n`).join('');
+    const uri = 'file:///chain.qsps';
+    const order: string[] = [];
+    client.onNotification(PublishDiagnosticsNotification.type, (p) => { if (p.uri === uri) order.push('diagnostics'); });
+    open(client, uri, text);
+    // Once the location index is in, but before the diagnostics are.
+    await new Promise<void>((resolve) => {
+      const tick = () => (events.some(e => e.kind === 'status' && e.status.busyUris.includes(uri)) ? resolve() : setTimeout(tick, 1));
+      tick();
+    });
+    await Promise.all([
+      client.sendRequest('textDocument/documentSymbol', { textDocument: { uri } }).then(() => order.push('request')),
+      client.sendRequest(SETTLED_REQUEST).then(() => order.push('settled')),
+    ]);
+    expect(order).toEqual(['request', 'diagnostics', 'settled']);
+  }, 30_000);
 
   it('parses a newly opened document once, not again on its open-time change event', async () => {
     const { client } = await startServer();

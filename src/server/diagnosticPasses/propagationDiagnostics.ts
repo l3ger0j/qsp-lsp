@@ -18,6 +18,7 @@ import {
 } from '../../parser';
 import type { ArgsUsage, SymbolAggregates } from '../aggregation';
 import { DiagnosticCtx } from './diagnosticHelpers';
+import type { Steps } from '../slices';
 
 // ── Inconsistent local propagation ────────────────────────────────────
 
@@ -45,14 +46,15 @@ const PROPAGATING_CALL_TYPES: ReadonlySet<string> = new Set(['gosub', 'func', 'd
  * The callee still sees the variable as local, which is all this
  * diagnostic cares about.
  */
-export function checkInconsistentLocalPropagation(
+export function* checkInconsistentLocalPropagation(
   ctx: DiagnosticCtx,
   symbols: DocumentSymbols,
   agg: SymbolAggregates,
-): void {
+): Steps {
   const { propagatedLocals, propagationCallers } = agg;
 
   for (const [targetLocKey, targetVars] of propagatedLocals) {
+    yield;
     const callerKeys = propagationCallers.get(targetLocKey);
     if (!callerKeys || callerKeys.size === 0) continue;
 
@@ -155,7 +157,7 @@ export function formatCallSiteGroups(
  * Flag locations that are defined but never referenced by any gs/func/goto
  * (except the first location, which is the entry point and therefore always "used").
  */
-export function checkUnusedLocations(
+export function* checkUnusedLocations(
   ctx: DiagnosticCtx,
   symbols: DocumentSymbols,
   locationIndex: Array<{ nameLower: string }>,
@@ -163,11 +165,12 @@ export function checkUnusedLocations(
   firstLocationKey?: string,
   namedInText: ReadonlySet<string> = new Set(),
   dynamicTargetShapes: ReadonlyArray<{ prefix: string; suffix: string }> = [],
-): void {
+): Steps {
   if (locationIndex.length === 0) return;
   const skipKey = firstLocationKey ?? locationIndex[0].nameLower;
 
   for (const [key, def] of symbols.locationDefs) {
+    yield;
     if (key === skipKey) continue;
     if (referencedLocations.has(key)) continue;
     // Its name is a value in the code: some jump may go there through a variable.
@@ -196,14 +199,15 @@ export function checkUnusedLocations(
  * Diagnostics are emitted at each `func`/`@` call site referencing the
  * unproductive target.
  */
-export function checkMissingResultInFunctionCall(
+export function* checkMissingResultInFunctionCall(
   ctx: DiagnosticCtx,
   symbols: DocumentSymbols,
   agg: SymbolAggregates,
   allLocationDefs: ReadonlyMap<string, unknown>,
-): void {
+): Steps {
   const writers = agg.locationsWritingResult;
   for (const [, locSyms] of symbols.locations) {
+    yield;
     if (locSyms.hasErrors) continue;
     for (const [targetKey, ref] of locSyms.locationRefs) {
       // Unresolved targets are already flagged by `unresolvedLocationRefs`.
@@ -231,12 +235,13 @@ export function checkMissingResultInFunctionCall(
  * so calls out to other locations cannot supply it — only writes inside
  * the block body itself count.
  */
-export function checkMissingResultInDyneval(
+export function* checkMissingResultInDyneval(
   ctx: DiagnosticCtx,
   symbols: DocumentSymbols,
   agg: SymbolAggregates,
-): void {
+): Steps {
   for (const [locKey, locSyms] of symbols.locations) {
+    yield;
     if (locSyms.hasErrors) continue;
 
     // ── Inline / locally-resolved dispatches ──
@@ -315,14 +320,15 @@ export function checkMissingResultInDyneval(
  * Targets unresolved across the whole project are skipped (they're
  * already flagged by `unresolvedLocationRefs`).
  */
-export function checkExtraArgsToTargetWithoutArgs(
+export function* checkExtraArgsToTargetWithoutArgs(
   ctx: DiagnosticCtx,
   symbols: DocumentSymbols,
   agg: SymbolAggregates,
   allLocationDefs: ReadonlyMap<string, unknown>,
-): void {
+): Steps {
   const argsUsageByLoc = agg.argsUsageByLoc;
   for (const [locKey, locSyms] of symbols.locations) {
+    yield;
     if (locSyms.hasErrors) continue;
 
     // ── Direct location calls ──
@@ -484,31 +490,31 @@ function isInsideRange(
 
 // ── Orchestrator ──────────────────────────────────────────────────────
 
-export function checkPropagation(
+export function* checkPropagation(
   ctx: DiagnosticCtx,
   symbols: DocumentSymbols,
   agg: SymbolAggregates,
   locationIndex: Array<{ nameLower: string }>,
   allLocationDefs: ReadonlyMap<string, unknown>,
   firstLocationKey?: string,
-): void {
+): Steps {
   const { referencedLocations } = agg;
 
   if (ctx.settings.inconsistentLocalPropagation) {
-    checkInconsistentLocalPropagation(ctx, symbols, agg);
+    yield* checkInconsistentLocalPropagation(ctx, symbols, agg);
   }
 
   if (ctx.settings.missingResultInFunctionCall) {
-    checkMissingResultInFunctionCall(ctx, symbols, agg, allLocationDefs);
-    checkMissingResultInDyneval(ctx, symbols, agg);
+    yield* checkMissingResultInFunctionCall(ctx, symbols, agg, allLocationDefs);
+    yield* checkMissingResultInDyneval(ctx, symbols, agg);
   }
 
   if (ctx.settings.extraArgsToTargetWithoutArgs) {
-    checkExtraArgsToTargetWithoutArgs(ctx, symbols, agg, allLocationDefs);
+    yield* checkExtraArgsToTargetWithoutArgs(ctx, symbols, agg, allLocationDefs);
   }
 
   if (ctx.settings.unusedLocations && !agg.hasRegexOnlyLocations) {
-    checkUnusedLocations(
+    yield* checkUnusedLocations(
       ctx, symbols, locationIndex, referencedLocations,
       firstLocationKey, agg.namedInText, agg.dynamicTargetShapes,
     );

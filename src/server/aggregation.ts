@@ -31,6 +31,7 @@ import { ARGS_VAR_NAME, RESULT_VAR_NAME, CALL_FRAME_BUILTINS } from '../parser';
 import type { DocumentSymbols, VariableBinding } from '../parser/symbolTable';
 import type { SymbolLocation } from '../parser/symbolTypes';
 import { heartbeat } from './perfLog';
+import { runNow, type Steps } from './slices';
 import { bindingsOfLocal } from '../parser/variableBindings';
 import { locationInterface } from '../parser/locationInterface';
 import { literalOf, type TargetPattern } from '../parser/targetPattern';
@@ -475,6 +476,16 @@ export function propagateLocals(
   /** Propagate these names only (see reusePropagation). */
   onlyNames?: ReadonlySet<string>,
 ): void {
+  runNow(propagateLocalsSteps(allLocations, out, shouldStop, onlyNames));
+}
+
+/** {@link propagateLocals} in steps, one per call edge (see slices.ts). */
+export function* propagateLocalsSteps(
+  allLocations: Iterable<{ locName: string; locSyms: LocationSymbols; uri: string }>,
+  out: SymbolAggregates,
+  shouldStop?: () => boolean,
+  onlyNames?: ReadonlySet<string>,
+): Steps {
   // Step 1: Index all locations and collect call edges
   const locIndex = new Map<string, { locSyms: LocationSymbols; uri: string }>();
   // propagationEdges: all gs/gosub/func/@/@@ calls (any call that propagates locals)
@@ -684,6 +695,7 @@ export function propagateLocals(
     if (!callerInfo) continue;
 
     for (const edge of edges) {
+      yield;
       // Here rather than in propagate(): it runs millions of times, and
       // the heartbeat reads the clock.
       heartbeat();
@@ -766,6 +778,16 @@ export function reusePropagation(
   /** See {@link propagateLocals}. */
   shouldStop?: () => boolean,
 ): boolean {
+  return runNow(reusePropagationSteps(base, allLocations, out, shouldStop));
+}
+
+/** {@link reusePropagation} in steps (see slices.ts). */
+export function* reusePropagationSteps(
+  base: PropagationBase | undefined,
+  allLocations: ReadonlyArray<{ locName: string; locSyms: LocationSymbols; uri: string }>,
+  out: SymbolAggregates,
+  shouldStop?: () => boolean,
+): Steps<boolean> {
   if (!base || base.locations.length !== allLocations.length) return false;
   const swap = new Map<QspSymbol, QspSymbol>();
   const redo = new Set<string>();
@@ -778,6 +800,7 @@ export function reusePropagation(
     }
   };
   for (let i = 0; i < allLocations.length; i++) {
+    yield;
     const before = base.locations[i];
     const { uri, locSyms } = allLocations[i];
     if (before.locSyms === locSyms) continue;
@@ -804,7 +827,7 @@ export function reusePropagation(
   }
 
   const fresh = emptyAggregates();
-  if (redo.size > 0) propagateLocals(allLocations, fresh, shouldStop, redo);
+  if (redo.size > 0) yield* propagateLocalsSteps(allLocations, fresh, shouldStop, redo);
 
   // Copied only where a provider is swapped: a large game has hundreds of
   // thousands of pairs, and an edit swaps the providers of a few locations.
@@ -931,12 +954,13 @@ function locationsByKey(allLocations: Iterable<{ locName: string; locSyms: Locat
 }
 
 /** `agg`'s propagation of `allLocations`, to store; undefined when a provider can't be named. */
-export function storedPropagation(
+export function* storedPropagationSteps(
   agg: SymbolAggregates,
   allLocations: Iterable<{ locName: string; locSyms: LocationSymbols; uri: string }>,
-): StoredPropagation | undefined {
+): Steps<StoredPropagation | undefined> {
   const where = new Map<QspSymbol, { loc: string; key: string }>();
   for (const [loc, { locSyms }] of locationsByKey(allLocations)) {
+    yield;
     for (const [key, sym] of locSyms.variables) if (!where.has(sym)) where.set(sym, { loc, key });
   }
   const names: string[] = [];
@@ -950,9 +974,10 @@ export function storedPropagation(
     }
     return n;
   };
-  const byTarget = (map: Map<string, Map<string, PropagatedLocal[]>>): Uint32Array | undefined => {
+  function* byTarget(map: Map<string, Map<string, PropagatedLocal[]>>): Steps<Uint32Array | undefined> {
     const out: number[] = [];
     for (const [target, byVar] of map) {
+      yield;
       out.push(name(target), byVar.size);
       for (const [varName, providers] of byVar) {
         out.push(name(varName), providers.length);
@@ -964,18 +989,21 @@ export function storedPropagation(
       }
     }
     return Uint32Array.from(out);
-  };
-  const locals = byTarget(agg.propagatedLocals);
-  const shadowed = byTarget(agg.shadowedPropagations);
+  }
+  const locals = yield* byTarget(agg.propagatedLocals);
+  const shadowed = yield* byTarget(agg.shadowedPropagations);
   if (!locals || !shadowed) return undefined;
   const syms: number[] = [];
+  let sinceYield = 0;
   for (const sym of agg.propagatedSyms) {
+    if (++sinceYield % 1024 === 0) yield;
     const at = where.get(sym);
     if (!at) return undefined;
     syms.push(name(at.loc), name(at.key));
   }
   const callers: number[] = [];
   for (const [target, from] of agg.propagationCallers) {
+    yield;
     callers.push(name(target), from.size);
     for (const caller of from) callers.push(name(caller));
   }
@@ -987,11 +1015,11 @@ export function storedPropagation(
  * found in their symbols as they are now. Returns false, having done
  * nothing, when it doesn't fit them (or isn't one).
  */
-export function loadPropagation(
+export function* loadPropagationSteps(
   stored: unknown,
   allLocations: Iterable<{ locName: string; locSyms: LocationSymbols; uri: string }>,
   out: SymbolAggregates,
-): boolean {
+): Steps<boolean> {
   const s = stored as Partial<StoredPropagation> | undefined;
   if (!s || !Array.isArray(s.names) || !(s.locals instanceof Uint32Array) || !(s.shadowed instanceof Uint32Array)
     || !(s.syms instanceof Uint32Array) || !(s.callers instanceof Uint32Array)) return false;
@@ -1000,10 +1028,11 @@ export function loadPropagation(
   const text = (n: number | undefined) => (n === undefined ? undefined : names[n]);
   const symAt = (loc: string | undefined, key: string | undefined) =>
     loc === undefined || key === undefined ? undefined : byKey.get(loc)?.locSyms.variables.get(key);
-  const byTarget = (a: Uint32Array): Map<string, Map<string, PropagatedLocal[]>> | undefined => {
+  function* byTarget(a: Uint32Array): Steps<Map<string, Map<string, PropagatedLocal[]>> | undefined> {
     const map = new Map<string, Map<string, PropagatedLocal[]>>();
     let i = 0;
     while (i < a.length) {
+      yield;
       const target = text(a[i++]);
       const nVars = a[i++];
       if (target === undefined || nVars === undefined) return undefined;
@@ -1024,18 +1053,20 @@ export function loadPropagation(
       map.set(target, byVar);
     }
     return map;
-  };
-  const locals = byTarget(s.locals);
-  const shadowed = byTarget(s.shadowed);
+  }
+  const locals = yield* byTarget(s.locals);
+  const shadowed = yield* byTarget(s.shadowed);
   if (!locals || !shadowed) return false;
   const syms = new Set<QspSymbol>();
   for (let i = 0; i < s.syms.length; i += 2) {
+    if (i % 2048 === 0) yield;
     const sym = symAt(text(s.syms[i]), text(s.syms[i + 1]));
     if (!sym) return false;
     syms.add(sym);
   }
   const callers = new Map<string, Set<string>>();
   for (let i = 0; i < s.callers.length;) {
+    yield;
     const target = text(s.callers[i++]);
     const n = s.callers[i++];
     if (target === undefined || n === undefined) return false;
@@ -1081,6 +1112,14 @@ export function finishAggregates(
   allLocations: Iterable<{ locName: string; locSyms: LocationSymbols; uri: string }>,
   out: SymbolAggregates,
 ): void {
+  runNow(finishAggregatesSteps(allLocations, out));
+}
+
+/** {@link finishAggregates} in steps, one per location of each pass (see slices.ts). */
+export function* finishAggregatesSteps(
+  allLocations: Iterable<{ locName: string; locSyms: LocationSymbols; uri: string }>,
+  out: SymbolAggregates,
+): Steps {
   const locIndex = new Map<string, { locSyms: LocationSymbols; uri: string }>();
   for (const { locName, locSyms, uri } of allLocations) locIndex.set(locName.toLowerCase(), { locSyms, uri });
   const result = out.propagatedLocals;
@@ -1113,6 +1152,7 @@ export function finishAggregates(
     return seenIn(bySource, sourceLoc);
   };
   for (const [targetLoc, byVar] of result) {
+    yield;
     const targetInfo = locIndex.get(targetLoc);
     if (!targetInfo) continue;
     const targetBindings = targetInfo.locSyms.variableBindings;
@@ -1184,6 +1224,7 @@ export function finishAggregates(
   // "this value reaches the caller's local because of the call to K".
   // ────────────────────────────────────────────────────────────────────
   for (const [calleeLoc, calleeInfo] of locIndex) {
+    yield;
     const unresolved = calleeInfo.locSyms.unresolvedDynamicVarCalls;
     if (unresolved.length === 0) continue;
     const byVar = result.get(calleeLoc);
@@ -1411,6 +1452,7 @@ export function finishAggregates(
   };
 
   for (const [calleeLoc, calleeInfo] of locIndex) {
+    yield;
     const unresolved = calleeInfo.locSyms.unresolvedDynamicVarCalls;
     if (unresolved.length === 0) continue;
     const byVar = result.get(calleeLoc);
@@ -1456,6 +1498,7 @@ export function finishAggregates(
   //     pass that already failed intra-loc lookup).
   // ────────────────────────────────────────────────────────────────────
   for (const [calleeLoc, calleeInfo] of locIndex) {
+    yield;
     const deferredCalls = calleeInfo.locSyms.deferredDynamicVarCalls;
     if (deferredCalls.length === 0) continue;
 
@@ -1492,6 +1535,7 @@ export function finishAggregates(
   // ────────────────────────────────────────────────────────────────────
   out.globallyRead.clear();
   for (const [locKey, { locSyms }] of locIndex) {
+    yield;
     const propagatedIntoLoc = out.propagatedLocals.get(locKey);
     for (const sym of locSyms.ownedVariables) {
       if (sym.isLocal) continue;
@@ -1516,6 +1560,7 @@ export function finishAggregates(
   const argsUsage = out.argsUsageByLoc;
   argsUsage.clear();
   for (const [locKey, { locSyms }] of locIndex) {
+    yield;
     // Collect every code-block range in this location once: inline
     // dynamic/dyneval-arg blocks plus stored blocks bound to a
     // variable.  Both `result` and `args` are fresh per call frame at
@@ -1634,12 +1679,23 @@ export function fileAggregates(
   /** See {@link propagateLocals}. */
   shouldStop?: () => boolean,
 ): SymbolAggregates {
+  return runNow(fileAggregatesSteps(state, uri, shouldStop));
+}
+
+/** {@link fileAggregates} in steps (see slices.ts). */
+export function* fileAggregatesSteps(
+  state: { symbols: DocumentSymbols; aggCache?: SymbolAggregates; propagation?: PropagationBase },
+  uri: string,
+  shouldStop?: () => boolean,
+): Steps<SymbolAggregates> {
   if (state.aggCache) return state.aggCache;
   const agg = emptyAggregates();
   collectAggregates(state.symbols.locations.values(), agg);
   const locations = [...state.symbols.locations.values()].map(locSyms => ({ locName: locSyms.locationName, locSyms, uri }));
-  if (!reusePropagation(state.propagation, locations, agg, shouldStop)) propagateLocals(locations, agg, shouldStop);
-  finishAggregates(locations, agg);
+  if (!(yield* reusePropagationSteps(state.propagation, locations, agg, shouldStop))) {
+    yield* propagateLocalsSteps(locations, agg, shouldStop);
+  }
+  yield* finishAggregatesSteps(locations, agg);
   state.propagation = propagationBase(locations, agg);
   state.aggCache = agg;
   return agg;

@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { PerfLog, SLOW_PHASE_MS, formatChars, heartbeat } from '../src/server/perfLog';
+import type { Steps } from '../src/server/slices';
 
 function fixture(heap = [100, 300]) {
   let clock = 0;
@@ -74,6 +75,31 @@ describe('PerfLog', () => {
       perf.step('read', () => advance(1500));
     }, () => '12 files');
     expect(lines[0]).toMatch(/^\[perf\] project load 1\.50 s · read 1\.50 s · .* · 12 files$/);
+  });
+
+  it('times a phase in slices by its slices, apart from what runs between them', () => {
+    const { perf, lines, advance } = fixture();
+    function* propagation(): Steps {
+      advance(300);
+      yield;
+      advance(300);
+    }
+    function* work(): Steps<number> {
+      perf.step('parse', () => advance(600));
+      yield;
+      yield* perf.stepSteps('propagation', propagation());
+      return 2;
+    }
+    const steps = perf.phaseSteps('project aggregates', work(), (n) => `${n} files`);
+    let r = steps.next();
+    while (!r.done) {
+      // A pause, and a request answered in it with phases of its own.
+      advance(1000);
+      perf.phase('semantic tokens', () => perf.step('parse', () => advance(5)));
+      r = steps.next();
+    }
+    expect(r.value).toBe(2);
+    expect(lines.at(-1)).toMatch(/^\[perf\] project aggregates 1\.20 s · parse 600 ms, propagation 600 ms · heap .* · 2 files, 3\.21 s in all$/);
   });
 
   it('works without a memory reader (the browser)', () => {

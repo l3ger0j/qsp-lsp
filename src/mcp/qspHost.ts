@@ -40,7 +40,7 @@ import {
   type FileEvent,
   type InitializeParams,
 } from 'vscode-languageserver-protocol';
-import { ANALYSIS_STATUS_NOTIFICATION, type AnalysisStatus } from '../common/analysisStatus';
+import { ANALYSIS_STATUS_NOTIFICATION, SETTLED_REQUEST, type AnalysisStatus } from '../common/analysisStatus';
 import { createQspServer } from '../server/common';
 import { decodeBuffer, fsProvider } from '../server/nodeHost';
 import { nodeAnalysisCacheStore } from '../server/nodeCache';
@@ -195,6 +195,7 @@ export class QspHost {
     const analyzed = changes.filter(e => e.type !== FileChangeType.Deleted).map(e => this.nextDiagnostics(e.uri));
     this.client.sendNotification(DidChangeWatchedFilesNotification.type, { changes });
     await Promise.all(analyzed);
+    await this.settled();
   }
 
   /**
@@ -210,6 +211,7 @@ export class QspHost {
     }
     this.open.clear();
     await Promise.all(analyzed);
+    await this.settled();
   }
 
   /**
@@ -226,6 +228,7 @@ export class QspHost {
       textDocument: { uri, languageId: 'qsp', version: 1, text },
     });
     await analyzed;
+    await this.settled();
     return text;
   }
 
@@ -283,6 +286,12 @@ export class QspHost {
         // Deleted between the directory walk and the stat.
       }
     }
+  }
+
+  // The changed files' diagnostics come first; the other files' are sent
+  // in slices after them.
+  private async settled(): Promise<void> {
+    await this.client.sendRequest(SETTLED_REQUEST);
   }
 
   private nextDiagnostics(uri: string): Promise<void> {

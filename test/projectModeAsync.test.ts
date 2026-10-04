@@ -12,6 +12,9 @@
  *  - `handleWatchedFileChanges` applies a whole batch of watcher events
  *    and rebuilds the project aggregate ONCE — a `git checkout` touching
  *    hundreds of files must not trigger hundreds of full rebuilds;
+ *  - the aggregates and diagnostics run in slices (slices.ts), answering
+ *    requests between them; a rebuild started meanwhile takes over, and
+ *    what the user looks at (the files just changed) is diagnosed first;
  *  - `analyzeFile` parses every file one location at a time — a single
  *    multi-MB parse can take seconds (the same GLR blowup
  *    `PER_LOCATION_BYTE_THRESHOLD` avoids for open documents), and a
@@ -25,7 +28,8 @@ import { ProjectModeService } from '../src/server/projectMode';
 import { QspTreeSitterParser } from '../src/parser/treeSitter';
 import type { DocumentState } from '../src/server/lspFeatures';
 import type { FsProvider } from '../src/server/serverUtils';
-import { ALL_DIAGS_OFF, WASM_PATH } from './testHelpers';
+import type { Diagnostic } from 'vscode-languageserver';
+import { ALL_DIAGS_OFF, ALL_DIAGS_ON, WASM_PATH } from './testHelpers';
 
 /** Minimal Connection stand-in: ProjectModeService only ever logs and
  *  calls sendDiagnostics on it. */
@@ -34,6 +38,16 @@ function fakeConnection(): Connection {
     console: { log: () => {}, error: () => {}, warn: () => {}, info: () => {} },
     sendDiagnostics: () => {},
   } as unknown as Connection;
+}
+
+/** A Connection that keeps every publishDiagnostics, in order. */
+function recordingConnection(): { connection: Connection; sent: Array<{ uri: string; diagnostics: Diagnostic[] }> } {
+  const sent: Array<{ uri: string; diagnostics: Diagnostic[] }> = [];
+  const connection = {
+    console: { log: () => {}, error: () => {}, warn: () => {}, info: () => {} },
+    sendDiagnostics: (params: { uri: string; diagnostics: Diagnostic[] }) => { sent.push(params); },
+  } as unknown as Connection;
+  return { connection, sent };
 }
 
 /** Minimal TextDocuments stand-in: no files are "open" in the editor,
@@ -121,8 +135,8 @@ describe('ProjectModeService: async, non-blocking, batched project mode', () => 
     await project.init(fakeFsProvider(files), 'utf8', () => new Map(), () => [], ALL_DIAGS_OFF);
 
     let rebuildCount = 0;
-    const originalRebuildAggregates = project.rebuildAggregates.bind(project);
-    project.rebuildAggregates = (collectCallTypes) => {
+    const originalRebuildAggregates = project.rebuildAggregatesSteps.bind(project);
+    project.rebuildAggregatesSteps = (collectCallTypes) => {
       rebuildCount++;
       return originalRebuildAggregates(collectCallTypes);
     };
@@ -140,6 +154,72 @@ describe('ProjectModeService: async, non-blocking, batched project mode', () => 
     );
 
     expect(rebuildCount).toBe(1);
+  });
+
+  // Files with diagnostics of every kind the aggregates feed: unused and
+  // uninitialized variables, calls passing locals, unused locations.
+  function sliceProject(n: number) {
+    const files = new Map<string, string>();
+    for (let i = 0; i < n; i++) {
+      files.set(`/proj/f${i}.qsps`, `# loc${i}\nlocal a${i} = ${i}\nx${i} = a${i}\npl y${i}\ngs 'loc${(i + 1) % n}'\n---\n`);
+    }
+    const { connection, sent } = recordingConnection();
+    const documentStates = new Map<string, DocumentState>();
+    const project = new ProjectModeService(connection, fakeDocuments(), documentStates, tsParser);
+    project.workspaceFolders = ['/proj'];
+    const rebuild = (changed?: string[]) => project.rebuildAndReanalyzeAll(ALL_DIAGS_ON, () => new Map(), () => [], { changed });
+    // Every file's diagnostics from the aggregates as they stand.
+    const truth = () => {
+      const out = new Map<string, Diagnostic[]>();
+      project.reanalyzeAll(ALL_DIAGS_ON, () => new Map(), () => [], () => undefined, out);
+      return out;
+    };
+    const lastSent = () => new Map(sent.map(({ uri, diagnostics }) => [uri, diagnostics]));
+    const uriOf = (i: number) => fakeFsProvider(files).pathToUri(`/proj/f${i}.qsps`);
+    return { files, project, sent, rebuild, truth, lastSent, uriOf };
+  }
+
+  it('rebuilds the aggregates and diagnoses in slices, letting the event loop run between them', async () => {
+    const p = sliceProject(30);
+    await p.project.init(fakeFsProvider(p.files), 'utf8', () => new Map(), () => [], ALL_DIAGS_ON);
+    p.project.sliceMs = 0;
+    p.sent.length = 0;
+    let ticks = 0;
+    const poller = setInterval(() => { ticks++; }, 0);
+    expect(await p.rebuild()).toBe(true);
+    clearInterval(poller);
+    expect(ticks).toBeGreaterThan(0);
+    expect(p.sent.length).toBe(30);
+    expect(p.lastSent()).toEqual(p.truth());
+  });
+
+  it('lets a rebuild started meanwhile take over, and resolves when that one is done', async () => {
+    const p = sliceProject(30);
+    await p.project.init(fakeFsProvider(p.files), 'utf8', () => new Map(), () => [], ALL_DIAGS_ON);
+    p.project.sliceMs = 0;
+    const order: string[] = [];
+    const first = p.rebuild().then((done) => { order.push('first'); return done; });
+    await new Promise((resolve) => setImmediate(resolve));
+    // An edit between slices: a variable read in loc3 is now written there.
+    const before = p.truth().get(p.uriOf(3));
+    p.project.analyzeFile(p.uriOf(3), "# loc3\nlocal a3 = 3\nx3 = a3\ny3 = 1\npl y3\ngs 'loc4'\n---\n");
+    const second = p.rebuild([p.uriOf(3)]).then((done) => { order.push('second'); return done; });
+    expect(await first).toBe(false);
+    expect(await second).toBe(true);
+    expect(order).toEqual(['second', 'first']);
+    expect(p.lastSent()).toEqual(p.truth());
+    expect(p.lastSent().get(p.uriOf(3))).not.toEqual(before);
+  });
+
+  it('diagnoses the files an edit changed before the others', async () => {
+    const p = sliceProject(10);
+    await p.project.init(fakeFsProvider(p.files), 'utf8', () => new Map(), () => [], ALL_DIAGS_ON);
+    // A new call: what the other files see of it changes, so all of them are diagnosed.
+    p.project.analyzeFile(p.uriOf(7), "# loc7\nlocal a7 = 7\nx7 = a7\npl y7\ngs 'loc8'\ngs 'loc2'\n---\n");
+    p.sent.length = 0;
+    await p.rebuild([p.uriOf(7)]);
+    expect(p.sent[0].uri).toBe(p.uriOf(7));
+    expect(p.sent.length).toBe(10);
   });
 
   it('analyzeFile parses a large project file per-location instead of as one whole tree', () => {

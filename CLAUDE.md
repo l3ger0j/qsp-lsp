@@ -74,6 +74,12 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
 ✅ Do: skip such fields there (`SKIPPED_KEYS`, or `SCOPE_KEYS` for offset-based scope keys), and keep
    `test/fileInterface.test.ts` checking that other files keep the diagnostics a full re-diagnosis gives them.
 
+❌ Don't: add a synchronous loop over every location or file to the aggregates or diagnostics: on a large game
+   it holds every request for seconds.
+✅ Do: write it as a `Steps` generator (`src/server/slices.ts`) that `yield`s after each location or file, called with
+   `yield*`; the server runs it a slice at a time (`runInSlices`). A generator called without `yield*` does nothing,
+   and tsc doesn't catch it.
+
 ❌ Don't: assume tree-sitter is ready (browser mode, initial load).
 ✅ Do: guard with `tsParser.isReady` and fall back to `regexFallback.ts`.
 

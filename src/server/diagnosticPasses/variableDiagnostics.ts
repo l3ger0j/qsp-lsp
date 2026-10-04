@@ -23,6 +23,7 @@ import {
 import type { SymbolLocation } from '../../parser/symbolTypes';
 import type { SymbolAggregates } from '../aggregation';
 import { DiagnosticCtx } from './diagnosticHelpers';
+import type { Steps } from '../slices';
 
 // ── Constants ─────────────────────────────────────────────────────────
 
@@ -84,16 +85,17 @@ function valuesAt(
  * Anchored at the first non-definition reference per sym; the resolver
  * cost is paid once per sym, not per reference.
  */
-export function checkUninitializedVariables(
+export function* checkUninitializedVariables(
   ctx: DiagnosticCtx,
   symbols: DocumentSymbols,
   agg: SymbolAggregates,
   projectDocs?: DocumentSymbols[],
-): void {
+): Steps {
   const { globallyValueDefined } = agg;
   const projectDocsArg = projectDocs && projectDocs.length > 0 ? projectDocs : undefined;
 
   for (const [, locSyms] of symbols.locations) {
+    yield;
     if (locSyms.hasErrors) continue;
     for (const sym of locSyms.ownedVariables) {
       if (sym.hasValueDefinition) continue;
@@ -144,12 +146,12 @@ export function checkUninitializedVariables(
  * including caller-propagated locals and cross-location global bindings.
  * More than one distinct prefix means inconsistent usage.
  */
-export function checkMixedVariablePrefixes(
+export function* checkMixedVariablePrefixes(
   ctx: DiagnosticCtx,
   symbols: DocumentSymbols,
   agg: SymbolAggregates,
   projectDocs?: DocumentSymbols[],
-): void {
+): Steps {
   const { globalPrefixes, propagatedLocals } = agg;
   // Hoist the projectDocs normalisation: same value for every loc/sym.
   const projectDocsArg = projectDocs && projectDocs.length > 0 ? projectDocs : undefined;
@@ -169,6 +171,7 @@ export function checkMixedVariablePrefixes(
   };
 
   for (const [, locSyms] of symbols.locations) {
+    yield;
     if (locSyms.hasErrors) continue;
     const incoming = propagatedLocals.get(locSyms.locationName.toLowerCase());
 
@@ -229,13 +232,14 @@ export function checkMixedVariablePrefixes(
  * and built-in function-call RHS shapes are checked; opaque expressions
  * (arithmetic, interpolated strings, user calls…) are skipped.
  */
-export function checkTypeMismatch(
+export function* checkTypeMismatch(
   ctx: DiagnosticCtx,
   symbols: DocumentSymbols,
-): void {
+): Steps {
   const typeLabel = (p: string) => p === '$' ? 'string' : p === '%' ? 'tuple' : 'numeric';
 
   for (const [, locSyms] of symbols.locations) {
+    yield;
     if (locSyms.hasErrors) continue;
     for (const [, bindings] of locSyms.variableBindings) {
       for (const b of bindings) {
@@ -268,15 +272,16 @@ export function checkTypeMismatch(
  * pre-populated from the resolver, plus side-table suppressions for
  * effects the resolver cannot trace (cross-call writes, propagated syms).
  */
-export function checkUnusedVariables(
+export function* checkUnusedVariables(
   ctx: DiagnosticCtx,
   symbols: DocumentSymbols,
   agg: SymbolAggregates,
   docUri: string,
-): void {
+): Steps {
   const { globallyRead, propagatedSyms, propagatedLocals, crossCallWrites, namedInText } = agg;
 
   for (const [, locSyms] of symbols.locations) {
+    yield;
     if (locSyms.hasErrors) continue;
     const incoming = propagatedLocals.get(locSyms.locationName.toLowerCase());
 
@@ -337,11 +342,12 @@ export function checkUnusedVariables(
  * outer value (which is itself already call-frame-local).  Almost
  * always a misconception about how the call protocol works.
  */
-export function checkShadowsCallFrameBuiltin(
+export function* checkShadowsCallFrameBuiltin(
   ctx: DiagnosticCtx,
   symbols: DocumentSymbols,
-): void {
+): Steps {
   for (const [, locSyms] of symbols.locations) {
+    yield;
     if (locSyms.hasErrors) continue;
     // Fast reject: skip the entire location when neither name has any
     // `local` declaration (the overwhelmingly common case).
@@ -420,12 +426,13 @@ function locContains(outer: SymbolLocation, inner: SymbolLocation): boolean {
  * flow back.  Almost always either dead code (top-level redeclare
  * of an already-available variable) or an accidental name clash.
  */
-export function checkShadowsPropagatedLocal(
+export function* checkShadowsPropagatedLocal(
   ctx: DiagnosticCtx,
   symbols: DocumentSymbols,
   agg: SymbolAggregates,
-): void {
+): Steps {
   for (const [, locSyms] of symbols.locations) {
+    yield;
     if (locSyms.hasErrors) continue;
     const shadowMap = agg.shadowedPropagations.get(locSyms.locationName.toLowerCase());
     if (!shadowMap || shadowMap.size === 0) continue;
@@ -468,17 +475,17 @@ export function checkShadowsPropagatedLocal(
 // ── Orchestrator ────────────────────────────────────────────
 
 /** Run all variable dataflow diagnostics. */
-export function checkVariables(
+export function* checkVariables(
   ctx: DiagnosticCtx,
   symbols: DocumentSymbols,
   agg: SymbolAggregates,
   docUri: string,
   projectDocs?: DocumentSymbols[],
-): void {
-  if (ctx.settings.uninitializedVariables)  checkUninitializedVariables(ctx, symbols, agg, projectDocs);
-  if (ctx.settings.mixedVariablePrefixes)   checkMixedVariablePrefixes(ctx, symbols, agg, projectDocs);
-  if (ctx.settings.typeMismatch)             checkTypeMismatch(ctx, symbols);
-  if (ctx.settings.unusedVariables)          checkUnusedVariables(ctx, symbols, agg, docUri);
-  if (ctx.settings.shadowsCallFrameBuiltin)  checkShadowsCallFrameBuiltin(ctx, symbols);
-  if (ctx.settings.shadowsPropagatedLocal)   checkShadowsPropagatedLocal(ctx, symbols, agg);
+): Steps {
+  if (ctx.settings.uninitializedVariables)  yield* checkUninitializedVariables(ctx, symbols, agg, projectDocs);
+  if (ctx.settings.mixedVariablePrefixes)   yield* checkMixedVariablePrefixes(ctx, symbols, agg, projectDocs);
+  if (ctx.settings.typeMismatch)             yield* checkTypeMismatch(ctx, symbols);
+  if (ctx.settings.unusedVariables)          yield* checkUnusedVariables(ctx, symbols, agg, docUri);
+  if (ctx.settings.shadowsCallFrameBuiltin)  yield* checkShadowsCallFrameBuiltin(ctx, symbols);
+  if (ctx.settings.shadowsPropagatedLocal)   yield* checkShadowsPropagatedLocal(ctx, symbols, agg);
 }

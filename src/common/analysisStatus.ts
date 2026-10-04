@@ -8,6 +8,13 @@
 /** Custom notification carrying an {@link AnalysisStatus} snapshot. */
 export const ANALYSIS_STATUS_NOTIFICATION = 'qsp/analysisStatus';
 
+/**
+ * Custom request answered once the aggregates and diagnostics running now
+ * (in slices, between other requests) have all been sent. Diagnostics of
+ * the files an edit changed come first, the other files' after them.
+ */
+export const SETTLED_REQUEST = 'qsp/settled';
+
 export interface AnalysisStatus {
   /**
    * `full`: tree-sitter is loaded. `lite`: the host runs without it by

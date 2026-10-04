@@ -30,16 +30,11 @@ import { buildFileAggregates, collectCallTypesPerTarget, fileAggregates, type Pr
 import { extractLocationSymbols } from '../src/server/locationAnalysis';
 import { compactDeserialized } from '../src/server/nodeCache';
 import type { DocumentState } from '../src/server/featureTypes';
-import type { DiagnosticSettings } from '../src/server/diagnostics';
 import { PerfLog } from '../src/server/perfLog';
-import { ALL_DIAGS_OFF, initParser } from './testHelpers';
+import { ALL_DIAGS_ON, initParser } from './testHelpers';
 
 const parser = new QspTreeSitterParser();
 beforeAll(() => initParser(parser));
-
-const ALL_DIAGS_ON = Object.fromEntries(
-  Object.entries(ALL_DIAGS_OFF).map(([k, v]) => [k, typeof v === 'boolean' ? true : v]),
-) as unknown as DiagnosticSettings;
 
 // The file edited below, and two that see it: globals, objects and actions
 // across files, calls that pass locals, a code block run elsewhere, `args`
@@ -160,9 +155,9 @@ function project() {
     add,
     symbolsOf: (uri: string) => states.get(uri)!.symbols,
     /** Diagnose as the server does after `changed` changed; returns the files it diagnosed. */
-    run(changed?: string): Map<string, Diagnostic[]> {
+    async run(changed?: string): Promise<Map<string, Diagnostic[]>> {
       const out = new Map<string, Diagnostic[]>();
-      service.rebuildAndReanalyzeAll(ALL_DIAGS_ON, callTypes, peers, out, changed === undefined ? undefined : [changed]);
+      await service.rebuildAndReanalyzeAll(ALL_DIAGS_ON, callTypes, peers, { collected: out, changed: changed === undefined ? undefined : [changed] });
       return out;
     },
     /** Every file's diagnostics from the current aggregates. */
@@ -179,7 +174,7 @@ const B = 'file:///game/forest.qsps';
 const C = 'file:///game/other.qsps';
 
 describe('file interface', () => {
-  it('leaves the other files the diagnostics a full re-diagnosis gives them, edit after edit', () => {
+  it('leaves the other files the diagnostics a full re-diagnosis gives them, edit after edit', async () => {
     const p = project();
     p.add(A, MAIN);
     p.add(B, FOREST);
@@ -187,7 +182,7 @@ describe('file interface', () => {
     const perfLines: string[] = [];
     p.service.perf = new PerfLog(line => perfLines.push(line));
     p.service.perf.verbose = true;
-    const shown = p.run();
+    const shown = await p.run();
     expect(shown.get(B)!.length + shown.get(C)!.length).toBeGreaterThan(0);
 
     const edits = editsOf(MAIN);
@@ -196,7 +191,7 @@ describe('file interface', () => {
     let reused = 0;
     for (const text of edits.flatMap(e => [e, MAIN])) {
       p.add(A, text);
-      const diagnosed = p.run(A);
+      const diagnosed = await p.run(A);
       if (!diagnosed.has(B)) partial++;
       if (!/[·,] propagation \d/.test(perfLines.filter(l => l.includes('project aggregates')).at(-1)!)) reused++;
       for (const [uri, d] of diagnosed) shown.set(uri, d);
@@ -205,7 +200,7 @@ describe('file interface', () => {
       q.add(A, text);
       q.add(B, FOREST);
       q.add(C, OTHER);
-      const truth = q.run();
+      const truth = await q.run();
       for (const uri of [A, B, C]) expect(shown.get(uri), `${uri} after editing to:\n${text}`).toEqual(truth.get(uri));
       expect(p.service.projectAggregates, `aggregates after editing to:\n${text}`).toEqual(q.service.projectAggregates);
     }
@@ -253,13 +248,13 @@ describe('file interface', () => {
     }
   });
 
-  it('diagnoses every file when a file is added or removed', () => {
+  it('diagnoses every file when a file is added or removed', async () => {
     const p = project();
     p.add(A, MAIN);
     p.add(B, FOREST);
-    p.run();
+    await p.run();
     p.add(C, OTHER);
-    expect([...p.run(C).keys()].sort()).toEqual([A, B, C].sort());
+    expect([...(await p.run(C)).keys()].sort()).toEqual([A, B, C].sort());
   });
 });
 
