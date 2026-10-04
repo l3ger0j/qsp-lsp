@@ -13,6 +13,7 @@ import {
   SemanticTokenModifiers,
 } from 'vscode-languageserver';
 import { blockStatements, isVariableDefinition } from '../parser';
+import { isTextBlock } from '../parser/walkHelpers';
 import { EXEC_PROBE_RE, EXEC_LINK_RE, decodeDoubledQuotes } from '../parser/embeddedExec';
 import { makeOffsetProjector, bodyLineStarts } from '../parser/embeddedReparse';
 import { interpolationNeedsDecode } from '../parser/embeddedInterpolation';
@@ -355,7 +356,9 @@ function emitSemanticTokens(
 
     // Recurse
     if (node.type === 'code_block') {
-      for (const stmt of blockStatements(node)) visitNode(stmt);
+      // A block that is only text (an array key, a list of words) reads as a string.
+      if (isTextBlock(node)) push(node, tokenType(SemanticTokenTypes.string));
+      else for (const stmt of blockStatements(node)) visitNode(stmt);
     } else if (cursor.gotoFirstChild()) {
       do { visit(); } while (cursor.gotoNextSibling());
       cursor.gotoParent();

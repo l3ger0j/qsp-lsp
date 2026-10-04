@@ -446,6 +446,13 @@ pl '<<x + >>'
     expect(diags).toEqual([]);
   });
 
+  // `$mass[{act}]` is `$mass['act']`: the block is the key's text, and
+  // nothing can run it.
+  it('a block used as an array index is the text of its key, not code', () => {
+    const code = "# test\n$mass['symb'] = '*'\n$x = $mass[{symb}]\npl '<<$mass[{symb}]>><<$mass[{act}]>>'\n$mass[{k}] = 1\npl $x\n---\n";
+    expect(runDiagnostics(parser, code, { uninitializedVariables: true, unusedVariables: true, maxErrorsPerLocation: 100 })).toEqual([]);
+  });
+
   it('a word list in a file with a BOM gets no diagnostics, as without one', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qsp-bom-'));
     const diagnosticsOf = async (text: string) => {
