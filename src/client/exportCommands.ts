@@ -94,6 +94,23 @@ export async function combineFiles(
 }
 
 /**
+ * The folder of the .qsp the player starts: the output file's in `single`
+ * mode, the main source's (`mainUri`) in `perFile` mode. Libraries are
+ * built into `libs/` there: `inclib` takes a path relative to the game.
+ */
+export function gameFolderUri(gameCfg: GameConfig, mainUri: vscode.Uri | undefined): vscode.Uri {
+  const game = effectiveBuildMode(gameCfg) === 'single' || !mainUri ? resolveOutputUri(gameCfg) : mainUri;
+  return vscode.Uri.joinPath(game, '..');
+}
+
+/** {@link gameFolderUri} for the project as it stands, without building it. */
+export async function currentGameFolderUri(gameCfg: GameConfig, glob: string): Promise<vscode.Uri> {
+  const uris = withoutLibraries(await orderedProjectUris(gameCfg, glob),
+    u => vscode.workspace.asRelativePath(u, false), installedLibraries(gameCfg.libraries));
+  return gameFolderUri(gameCfg, uris[0]);
+}
+
+/**
  * Build the project's .qsp file(s) according to its build mode and write
  * the ones whose content changed. The main file (`mainFile` pattern) is
  * moved to the front first. Returns every output file in that order,
@@ -137,6 +154,7 @@ export async function buildProjectGame(
   if (conflicts) throw new Error(conflicts);
 
   const outputs: { uri: vscode.Uri; bytes: Uint8Array }[] = [];
+  const gameFolder = gameFolderUri(gameCfg, uris[0]);
   if (mode === 'single') {
     outputs.push({
       uri: resolveOutputUri(gameCfg),
@@ -144,10 +162,6 @@ export async function buildProjectGame(
     });
   } else {
     const byPath = new Map(uris.map(u => [u.path, u]));
-    for (const lib of libraries) {
-      const uri = vscode.Uri.joinPath(root!, lib.sourcePath);
-      byPath.set(uri.path, uri);
-    }
     const collisions = findOutputCollisions([...byPath.keys()]);
     if (collisions.length > 0) {
       const list = collisions.map(c => {
@@ -173,7 +187,7 @@ export async function buildProjectGame(
   for (const [i, lib] of libraries.entries()) {
     try {
       outputs.push({
-        uri: vscode.Uri.joinPath(root!, lib.outputPath),
+        uri: vscode.Uri.joinPath(gameFolder, lib.outputPath),
         bytes: await encodeTextToGame(context.extensionUri, normalizeText(libraryTexts[i]), { password }),
       });
     } catch (err) {

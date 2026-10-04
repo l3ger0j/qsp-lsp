@@ -26,7 +26,7 @@ import { buildLibraryTree, type InstalledState, type LibraryTreeNode } from '../
 import { findLocationConflicts, locationConflictMessage } from '../common/locationConflicts';
 import { normalizeText } from '../common/projectFiles';
 import { sha256Hex } from '../common/sha256';
-import { readFileAsText } from './exportCommands';
+import { currentGameFolderUri, readFileAsText } from './exportCommands';
 import { orderedProjectUris, readGameConfig, workspaceRoot, writeGameConfig, type GameConfig } from './gameConfig';
 import * as logger from './logger';
 import { parseTextBytes } from './txt2gam';
@@ -260,14 +260,14 @@ export class LibraryManager {
         && installed.some(l => l.id.toLowerCase() === c.id.toLowerCase()))
       .map(c => c.id);
     const remove = 'Remove';
+    const built = vscode.Uri.joinPath(await currentGameFolderUri(cfg, this.qspGlob), lib.outputPath);
     const answer = await vscode.window.showWarningMessage(
-      `Remove the library "${lib.id}"? ${lib.sourcePath} and ${lib.outputPath} go to the trash.`
+      `Remove the library "${lib.id}"? ${lib.sourcePath} and ${vscode.workspace.asRelativePath(built)} go to the trash.`
         + (dependents.length > 0 ? ` ${dependents.join(', ')} need${dependents.length === 1 ? 's' : ''} it.` : ''),
       { modal: true }, remove);
     if (answer !== remove) return false;
 
-    for (const path of [lib.sourcePath, lib.outputPath]) {
-      const uri = vscode.Uri.joinPath(root, path);
+    for (const uri of [vscode.Uri.joinPath(root, lib.sourcePath), built]) {
       if (!(await readBytes(uri))) continue;
       try {
         await vscode.workspace.fs.delete(uri, { useTrash: true });

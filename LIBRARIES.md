@@ -15,7 +15,9 @@ usually at the root of a GitHub repository.
 3. Add the lines the view offers (**Insert at Cursor** or **Copy**) to the game. Usually that is an
    `INCLIB 'libs/<id>.qsp'` and a call to the library's start location.
 
-Every build encodes each library into `libs/<id>.qsp`, next to its source, and never into the game's `.qsp`.
+Every build encodes each library into `libs/<id>.qsp` in the folder of the game's `.qsp` (the `outputFile` of
+`txt2gam.json`, or the main file's `.qsp` in the `perFile` mode), and never into the game's `.qsp`: `INCLIB` finds a
+library by its path from the game.
 
 **Duplicate names stop the build.** If two locations share a name anywhere in the game and its libraries, the
 build writes nothing and lists every place. A player reaches only one location of a given name: `INCLIB` skips a

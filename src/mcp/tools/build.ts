@@ -85,7 +85,8 @@ export function registerBuildTool(
     description: 'Encode the project into .qsp game file(s) with txt2gam, like the extension\'s Export command: '
       + 'file order, main file and output come from txt2gam.json and the qsp.game.* settings. In "single" mode '
       + 'all sources become one .qsp; in "perFile" mode each source becomes its own .qsp next to it. '
-      + 'Libraries installed in txt2gam.json ("libraries") always become .qsp files of their own, for inclib. '
+      + 'Libraries installed in txt2gam.json ("libraries") always become .qsp files of their own, for inclib, '
+      + 'in libs/ beside the game\'s .qsp (the output file, or the main file\'s .qsp in "perFile" mode). '
       + 'Files whose content would not change are not rewritten. Nothing is written if any file fails to encode, '
       + 'or if two locations share a name (the error lists every place).',
     inputSchema: {
@@ -136,12 +137,14 @@ export function registerBuildTool(
 
     const mod = await loadTxt2gam();
     const outputs: Array<{ file: string; bytes: Uint8Array }> = [];
+    const configured = cfg?.outputFile ?? `${path.basename(host.workspaceDir)}.qsp`;
+    const gameFile = mode === 'single'
+      ? (path.isAbsolute(configured) ? configured : path.join(host.workspaceDir, configured))
+      : perFileOutputPath(sources[0].abs);
     if (mode === 'single') {
-      const configured = cfg?.outputFile ?? `${path.basename(host.workspaceDir)}.qsp`;
-      const file = path.isAbsolute(configured) ? configured : path.join(host.workspaceDir, configured);
-      outputs.push({ file, bytes: encodeWith(mod, joinSources(sources.map(f => texts.get(f.abs)!)), { password }) });
+      outputs.push({ file: gameFile, bytes: encodeWith(mod, joinSources(sources.map(f => texts.get(f.abs)!)), { password }) });
     } else {
-      const collisions = findOutputCollisions([...sources.map(f => f.abs), ...libraryFiles.map(l => l.abs)]);
+      const collisions = findOutputCollisions(sources.map(f => f.abs));
       if (collisions.length > 0) {
         const list = collisions.map(c => c.sources.map(p => path.relative(host.workspaceDir, p)).join(' + ')).join('; ');
         throw new Error(`Several source files would be built into the same .qsp: ${list}`);
@@ -156,7 +159,9 @@ export function registerBuildTool(
     }
     for (const { lib, abs } of libraryFiles) {
       try {
-        outputs.push({ file: perFileOutputPath(abs), bytes: encodeWith(mod, normalizeText(texts.get(abs)!), { password }) });
+        // `inclib` takes a path relative to the game, so the library goes beside it.
+        const file = path.join(path.dirname(gameFile), ...lib.outputPath.split('/'));
+        outputs.push({ file, bytes: encodeWith(mod, normalizeText(texts.get(abs)!), { password }) });
       } catch (err) {
         throw new Error(`${lib.sourcePath}: ${err instanceof Error ? err.message : String(err)}`);
       }

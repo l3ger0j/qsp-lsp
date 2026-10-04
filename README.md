@@ -71,7 +71,7 @@ Requires VS Code 1.85 or later. On [vscode.dev](https://vscode.dev) the extensio
   }
   ```
 - **Separate module builds** — set `"buildMode": "perFile"` in `txt2gam.json` (or the `qsp.game.buildMode` setting) to build each source file into its own `.qsp` next to it instead of one combined game: `main.qsps` → `main.qsp`, `data.qsps` → `data.qsp`. `outputFile` is not used in this mode. **Run QSP Game** starts the main file's `.qsp` (see above), and the game loads the other modules itself with `INCLIB 'data.qsp'`. When it creates `txt2gam.json` in this mode, the setup wizard writes `buildMode` instead of `outputFile`. A `.qsp` whose content hasn't changed is not rewritten. The `txt2gam.json` value overrides the setting. Two sources that would produce the same `.qsp` (e.g. `a.qsps` and `a.qsrc` in one folder) are reported as an error, and nothing is written if any file fails to build.
-- **Libraries** — a library is one `.qsps` file that the game loads with `INCLIB` and drops with `FREELIB`. The ones listed under `"libraries"` in `txt2gam.json` live in `libs/` and are always built into a `.qsp` of their own next to their source, in either build mode, and never into the game's: `libs/dialogs.qsps` → `libs/dialogs.qsp`, loaded with `INCLIB 'libs/dialogs.qsp'`.
+- **Libraries** — a library is one `.qsps` file that the game loads with `INCLIB` and drops with `FREELIB`. The ones listed under `"libraries"` in `txt2gam.json` live in `libs/` and are always built into a `.qsp` of their own in `libs/` beside the game's `.qsp`, in either build mode, and never into the game's: with `"outputFile": "build/game.qsp"`, `libs/dialogs.qsps` → `build/libs/dialogs.qsp`, loaded with `INCLIB 'libs/dialogs.qsp'`.
   ```json
   "libraries": {
     "installed": {
@@ -101,7 +101,7 @@ A **QSP Locations** section in the Explorer side bar lists every location of the
 
 ### Libraries
 - **QSP Libraries** view in the Explorer: install, update and remove libraries — `.qsps` files a game loads with `INCLIB` — from `libraries.json` catalogs listed in `qsp.libraries.sources`. A library goes to `libs/<id>.qsps` and into `txt2gam.json`. Each one is checked against its catalog's checksum and against the game's location names before anything is written. Afterwards the view offers the `INCLIB` line to insert.
-- Each build encodes every installed library into its own `libs/<id>.qsp`; a location name used twice across the game and its libraries stops the build. Files in `libs/` show errors only.
+- Each build encodes every installed library into its own `libs/<id>.qsp` beside the game's `.qsp`; a location name used twice across the game and its libraries stops the build. Files in `libs/` show errors only.
 - The catalog format and the marks in the view: [LIBRARIES.md](LIBRARIES.md).
 
 ### Multi-File Operations

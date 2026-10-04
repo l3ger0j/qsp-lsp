@@ -242,6 +242,27 @@ describe('qsp_build', () => {
     }
   }, 30_000);
 
+  it('builds a library into libs/ beside the game, where its inclib path leads', async () => {
+    const nested = await startMcp({
+      'src/main.qsps': "# start\ninclib 'libs/dialogs.qsp'\n--- start ---\n",
+      'libs/dialogs.qsps': '# dialogs_init\n--- dialogs_init ---\n',
+      'txt2gam.json': JSON.stringify({
+        outputFile: '_output_game/game.qsp',
+        libraries: { installed: { dialogs: { version: '1.0.0', sha256: '', catalog: '' } } },
+      }),
+    });
+    try {
+      const single = (await nested.call('qsp_build')).json();
+      expect(single.outputs.map((o: { file: string }) => o.file))
+        .toEqual(['_output_game/game.qsp', '_output_game/libs/dialogs.qsp']);
+      expect(fs.existsSync(path.join(nested.dir, 'libs', 'dialogs.qsp'))).toBe(false);
+      const perFile = (await nested.call('qsp_build', { buildMode: 'perFile' })).json();
+      expect(perFile.outputs.map((o: { file: string }) => o.file)).toEqual(['src/main.qsp', 'src/libs/dialogs.qsp']);
+    } finally {
+      await nested.dispose();
+    }
+  }, 30_000);
+
   it('writes nothing when two files define the same location', async () => {
     const clash = await startMcp({
       'main.qsps': "# start\ngs 'меню'\n--- start ---\n\n# Меню\n*pl 0\n--- Меню ---\n",

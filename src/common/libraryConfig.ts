@@ -37,7 +37,10 @@ export interface LibrariesConfig {
 export interface LibraryFiles extends InstalledLibrary {
   /** The library's .qsps. */
   sourcePath: string;
-  /** The .qsp it is built into, next to its source. */
+  /**
+   * The .qsp it is built into, relative to the folder of the game's .qsp:
+   * `inclib` resolves its path from the game, so this is also what it takes.
+   */
   outputPath: string;
 }
 
