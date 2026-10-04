@@ -174,6 +174,7 @@ const B = 'file:///game/forest.qsps';
 const C = 'file:///game/other.qsps';
 
 describe('file interface', () => {
+  // Hundreds of edits, each checked against the project analysed from scratch: seconds.
   it('leaves the other files the diagnostics a full re-diagnosis gives them, edit after edit', async () => {
     const p = project();
     p.add(A, MAIN);
@@ -210,7 +211,7 @@ describe('file interface', () => {
     expect(reused).toBeGreaterThan(partial + 100);
     expect(partial).toBeGreaterThan(edits.length / 2);
     expect(partial).toBeLessThan(edits.length * 2);
-  });
+  }, 30_000);
 
   it('gives a single file the aggregates a fresh build does, reusing the propagation across edits', () => {
     const p = project();
