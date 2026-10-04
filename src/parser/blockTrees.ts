@@ -156,8 +156,18 @@ export function descendantAt(root: Parser.SyntaxNode, point: Parser.Point): Pars
 /** The nodes of `types` under `root`, inside its blocks too, found by tree-sitter. */
 export function descendantsOfType(root: Parser.SyntaxNode, types: string | string[]): Parser.SyntaxNode[] {
   const found = root.descendantsOfType(types);
-  for (const block of root.descendantsOfType('code_block')) {
-    for (const stmt of blockStatements(block)) found.push(...descendantsOfType(stmt, types));
+  // Each search walks the whole tree: don't make the same one twice.
+  const blocks = types === 'code_block' ? found.slice() : root.descendantsOfType('code_block');
+  for (const block of blocks) {
+    // One search of the block's tree, not one per statement: a native call
+    // and a node for each is what costs. Its header and end line are the
+    // location's, outside the block.
+    const location = blockLocation(block);
+    const body = block.namedChild(0);
+    if (!location || !body) continue;
+    for (const node of descendantsOfType(location, types)) {
+      if (node.startIndex >= body.startIndex && node.endIndex <= body.endIndex) found.push(node);
+    }
   }
   return found;
 }
