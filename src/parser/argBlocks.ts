@@ -88,6 +88,24 @@ export function argBlockRuns(
   return !!runs && (runs.includes(block.index) || runs.includes(ANY_ARG));
 }
 
+/** The blocks `locations` pass as arguments that nothing runs: text (see {@link argBlockRuns}). */
+export function textArgBlocks(
+  locations: Iterable<LocationSymbols>,
+  locationNamed: (nameLower: string) => LocationSymbols | undefined,
+): SymbolLocation[] {
+  const text: SymbolLocation[] = [];
+  for (const locSyms of locations) {
+    for (const b of locSyms.argBlocks) if (!argBlockRuns(b, locationNamed)) text.push(b.loc);
+  }
+  return text;
+}
+
+/** Whether `blocks` hold the point `line`:`character`. */
+export function inBlocks(blocks: readonly SymbolLocation[], line: number, character: number): boolean {
+  return blocks.some(b => (line > b.line || (line === b.line && character >= b.column))
+    && (line < b.endLine || (line === b.endLine && character < b.endColumn)));
+}
+
 // The `$args[N]` that the code under `root` runs: `dynamic $args[N]`,
 // `dyneval($args[N])`; ANY_ARG for an index that isn't a number.
 function runArgs(root: Parser.SyntaxNode): Set<number> {

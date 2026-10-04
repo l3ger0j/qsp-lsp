@@ -12,6 +12,7 @@
  *   • `findLabelHighlightsInLocation`   — label/jump highlight ranges
  *   • `collectProjectVariables`         — flatten per-location vars
  */
+import type { TextBlocks } from './textBlocks';
 import {
   DocumentHighlight,
   DocumentHighlightKind,
@@ -429,8 +430,11 @@ export function buildRenameEdit(
   position: Position,
   doc: TextDocument,
   newName: string,
+  /** Text blocks, whose words a rename leaves alone. */
+  text?: TextBlocks,
 ): WorkspaceEdit | null {
-  const refs = collectAllReferences(ctx, state, docUri, position, doc);
+  const found = collectAllReferences(ctx, state, docUri, position, doc);
+  const refs = text ? text.outside(found) : found;
   if (refs.length === 0) return null;
 
   const changes: Record<string, TextEdit[]> = {};

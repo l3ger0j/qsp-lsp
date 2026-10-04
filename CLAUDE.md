@@ -92,7 +92,8 @@ Output bundles go to `out/` via esbuild. `out/`, `vendor/`, and generated `tree-
    (`src/parser/blockTrees.ts`). A stored block that isn't code is a string (`isTextBlock`): no symbols, and its syntax
    errors are shown only when something runs it (`blocksRun` in `diagnostics.ts`). So is a block nothing can run
    (`isNeverRunBlock`: an array key, an operand of `=`), and a block passed as an argument unless the callee runs its
-   `$args[N]` (`argBlocks.ts`; decided with the other locations' symbols, in `diagnostics.ts` and the token builder).
+   `$args[N]` (`argBlocks.ts`; decided with the other locations' symbols, in `diagnostics.ts`, the token builder and,
+   for hover, definition, references, rename and highlights, `textBlocks.ts`).
 
 **Performance data and crash reports users send us**
 ❌ Don't: put real file, location, variable, object or action names, or any game text, into `[perf]` log lines,

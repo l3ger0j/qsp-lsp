@@ -44,16 +44,21 @@ import {
 import {
   CodeActionRequest,
   ConfigurationRequest,
+  DefinitionRequest,
   DidChangeTextDocumentNotification,
   DidCloseTextDocumentNotification,
   DidOpenTextDocumentNotification,
+  DocumentHighlightRequest,
   DocumentSymbolRequest,
   FoldingRangeRequest,
   HoverRequest,
   InitializeRequest,
   InitializedNotification,
+  PrepareRenameRequest,
   PublishDiagnosticsNotification,
+  ReferencesRequest,
   RegistrationRequest,
+  RenameRequest,
   SemanticTokensRangeRequest,
   SemanticTokensRequest,
   type CodeAction,
@@ -1062,4 +1067,31 @@ describe('LSP e2e: blocks passed as arguments', () => {
     expect(tokens.some(t => t.text.includes('generic') && t.type !== 'string')).toBe(false);
     expect(tokens).toContainEqual({ text: 'x', type: 'variable' });
   }, 30_000);
+
+  it('leaves a block nothing runs out of hover, definition, references, rename and highlights', async () => {
+    const uri = 'file:///args-nav.qsps';
+    // `generic` is a variable on lines 1–2; on line 3 it is the text `b` gets.
+    const text = "# a\ngeneric = 1\npl generic\ngs 'b', {generic}\ngs 'c', {generic}\n--- a ---\n# b\npl $args[0]\n--- b ---\n# c\ndynamic $args[0]\n--- c ---\n";
+    h.client.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri, languageId: 'qsp', version: 1, text },
+    });
+    await h.diagnosticsFor(uri);
+    const textDocument = { uri };
+    const onVariable = { line: 1, character: 2 };
+    const inText = { line: 3, character: 11 };
+
+    const refs = await h.client.sendRequest(ReferencesRequest.type, { textDocument, position: onVariable, context: { includeDeclaration: true } });
+    // Line 4 passes `{generic}` to `c`, which runs it: code, so a reference.
+    expect((refs ?? []).map(r => r.range.start.line).sort()).toEqual([1, 2, 4]);
+    const rename = await h.client.sendRequest(RenameRequest.type, { textDocument, position: onVariable, newName: 'other' });
+    expect(rename?.changes?.[uri]?.map(e => e.range.start.line).sort()).toEqual([1, 2, 4]);
+
+    expect(await h.client.sendRequest(HoverRequest.type, { textDocument, position: inText })).toBeNull();
+    expect(await h.client.sendRequest(DefinitionRequest.type, { textDocument, position: inText })).toBeNull();
+    expect(await h.client.sendRequest(ReferencesRequest.type, { textDocument, position: inText, context: { includeDeclaration: true } })).toEqual([]);
+    expect(await h.client.sendRequest(PrepareRenameRequest.type, { textDocument, position: inText })).toBeNull();
+    expect(await h.client.sendRequest(RenameRequest.type, { textDocument, position: inText, newName: 'other' })).toBeNull();
+    expect(await h.client.sendRequest(DocumentHighlightRequest.type, { textDocument, position: inText })).toBeNull();
+  }, 30_000);
 });
+

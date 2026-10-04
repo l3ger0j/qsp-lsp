@@ -82,7 +82,8 @@ import type {
   PerLocationParseResult,
 } from './featureTypes';
 import type { ProjectVariableItem, TokenFacts } from './featureTypes';
-import { argBlockRuns } from '../parser/argBlocks';
+import { textArgBlocks } from '../parser/argBlocks';
+import { TextBlocks, locationNamedIn } from './textBlocks';
 import { buildJumpGraph, formatDynamicJumpStats, newDynamicJumpStats, type JumpGraphSource } from './jumpGraph';
 
 // Re-export types that consumers need
@@ -347,6 +348,7 @@ export function registerLspFeatures(ctx: ServerContext): void {
     if (!doc) return null;
     const uri = params.textDocument.uri;
     const state = documentStates.get(uri);
+    if (new TextBlocks(documentStates).holds(uri, params.position.line, params.position.character)) return null;
 
     function getAgg(): SymbolAggregates {
       return getOrBuildAgg(ctx, state!, uri);
@@ -681,7 +683,12 @@ export function registerLspFeatures(ctx: ServerContext): void {
     if (!doc) return null;
     const state = documentStates.get(params.textDocument.uri);
     if (!state) return null;
-    return resolveDefinition(ctx, state, params.textDocument.uri, params.position, doc);
+    const text = new TextBlocks(documentStates);
+    if (text.holds(params.textDocument.uri, params.position.line, params.position.character)) return null;
+    const found = resolveDefinition(ctx, state, params.textDocument.uri, params.position, doc);
+    if (!found) return null;
+    const kept = (Array.isArray(found) ? found : [found]).filter(l => !text.holds(l.uri, l.range.start.line, l.range.start.character));
+    return kept.length === 0 ? null : Array.isArray(found) ? kept : kept[0];
   });
 
   // ==================== REFERENCES ====================
@@ -691,7 +698,9 @@ export function registerLspFeatures(ctx: ServerContext): void {
     if (!doc) return [];
     const state = documentStates.get(params.textDocument.uri);
     if (!state) return [];
-    return collectAllReferences(ctx, state, params.textDocument.uri, params.position, doc)
+    const text = new TextBlocks(documentStates);
+    if (text.holds(params.textDocument.uri, params.position.line, params.position.character)) return [];
+    return text.outside(collectAllReferences(ctx, state, params.textDocument.uri, params.position, doc))
       .map(symToLocation);
   });
 
@@ -709,6 +718,7 @@ export function registerLspFeatures(ctx: ServerContext): void {
     const doc = documents.get(params.textDocument.uri);
     if (!doc) return null;
     const state = documentStates.get(params.textDocument.uri);
+    if (new TextBlocks(documentStates).holds(params.textDocument.uri, params.position.line, params.position.character)) return null;
     return resolvePrepareRename(state, doc, params.position);
   });
 
@@ -717,7 +727,9 @@ export function registerLspFeatures(ctx: ServerContext): void {
     if (!doc) return null;
     const state = documentStates.get(params.textDocument.uri);
     if (!state) return null;
-    return buildRenameEdit(ctx, state, params.textDocument.uri, params.position, doc, params.newName);
+    const text = new TextBlocks(documentStates);
+    if (text.holds(params.textDocument.uri, params.position.line, params.position.character)) return null;
+    return buildRenameEdit(ctx, state, params.textDocument.uri, params.position, doc, params.newName, text);
   });
 
   // ==================== SEMANTIC TOKENS ====================
@@ -728,17 +740,8 @@ export function registerLspFeatures(ctx: ServerContext): void {
     for (const [key, entry] of callTypes) {
       if (entry.types.has('goto')) gotoTargets.add(key);
     }
-    const locationNamed = (name: string) => {
-      for (const st of documentStates.values()) {
-        const found = st.symbols.locations.get(name);
-        if (found) return found;
-      }
-      return undefined;
-    };
-    return {
-      gotoTargets,
-      textBlocksOf: (entry) => entry.symbols.argBlocks.filter(b => !argBlockRuns(b, locationNamed)).map(b => b.loc),
-    };
+    const locationNamed = locationNamedIn(documentStates);
+    return { gotoTargets, textBlocksOf: (entry) => textArgBlocks([entry.symbols], locationNamed) };
   }
 
   connection.onRequest(SemanticTokensRequest.type, async (params: SemanticTokensParams, cancel) => {
@@ -916,6 +919,7 @@ export function registerLspFeatures(ctx: ServerContext): void {
   connection.onDocumentHighlight((params) => {
     if (!tsParser.isReady) return null;
     const uri = params.textDocument.uri;
+    if (new TextBlocks(documentStates).holds(uri, params.position.line, params.position.character)) return null;
     const state = documentStates.get(uri);
     let tree: ReturnType<typeof tsParser.parseOnce> = null;
     let lineOffset = 0;
