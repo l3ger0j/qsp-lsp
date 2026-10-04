@@ -523,7 +523,12 @@ export function createQspServer(
       () => collectCallTypesPerTarget(documentStates),
       (ownUri: string) => collectPeerDocs(documentStates, ownUri),
     ).then(
-      reportProjectSize,
+      () => {
+        reportProjectSize();
+        // An open file's highlighting reads the changed files' symbols
+        // (which arguments their locations run, which they jump to).
+        refreshSemanticTokens();
+      },
       (err: unknown) => { console.error('[QSP] Failed to handle watched file changes:', err); },
     ));
   });

@@ -46,10 +46,12 @@ import {
   ConfigurationRequest,
   DefinitionRequest,
   DidChangeTextDocumentNotification,
+  DidChangeWatchedFilesNotification,
   DidCloseTextDocumentNotification,
   DidOpenTextDocumentNotification,
   DocumentHighlightRequest,
   DocumentSymbolRequest,
+  FileChangeType,
   FoldingRangeRequest,
   HoverRequest,
   InitializeRequest,
@@ -69,6 +71,7 @@ import {
 } from 'vscode-languageserver-protocol';
 import { createQspServer } from '../src/server/common';
 import { TOKEN_TYPES } from '../src/server/semanticTokens';
+import { SETTLED_REQUEST } from '../src/common/analysisStatus';
 import { fsProvider } from '../src/server/nodeHost';
 import { NodeAnalysisCache, analyserSalt, nodeAnalysisCacheStore } from '../src/server/nodeCache';
 import { WASM_PATH } from './testHelpers';
@@ -1095,3 +1098,40 @@ describe('LSP e2e: blocks passed as arguments', () => {
   }, 30_000);
 });
 
+describe('LSP e2e: highlighting after a closed file changes on disk', () => {
+  let h: Harness;
+  let dir: string;
+  beforeAll(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qsp-args-'));
+    fs.writeFileSync(path.join(dir, 'main.qsps'), "# a\ngs 'b', {pl x}\n--- a ---\n");
+    fs.writeFileSync(path.join(dir, 'b.qsps'), '# b\npl $args[0]\n--- b ---\n');
+    h = await startServer(null, dir);
+  });
+  afterAll(() => { h.shutdown(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('colours a block as code once the callee runs it', async () => {
+    const uri = fsProvider.pathToUri(path.join(dir, 'main.qsps'));
+    const text = fs.readFileSync(path.join(dir, 'main.qsps'), 'utf8');
+    const ready = h.nextDiagnosticsFor(uri);
+    h.client.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'qsp', version: 1, text } });
+    await ready;
+    const typeOfX = async () => {
+      const { data } = await h.client.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } });
+      for (let i = 0, line = 0, char = 0; i < data.length; i += 5) {
+        line += data[i];
+        char = data[i] === 0 ? char + data[i + 1] : data[i + 1];
+        if (line === 1 && char <= 12 && 12 < char + data[i + 2]) return TOKEN_TYPES[data[i + 3]];
+      }
+      return undefined;
+    };
+    expect(await typeOfX()).toBe('string');
+
+    const bPath = path.join(dir, 'b.qsps');
+    fs.writeFileSync(bPath, '# b\ndynamic $args[0]\n--- b ---\n');
+    const rediagnosed = h.nextDiagnosticsFor(fsProvider.pathToUri(bPath));
+    h.client.sendNotification(DidChangeWatchedFilesNotification.type, { changes: [{ uri: fsProvider.pathToUri(bPath), type: FileChangeType.Changed }] });
+    await rediagnosed;
+    await h.client.sendRequest(SETTLED_REQUEST);
+    expect(await typeOfX()).toBe('variable');
+  }, 30_000);
+});
