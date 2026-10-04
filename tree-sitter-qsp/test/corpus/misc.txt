@@ -51,6 +51,32 @@ x = 1	_
     (location_end)))
 
 ================
+Line continuation with blanks after underscore
+================
+# test
+x = 1 _ 	
+  + 2
+--
+---
+
+(source_file
+  (location_block
+    (location_header
+      (location_name))
+    (single_line_block
+      (assignment_statement
+        variables: (variable_list
+          (variable_ref
+            name: (identifier_text)))
+        operator: (assignment_operator)
+        value: (na_binary
+          (number_literal)
+          (line_continuation_ext)
+          (op_arith)
+          (number_literal))))
+    (location_end)))
+
+================
 Multiple line continuations
 ================
 # test

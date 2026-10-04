@@ -487,6 +487,12 @@ pl '<<x + >>'
     }
   });
 
+  // QSP trims each line before joining those that end in ` _`.
+  it('accepts blanks after the underscore of a line continuation', () => {
+    const code = "# test\nif args[{n}] > 0 _ \nand generic['<<$gen1>>_<<args[{n}]>>_<<$num[0]>>'] > 25 _\t\r\nor x:\nend\n---\n";
+    expect(runDiagnostics(parser, code, { maxErrorsPerLocation: 100 }).filter(d => d.code === 'syntax')).toEqual([]);
+  });
+
   it('accepts unary plus, also right after a binary plus', () => {
     for (const line of ["$s = 'a'++rand(0,20)++'b'", 'x = 1++2', "pl 'a' + +rand(0, 20)", 'x = +5']) {
       const tree = parser.parseOnce(`# t\n${line}\n---\n`)!;

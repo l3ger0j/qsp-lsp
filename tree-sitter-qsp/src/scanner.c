@@ -3,7 +3,7 @@
  *
  * Handles these external token types:
  *
- * 1. LINE_CONTINUATION_EXT (" _\n")
+ * 1. LINE_CONTINUATION_EXT (" _\n", blanks allowed before the line break)
  * 2. LOCATION_END_MARK_EXT ("--" at column 0)
  * 3. LOCATION_START_MARK_EXT ("#" at column 0)
  * 4. INTP_RAW_BODY_SQ (raw `<<…>>` body with `''` inside a '-quoted string)
@@ -343,6 +343,8 @@ bool tree_sitter_qsp_external_scanner_scan(void *payload, TSLexer *lexer, const 
       }
       if (lexer->lookahead == '_') {
         lexer->advance(lexer, false);
+        // QSP trims every line before joining those that end in ` _`.
+        while (is_hspace(lexer->lookahead)) lexer->advance(lexer, false);
         if (lexer->lookahead == '\r') {
           lexer->advance(lexer, false);
         }
@@ -387,6 +389,8 @@ bool tree_sitter_qsp_external_scanner_scan(void *payload, TSLexer *lexer, const 
 
   if (lexer->lookahead != '_') return false;
   lexer->advance(lexer, false);
+  // QSP trims every line before joining those that end in ` _`.
+  while (is_hspace(lexer->lookahead)) lexer->advance(lexer, false);
 
   if (lexer->lookahead == '\r') {
     lexer->advance(lexer, false);

@@ -381,7 +381,7 @@ QSP {
 
     typePrefix          = "#" | "$" | "%"
     newline             = "\n" | "\r\n"
-    lineContinuation    = space "_" newline
+    lineContinuation    = space "_" space* newline   // QSP trims each line before joining
     statementSeparator  = "&"
     ws                  = (lineContinuation | space)*
     mws                 = (space | newline)*
