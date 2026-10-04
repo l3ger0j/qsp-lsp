@@ -20,6 +20,7 @@ import {
   LocationEntry,
   QspTreeSitterParser,
   computeTreeEdit,
+  shiftError,
   type SymbolLocation,
   type SyntaxError,
   type WasmLoader,
@@ -1119,7 +1120,7 @@ export function createQspServer(
     for (const err of stored.syntaxErrors) {
       const loc = findLocationAtLine(locationIndex as LocationEntry[], err.startRow);
       if (!loc) return undefined;
-      result[indexOf.get(loc)!].errors.push({ ...err, startRow: err.startRow - loc.startLine, endRow: err.endRow - loc.startLine });
+      result[indexOf.get(loc)!].errors.push(shiftError(err, -loc.startLine));
     }
     return result;
   }

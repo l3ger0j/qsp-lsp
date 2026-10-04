@@ -14,7 +14,7 @@ import {
   checkPrefixWhitespace,
 } from './lintChecks';
 import { isDynamicArgCodeBlock } from './scopeUtils';
-import { blockLocation, blockStatements, descendantsOfType, parentOf } from './blockTrees';
+import { blockLocation, blockStatements, descendantsOfType, isArrayKeyBlock, parentOf } from './blockTrees';
 
 export { checkFunctionNameAsLvalue, checkReservedWordMisuse, checkPrefixWhitespace };
 
@@ -33,7 +33,20 @@ export interface SyntaxError {
    * lists of text in such blocks.
    */
   inStoredBlock?: boolean;
+  /**
+   * With `inStoredBlock`: where the innermost such block starts (its `{`).
+   * Its errors count only when that block runs: running a block that
+   * holds it doesn't run it.
+   */
+  storedBlock?: { row: number; col: number };
   inInterpolation?: boolean;
+}
+
+/** `err` moved down `lines` lines, with the block it is in. */
+export function shiftError(err: SyntaxError, lines: number): SyntaxError {
+  const shifted = { ...err, startRow: err.startRow + lines, endRow: err.endRow + lines };
+  if (err.storedBlock) shifted.storedBlock = { row: err.storedBlock.row + lines, col: err.storedBlock.col };
+  return shifted;
 }
 
 /** Map raw tree-sitter node types to human-friendly descriptions. */
@@ -152,6 +165,7 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
   let cursor = tree.walk();
   let codeBlockDepth = 0;
   let storedBlockDepth = 0;
+  let storedBlock: SyntaxError['storedBlock'];
   let interpolationDepth = 0;
 
   // The tree of a block's inside, from its location node down (an inside
@@ -188,7 +202,7 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
         for (const e of diagnostics) e.inCodeBlock = true;
       }
       if (storedBlockDepth > 0) {
-        for (const e of diagnostics) e.inStoredBlock = true;
+        for (const e of diagnostics) { e.inStoredBlock = true; e.storedBlock = storedBlock; }
       }
       if (interpolationDepth > 0) {
         for (const e of diagnostics) e.inInterpolation = true;
@@ -214,6 +228,7 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
         message: friendlyMissingMessage(node),
         inCodeBlock: codeBlockDepth > 0 || undefined,
         inStoredBlock: storedBlockDepth > 0 || undefined,
+        storedBlock: storedBlockDepth > 0 ? storedBlock : undefined,
         inInterpolation: interpolationDepth > 0 || undefined,
       });
     }
@@ -236,12 +251,19 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
   }
 
   // Every block's own tree, nested ones too, in the context its place gives it.
+  blocks:
   for (const block of descendantsOfType(tree.rootNode, 'code_block')) {
     codeBlockDepth = storedBlockDepth = interpolationDepth = 0;
+    storedBlock = undefined;
     for (let a: Parser.SyntaxNode | null = block; a; a = parentOf(a)) {
       if (a.type === 'code_block') {
+        // An array's key, or a block inside one, is text nothing runs.
+        if (isArrayKeyBlock(a)) continue blocks;
         codeBlockDepth++;
-        if (!isDynamicArgCodeBlock(a)) storedBlockDepth++;
+        if (!isDynamicArgCodeBlock(a)) {
+          storedBlockDepth++;
+          storedBlock ??= { row: a.startPosition.row, col: a.startPosition.column };
+        }
       } else if (a.type === 'string_interpolation') {
         interpolationDepth++;
       }
@@ -271,9 +293,16 @@ function runMergedLintPasses(tree: Parser.Tree): SyntaxError[] {
   const errors: SyntaxError[] = [];
   let cursor = tree.walk();
   let codeBlockDepth = 0;
-  let storedBlockDepth = 0;
   let interpolationDepth = 0;
   let errorDepth = 0;
+  // The stored blocks around the node being visited, innermost last.
+  const storedBlocks: Parser.SyntaxNode[] = [];
+  const storedContext = () => {
+    const block = storedBlocks.at(-1);
+    return block
+      ? { inStoredBlock: true, storedBlock: { row: block.startPosition.row, col: block.startPosition.column } }
+      : {};
+  };
 
   function emitGap(opener: Parser.SyntaxNode, name: Parser.SyntaxNode, label: string): void {
     if (opener.endIndex === name.startIndex) return;
@@ -283,6 +312,7 @@ function runMergedLintPasses(tree: Parser.Tree): SyntaxError[] {
       endRow: name.startPosition.row,
       endCol: name.startPosition.column,
       message: `No whitespace allowed between ${label}`,
+      ...storedContext(),
     });
   }
 
@@ -311,7 +341,7 @@ function runMergedLintPasses(tree: Parser.Tree): SyntaxError[] {
     const isIntp = t === 'string_interpolation';
     const isErr = n.isError;
     if (isCB) codeBlockDepth++;
-    if (isStored) storedBlockDepth++;
+    if (isStored) storedBlocks.push(n);
     if (isIntp) interpolationDepth++;
     if (isErr) errorDepth++;
 
@@ -326,7 +356,7 @@ function runMergedLintPasses(tree: Parser.Tree): SyntaxError[] {
           endCol: n.endPosition.column,
           message: `'${n.text}' is a reserved keyword and cannot be used as a variable name`,
           inCodeBlock: codeBlockDepth > 0 || undefined,
-          inStoredBlock: storedBlockDepth > 0 || undefined,
+          ...storedContext(),
           inInterpolation: interpolationDepth > 0 || undefined,
         });
       }
@@ -383,21 +413,22 @@ function runMergedLintPasses(tree: Parser.Tree): SyntaxError[] {
           endCol: lhs.endPosition.column,
           message: `'${display}' is a reserved function name and cannot be assigned to`,
           inCodeBlock: codeBlockDepth > 0 || undefined,
-          inStoredBlock: storedBlockDepth > 0 || undefined,
+          ...storedContext(),
           inInterpolation: interpolationDepth > 0 || undefined,
         });
       }
     }
 
     if (t === 'code_block') {
-      visitStatements(n);
+      // An array's key is text nothing runs.
+      if (!isArrayKeyBlock(n)) visitStatements(n);
     } else if (cursor.gotoFirstChild()) {
       do { visit(); } while (cursor.gotoNextSibling());
       cursor.gotoParent();
     }
 
     if (isCB) codeBlockDepth--;
-    if (isStored) storedBlockDepth--;
+    if (isStored) storedBlocks.pop();
     if (isIntp) interpolationDepth--;
     if (isErr) errorDepth--;
   }

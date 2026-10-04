@@ -109,6 +109,14 @@ export function blockHasError(block: Parser.SyntaxNode): boolean {
   return blockLocation(block)?.hasError ?? false;
 }
 
+/**
+ * Whether a `code_block` is an array's key (`$mass[{act}]` is
+ * `$mass['act']`): text, which nothing can run.
+ */
+export function isArrayKeyBlock(block: Parser.SyntaxNode): boolean {
+  return block.type === 'code_block' && parentOf(block)?.type === 'array_index';
+}
+
 /** `node`'s parent; for a block's statement, the `code_block`. */
 export function parentOf(node: Parser.SyntaxNode): Parser.SyntaxNode | null {
   const parent = node.parent;

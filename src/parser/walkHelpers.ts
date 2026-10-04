@@ -10,7 +10,7 @@
 import type Parser from 'web-tree-sitter';
 import { type SymbolLocation } from './symbolTable';
 import type { LocationSymbols } from './locationSymbols';
-import { blockHasError, isLocationBlock, parentOf } from './blockTrees';
+import { blockHasError, isArrayKeyBlock, isLocationBlock } from './blockTrees';
 import { isDynamicArgCodeBlock } from './scopeUtils';
 
 // ── Constants ─────────────────────────────────────────────────────────
@@ -73,7 +73,7 @@ export interface VarMediatedCtx {
  */
 export function isTextBlock(node: Parser.SyntaxNode): boolean {
   if (node.type !== 'code_block') return false;
-  return parentOf(node)?.type === 'array_index' || (!isDynamicArgCodeBlock(node) && blockHasError(node));
+  return isArrayKeyBlock(node) || (!isDynamicArgCodeBlock(node) && blockHasError(node));
 }
 
 export { isLocationBlock };

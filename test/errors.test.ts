@@ -453,6 +453,20 @@ pl '<<x + >>'
     expect(runDiagnostics(parser, code, { uninitializedVariables: true, unusedVariables: true, maxErrorsPerLocation: 100 })).toEqual([]);
   });
 
+  // Running a block doesn't run the blocks inside it: their syntax errors
+  // count only when they run themselves.
+  it('a block run shows the syntax errors of its own code, not of the blocks it holds', () => {
+    const settings = { maxErrorsPerLocation: 100 };
+    const key = runDiagnostics(parser, '# test\n$people = {\n$mass[{act}]\nset i = 0\n}\ndynamic $people\n---\n', settings);
+    expect(key.filter(d => d.code === 'syntax')).toEqual([]);
+    const list = runDiagnostics(parser, '# test\n$code = {\n$s = { Ann, Bob, }\npl 1\n}\ndynamic $code\n---\n', settings);
+    expect(list.filter(d => d.code === 'syntax')).toEqual([]);
+    const both = runDiagnostics(parser, '# test\n$code = {\n$s = { Ann, Bob, }\npl 1\n}\ndynamic $code\ndynamic $s\n---\n', settings);
+    expect(both.filter(d => d.code === 'syntax').map(d => d.range.start.line)).toEqual([2]);
+    const own = runDiagnostics(parser, '# test\n$code = {\n$s = { Ann, Bob, }\nact\n}\ndynamic $code\n---\n', settings);
+    expect(own.filter(d => d.code === 'syntax').map(d => d.range.start.line)).toEqual([3]);
+  });
+
   it('a word list in a file with a BOM gets no diagnostics, as without one', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qsp-bom-'));
     const diagnosticsOf = async (text: string) => {

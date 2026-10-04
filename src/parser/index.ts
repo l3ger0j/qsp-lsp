@@ -6,7 +6,7 @@ export { DocumentSymbols, LocationSymbols, QspSymbolKind, reviveDocumentSymbols 
 export type { PrefixWarning, ArgCountWarning, DeprecationWarning, QspSymbol, SymbolLocation } from './symbolTable';
 export { QspTreeSitterParser, computeTreeEdit } from './treeSitter';
 export type { WasmLoader, WasmDirProvider } from './treeSitter';
-export { extractErrors, hasStructuralErrors } from './extractErrors';
+export { extractErrors, hasStructuralErrors, shiftError } from './extractErrors';
 export { locationInterface, locationInterfaceHash } from './locationInterface';
 export type { SyntaxError } from './extractErrors';
 export { extractSymbols, isVariableDefinition } from './extractSymbols';

@@ -8,7 +8,7 @@
 
 import type { Connection } from 'vscode-languageserver';
 import { ConnectionError, ConnectionErrors } from 'vscode-jsonrpc';
-import { type LocationEntry, type SyntaxError, type SymbolLocation } from '../parser';
+import { shiftError, type LocationEntry, type SyntaxError, type SymbolLocation } from '../parser';
 import { locationNameCol } from './regexFallback';
 import type { DocumentState } from './featureTypes';
 
@@ -71,7 +71,7 @@ export function stripBom(text: string): string {
 /** Shift local-coordinate errors to absolute coordinates. */
 export function shiftErrors(errors: SyntaxError[], lineOffset: number, out: SyntaxError[]): void {
   for (const err of errors) {
-    out.push({ ...err, startRow: err.startRow + lineOffset, endRow: err.endRow + lineOffset });
+    out.push(shiftError(err, lineOffset));
   }
 }
 

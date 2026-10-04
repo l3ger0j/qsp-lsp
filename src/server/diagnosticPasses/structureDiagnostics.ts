@@ -66,8 +66,11 @@ export function checkSyntaxErrors(
   for (const err of syntaxErrors) {
     if (endLines.has(err.startRow)) continue;
     // A block kept in a variable is text until something runs it: games
-    // keep lists of words in them (`{ apple, pear }`).
-    if (err.inStoredBlock && !blocksRun.some(b => blockHolds(b, err))) continue;
+    // keep lists of words in them (`{ apple, pear }`). Running a block
+    // doesn't run the blocks inside it, so the error's own block counts.
+    if (err.inStoredBlock && !blocksRun.some(b => (err.storedBlock
+      ? b.line === err.storedBlock.row && b.column === err.storedBlock.col
+      : blockHolds(b, err)))) continue;
     const loc = findLocationAtLine(locationIndex, err.startRow);
     mapPush(buckets, loc ? loc.startLine : -1, err);
   }

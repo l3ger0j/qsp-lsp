@@ -184,9 +184,16 @@ export function collectEmbeddedErrors(
       message: e.message,
       inCodeBlock: e.inCodeBlock,
       inStoredBlock: e.inStoredBlock,
+      storedBlock: e.storedBlock && pointOf(translate({
+        uri: hostLoc.uri, line: e.storedBlock.row, column: e.storedBlock.col, endLine: e.storedBlock.row, endColumn: e.storedBlock.col,
+      })),
       inInterpolation: e.inInterpolation,
     });
   }
+}
+
+function pointOf(loc: { line: number; column: number }): { row: number; col: number } {
+  return { row: loc.line, col: loc.column };
 }
 
 // ── Merge sub-extracted LocationSymbols into the host ────────────────

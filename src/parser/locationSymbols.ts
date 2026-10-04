@@ -14,7 +14,7 @@ import {
   type DeprecationWarning,
   type VariableBinding,
 } from './symbolTypes';
-import type { SyntaxError } from './extractErrors';
+import { shiftError, type SyntaxError } from './extractErrors';
 import type { TargetPattern } from './targetPattern';
 
 /** A jump or call with a non-literal target; see `LocationSymbols.dynamicLocationRefs`. */
@@ -812,11 +812,7 @@ export class LocationSymbols {
       copy.deprecationWarnings.push({ ...dw, loc: shift(dw.loc) });
     }
     for (const e of source.embeddedExecErrors) {
-      copy.embeddedExecErrors.push({
-        ...e,
-        startRow: e.startRow + lineShift,
-        endRow: e.endRow + lineShift,
-      });
+      copy.embeddedExecErrors.push(shiftError(e, lineShift));
     }
     for (const d of source.dynamicVarCalls) {
       copy.dynamicVarCalls.push({ ...d, loc: shift(d.loc) });
