@@ -10,7 +10,7 @@
 import type Parser from 'web-tree-sitter';
 import { type SymbolLocation } from './symbolTable';
 import type { LocationSymbols } from './locationSymbols';
-import { blockHasError, isArrayKeyBlock, isLocationBlock } from './blockTrees';
+import { blockHasError, isNeverRunBlock, isLocationBlock } from './blockTrees';
 import { isDynamicArgCodeBlock } from './scopeUtils';
 
 // ── Constants ─────────────────────────────────────────────────────────
@@ -63,8 +63,8 @@ export interface VarMediatedCtx {
 // ── Text helpers ──────────────────────────────────────────────────────
 
 /**
- * Whether `node` is a `{…}` block that is only text: an array index
- * (`$mass[{act}]` is `$mass['act']`, a key nothing can run), or a stored
+ * Whether `node` is a `{…}` block that is only text: one nothing can run
+ * (an array's key, an operand of `=`; see isNeverRunBlock), or a stored
  * block (not `dynamic`'s or `dyneval`'s own argument) that doesn't parse
  * as code. QSP keeps a block as a string and checks it only when it runs,
  * and games keep lists of text in them (`local $fruit = { apple, pear }`):
@@ -73,7 +73,7 @@ export interface VarMediatedCtx {
  */
 export function isTextBlock(node: Parser.SyntaxNode): boolean {
   if (node.type !== 'code_block') return false;
-  return isArrayKeyBlock(node) || (!isDynamicArgCodeBlock(node) && blockHasError(node));
+  return isNeverRunBlock(node) || (!isDynamicArgCodeBlock(node) && blockHasError(node));
 }
 
 export { isLocationBlock };

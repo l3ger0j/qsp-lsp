@@ -14,7 +14,7 @@ import {
   checkPrefixWhitespace,
 } from './lintChecks';
 import { isDynamicArgCodeBlock } from './scopeUtils';
-import { blockLocation, blockStatements, descendantsOfType, isArrayKeyBlock, parentOf } from './blockTrees';
+import { blockLocation, blockStatements, descendantsOfType, isNeverRunBlock, parentOf } from './blockTrees';
 
 export { checkFunctionNameAsLvalue, checkReservedWordMisuse, checkPrefixWhitespace };
 
@@ -257,8 +257,8 @@ export function extractErrors(tree: Parser.Tree): SyntaxError[] {
     storedBlock = undefined;
     for (let a: Parser.SyntaxNode | null = block; a; a = parentOf(a)) {
       if (a.type === 'code_block') {
-        // An array's key, or a block inside one, is text nothing runs.
-        if (isArrayKeyBlock(a)) continue blocks;
+        // Text nothing runs (an array's key, an operand of `=`), or a block inside one.
+        if (isNeverRunBlock(a)) continue blocks;
         codeBlockDepth++;
         if (!isDynamicArgCodeBlock(a)) {
           storedBlockDepth++;
@@ -420,8 +420,8 @@ function runMergedLintPasses(tree: Parser.Tree): SyntaxError[] {
     }
 
     if (t === 'code_block') {
-      // An array's key is text nothing runs.
-      if (!isArrayKeyBlock(n)) visitStatements(n);
+      // Text nothing runs: an array's key, an operand of `=`.
+      if (!isNeverRunBlock(n)) visitStatements(n);
     } else if (cursor.gotoFirstChild()) {
       do { visit(); } while (cursor.gotoNextSibling());
       cursor.gotoParent();

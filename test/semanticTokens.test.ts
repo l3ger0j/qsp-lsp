@@ -37,6 +37,12 @@ describe('semantic tokens', () => {
     ]);
   });
 
+  it('colour a block compared with as a string', () => {
+    const toks = tokensFor('# a\nif $args[{test}] = {generic}:\nend\n---\n');
+    expect(toks).toContainEqual({ type: 'string', text: '{test}' });
+    expect(toks).toContainEqual({ type: 'string', text: '{generic}' });
+  });
+
   it('colour a list of words kept in a variable as a string, and code run by dynamic as code', () => {
     const toks = tokensFor('# a\n$s = { Ann, Bob, }\ndynamic { x = 1 }\n---\n');
     expect(toks).toContainEqual({ type: 'string', text: '{ Ann, Bob, }' });

@@ -453,6 +453,20 @@ pl '<<x + >>'
     expect(runDiagnostics(parser, code, { uninitializedVariables: true, unusedVariables: true, maxErrorsPerLocation: 100 })).toEqual([]);
   });
 
+  // `{generic}` is the text `generic`, like 'generic': compared, or taken
+  // by any operator whose result is a number, it is never run.
+  it('a block an operator turns into a number is text, not code', () => {
+    const settings = { uninitializedVariables: true, maxErrorsPerLocation: 100 };
+    for (const line of ['if $args[{test}] = {generic}:\nend', 'x = {a} <> {b} and {act} >= 1\npl x', 'x = -{y} + no {z}\npl x', 'pl {if} = $args[0]']) {
+      expect(runDiagnostics(parser, `# test\n${line}\n---\n`, settings), line).toEqual([]);
+    }
+    // Joined texts may be kept and run: still code.
+    for (const line of ['$c = {pl y} + {pl z}', '$c = {pl y} & {pl z}']) {
+      const diags = runDiagnostics(parser, `# test\n${line}\ndynamic $c\n---\n`, settings);
+      expect(diags.map(d => d.message), line).toContain("Variable 'y' is used but never assigned");
+    }
+  });
+
   // Running a block doesn't run the blocks inside it: their syntax errors
   // count only when they run themselves.
   it('a block run shows the syntax errors of its own code, not of the blocks it holds', () => {

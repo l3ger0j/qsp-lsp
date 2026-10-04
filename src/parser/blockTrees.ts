@@ -110,11 +110,24 @@ export function blockHasError(block: Parser.SyntaxNode): boolean {
 }
 
 /**
- * Whether a `code_block` is an array's key (`$mass[{act}]` is
- * `$mass['act']`): text, which nothing can run.
+ * Whether a `code_block` is text that nothing can run: an array's key
+ * (`$mass[{act}]` is `$mass['act']`), or an operand of an operator whose
+ * result is a number (`$s = {generic}` compares with the text `generic`;
+ * `and`, `-`, `no`, `loc`…). Only `+` and `&` join texts, whose result may
+ * be kept and run.
  */
-export function isArrayKeyBlock(block: Parser.SyntaxNode): boolean {
-  return block.type === 'code_block' && parentOf(block)?.type === 'array_index';
+export function isNeverRunBlock(block: Parser.SyntaxNode): boolean {
+  if (block.type !== 'code_block') return false;
+  const parent = parentOf(block);
+  if (!parent) return false;
+  if (parent.type === 'array_index' || parent.type.endsWith('_unary')) return true;
+  if (!parent.type.endsWith('_binary')) return false;
+  for (const child of parent.namedChildren) {
+    if (child.type === 'op_amp') return false;
+    if (child.type === 'op_arith') return child.text.trim() !== '+';
+    if (child.type.startsWith('op_')) return true;
+  }
+  return false;
 }
 
 /** `node`'s parent; for a block's statement, the `code_block`. */
