@@ -73,6 +73,8 @@ const modIndex = new Map(TOKEN_MODIFIERS.map((m, i) => [m, i]));
 export const GOTO_MODIFIER_BIT = 1 << TOKEN_MODIFIERS.indexOf(MOD_GOTO);
 /** Token type index for namespace (location names). */
 export const NAMESPACE_TOKEN_TYPE = typeIndex.get(SemanticTokenTypes.namespace) ?? 0;
+/** Token type index for strings. */
+export const STRING_TOKEN_TYPE = typeIndex.get(SemanticTokenTypes.string) ?? 0;
 
 function tokenType(t: SemanticTokenTypes): number {
   return typeIndex.get(t) ?? 0;

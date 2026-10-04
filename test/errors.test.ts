@@ -467,6 +467,23 @@ pl '<<x + >>'
     }
   });
 
+  // A block passed as an argument is the text the callee gets as $args[N]:
+  // code only when the callee runs it.
+  it('a block passed as an argument is text unless the callee runs it', () => {
+    const settings = { uninitializedVariables: true, maxErrorsPerLocation: 100 };
+    const quiet = [
+      "# a\ndynamic $args['test'], 10, {generic}\n---\n",
+      "# a\ngs 'b', {generic}, {act}\n---\n# b\npl $args[0] + $args[1]\n---\n",
+      "# a\n@b({generic})\n---\n# b\npl $args[0]\n---\n",
+      "# a\n$where = $args[0]\ngs $where, {generic}\n---\n",
+    ];
+    for (const code of quiet) expect(runDiagnostics(parser, code, settings), code).toEqual([]);
+    const run = runDiagnostics(parser, "# a\ngs 'b', {generic}, {act}\n---\n# b\ndynamic $args[0]\ndynamic $args[1]\n---\n", settings);
+    expect(run.map(d => d.message).sort()).toEqual(["Missing ':' after 'act'", "Variable 'generic' is used but never assigned"]);
+    const here = runDiagnostics(parser, '# a\ndynamic {dynamic $args[1]}, {g1}, {g2}\n---\n', settings);
+    expect(here.map(d => d.message)).toEqual(["Variable 'g2' is used but never assigned"]);
+  });
+
   // Running a block doesn't run the blocks inside it: their syntax errors
   // count only when they run themselves.
   it('a block run shows the syntax errors of its own code, not of the blocks it holds', () => {

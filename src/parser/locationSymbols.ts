@@ -15,6 +15,7 @@ import {
   type VariableBinding,
 } from './symbolTypes';
 import { shiftError, type SyntaxError } from './extractErrors';
+import type { ArgBlock } from './argBlocks';
 import type { TargetPattern } from './targetPattern';
 
 /** A jump or call with a non-literal target; see `LocationSymbols.dynamicLocationRefs`. */
@@ -324,6 +325,11 @@ export class LocationSymbols {
    *   `gs <var>`, constant-fold diagnostics, …
    */
   public readonly variableBindings = new Map<string, VariableBinding[]>();
+
+  /** The `{…}` blocks this location passes as arguments (see argBlocks.ts). */
+  public readonly argBlocks: ArgBlock[] = [];
+  /** The `$args[N]` this location runs (`dynamic $args[N]`); ANY_ARG for an index that isn't a number. */
+  public readonly runsArgs: number[] = [];
 
   constructor(locationName: string) {
     this.locationName = locationName;
@@ -745,6 +751,8 @@ export class LocationSymbols {
       for (const d of source.deferredDynamicVarCalls) copy.deferredDynamicVarCalls.push(d);
       for (const d of source.resolvedDynamicBlocks) copy.resolvedDynamicBlocks.push(d);
       for (const [k, v] of source.variableBindings) copy.variableBindings.set(k, v);
+      for (const b of source.argBlocks) copy.argBlocks.push(b);
+      for (const i of source.runsArgs) copy.runsArgs.push(i);
       return copy;
     }
 
@@ -857,6 +865,8 @@ export class LocationSymbols {
     for (const [k, v] of source.variableBindings) {
       copy.variableBindings.set(k, v.map(shiftBinding));
     }
+    for (const b of source.argBlocks) copy.argBlocks.push({ ...b, loc: shift(b.loc) });
+    for (const i of source.runsArgs) copy.runsArgs.push(i);
 
     return copy;
   }

@@ -25,7 +25,7 @@ import {
   type SyntaxError,
   type WasmLoader,
 } from '../parser';
-import { collectSemanticTokenTuples, SEMANTIC_TOKENS_LEGEND, GOTO_MODIFIER_BIT, NAMESPACE_TOKEN_TYPE } from './semanticTokens';
+import { collectSemanticTokenTuples, SEMANTIC_TOKENS_LEGEND, GOTO_MODIFIER_BIT, NAMESPACE_TOKEN_TYPE, STRING_TOKEN_TYPE } from './semanticTokens';
 import {
   buildRegexSymbols,
   extractLocationSymbolsFromText,
@@ -33,6 +33,7 @@ import {
 import { fileAggregatesSteps, collectCallTypesPerTarget as collectCallTypesPerTargetFromSymbols } from './aggregation';
 import { diagnosticsSteps, type DiagnosticSettings } from './diagnostics';
 import { registerLspFeatures, type DocumentState, type PerLocationParseResult } from './lspFeatures';
+import type { TokenFacts } from './featureTypes';
 import { stripBom, shiftErrors, dropIdleTrees, makeLocSymLoc, perLocationCacheKeys, safeSendDiagnostics, safeConnectionCall, safeConsole, QSP_FILE_EXTENSIONS, type FsProvider } from './serverUtils';
 import { ProjectModeService, type RebuildOptions } from './projectMode';
 import { runInSlices, type Steps } from './slices';
@@ -112,7 +113,7 @@ function buildTokensFromCache(
   locationIndex: LocationEntry[],
   cache: Map<string, PerLocationParseResult>,
   tokensOf: (entry: PerLocationParseResult) => Uint32Array,
-  gotoTargets?: ReadonlySet<string>,
+  project?: TokenFacts,
   lines?: { start: number; end: number },
 ) {
   const builder = new SemanticTokensBuilder();
@@ -126,8 +127,9 @@ function buildTokensFromCache(
     if (lines && (loc.endLine < lines.start || loc.startLine > lines.end)) continue;
     const cached = cache.get(cacheKeys[i]);
     if (!cached) continue;
-    const tuples = tokensOf(cached);
-    const isGoto = gotoTargets?.has(loc.nameLower) ?? false;
+    const textBlocks = project?.textBlocksOf(cached) ?? [];
+    const tuples = textBlocks.length > 0 ? asText(tokensOf(cached), textBlocks, cached) : tokensOf(cached);
+    const isGoto = project?.gotoTargets.has(loc.nameLower) ?? false;
     for (let j = 0; j < tuples.length; j += 5) {
       let mod = tuples[j + 4];
       // Patch the location_name token (first namespace token at line 0)
@@ -144,6 +146,28 @@ function buildTokensFromCache(
     }
   }
   return builder.build();
+}
+
+// A location's tokens with `blocks` (where its symbols put them) as
+// strings: whatever their words look like, they are text.
+function asText(tuples: Uint32Array, blocks: readonly SymbolLocation[], entry: PerLocationParseResult): Uint32Array {
+  const local = blocks.map(b => ({ ...b, line: b.line - entry.symbolsLine, endLine: b.endLine - entry.symbolsLine }));
+  const inside = (line: number, col: number) => local.some(b =>
+    (line > b.line || (line === b.line && col >= b.column)) && (line < b.endLine || (line === b.endLine && col < b.endColumn)));
+  const out: number[][] = [];
+  for (let j = 0; j < tuples.length; j += 5) {
+    if (!inside(tuples[j], tuples[j + 1])) out.push([tuples[j], tuples[j + 1], tuples[j + 2], tuples[j + 3], tuples[j + 4]]);
+  }
+  const lines = entry.text.split('\n');
+  for (const b of local) {
+    for (let line = b.line; line <= b.endLine; line++) {
+      const from = line === b.line ? b.column : 0;
+      const to = line === b.endLine ? b.endColumn : (lines[line] ?? '').replace(/\r$/, '').length;
+      if (to > from) out.push([line, from, to - from, STRING_TOKEN_TYPE, 0]);
+    }
+  }
+  out.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  return Uint32Array.from(out.flat());
 }
 
 /** Fold ranges of the blocks in per-location caches; `foldsOf` makes those a location lacks. */
@@ -1461,9 +1485,9 @@ export function createQspServer(
     projectFileUris: project.projectFileUris,
     tsParser,
     collectCallTypesPerTarget: () => collectCallTypesPerTarget(documentStates),
-    buildTokensFromCache: (locationIndex, cache, gotoTargets, lines) => perf.phase(
+    buildTokensFromCache: (locationIndex, cache, project, lines) => perf.phase(
       'semantic tokens',
-      () => buildTokensFromCache(locationIndex, cache, locationTokens, gotoTargets, lines),
+      () => buildTokensFromCache(locationIndex, cache, locationTokens, project, lines),
       () => `${locationIndex.length} locations${lines ? `, lines ${lines.end - lines.start + 1}` : ''}`,
     ),
     buildFoldsFromCache: (locationIndex, cache) => perf.phase(

@@ -25,6 +25,7 @@ import { extractEmbeddedExec } from './embeddedExec';
 import { extractEmbeddedInterpolations } from './embeddedInterpolation';
 import { scopePathOf } from './scopeUtils';
 import { descendantAt } from './blockTrees';
+import { collectArgBlocks } from './argBlocks';
 
 // Re-export for backward compatibility.
 export { isVariableDefinition } from './variableUtils';
@@ -75,6 +76,7 @@ export function extractSymbols(
     const locSymbols = symbols.addLocation(locName, locLoc);
     locSymbols.hasErrors = hasStructuralErrors(locBlock);
     walkLocationBody(locBlock, locSymbols, docUri);
+    collectArgBlocks(locBlock, locSymbols, docUri);
     walked.push([locBlock, locSymbols]);
   }
 

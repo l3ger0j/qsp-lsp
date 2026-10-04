@@ -27,6 +27,7 @@ import {
 // ── Diagnostic passes ─────────────────────────────────────────────────
 
 import { libraryIdOfUri } from '../common/libraryConfig';
+import { argBlockRuns } from '../parser/argBlocks';
 import type { Suppressions } from '../common/suppressions';
 import { DiagnosticSeverity, type Diagnostic } from 'vscode-languageserver';
 import { runNow, type Steps } from './slices';
@@ -126,8 +127,21 @@ export function* diagnosticsSteps(
     allLocationDefs = symbols.locationDefs;
   }
 
+  // Blocks passed as arguments are text unless the callee runs them.
+  const runArgBlocks: SymbolLocation[] = [];
+  if (symbols) {
+    const textBlocks: SymbolLocation[] = [];
+    const locationNamed = (name: string) =>
+      symbols.locations.get(name) ?? projectDocs.find(d => d.locations.has(name))?.locations.get(name);
+    for (const [, locSyms] of symbols.locations) {
+      for (const b of locSyms.argBlocks) (argBlockRuns(b, locationNamed) ? runArgBlocks : textBlocks).push(b.loc);
+    }
+    ctx.textBlocks = textBlocks;
+  }
+
   // ── Document-structure diagnostics ──────────────────────────────
-  checkSyntaxErrors(ctx, docUri, locationIndex, syntaxErrors, symbols, symbols && agg ? blocksRun(symbols, agg, docUri) : []);
+  checkSyntaxErrors(ctx, docUri, locationIndex, syntaxErrors, symbols,
+    [...runArgBlocks, ...(symbols && agg ? blocksRun(symbols, agg, docUri) : [])]);
   if (diagnosticSettings.duplicateLocations) {
     checkDuplicateLocations(ctx, locationIndex, docUri, projectAgg, libraryOf);
   }

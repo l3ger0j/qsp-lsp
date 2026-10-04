@@ -81,7 +81,8 @@ import type {
   ServerContext,
   PerLocationParseResult,
 } from './featureTypes';
-import type { ProjectVariableItem } from './featureTypes';
+import type { ProjectVariableItem, TokenFacts } from './featureTypes';
+import { argBlockRuns } from '../parser/argBlocks';
 import { buildJumpGraph, formatDynamicJumpStats, newDynamicJumpStats, type JumpGraphSource } from './jumpGraph';
 
 // Re-export types that consumers need
@@ -721,13 +722,23 @@ export function registerLspFeatures(ctx: ServerContext): void {
 
   // ==================== SEMANTIC TOKENS ====================
 
-  function gotoTargetsNow(): Set<string> {
+  function tokenFactsNow(): TokenFacts {
     const callTypes = ctx.projectAggregates?.callTypesPerTarget ?? ctx.collectCallTypesPerTarget();
     const gotoTargets = new Set<string>();
     for (const [key, entry] of callTypes) {
       if (entry.types.has('goto')) gotoTargets.add(key);
     }
-    return gotoTargets;
+    const locationNamed = (name: string) => {
+      for (const st of documentStates.values()) {
+        const found = st.symbols.locations.get(name);
+        if (found) return found;
+      }
+      return undefined;
+    };
+    return {
+      gotoTargets,
+      textBlocksOf: (entry) => entry.symbols.argBlocks.filter(b => !argBlockRuns(b, locationNamed)).map(b => b.loc),
+    };
   }
 
   connection.onRequest(SemanticTokensRequest.type, async (params: SemanticTokensParams, cancel) => {
@@ -742,7 +753,7 @@ export function registerLspFeatures(ctx: ServerContext): void {
     if (state?.cachedSemanticTokens) return state.cachedSemanticTokens;
 
     if (state?.perLocationCache && state.locationIndex) {
-      const tokens = ctx.buildTokensFromCache(state.locationIndex, state.perLocationCache, gotoTargetsNow());
+      const tokens = ctx.buildTokensFromCache(state.locationIndex, state.perLocationCache, tokenFactsNow());
       state.cachedSemanticTokens = tokens;
       return tokens;
     }
@@ -756,7 +767,7 @@ export function registerLspFeatures(ctx: ServerContext): void {
     if (state?.cachedSemanticTokens) return state.cachedSemanticTokens;
     if (state?.perLocationCache && state.locationIndex) {
       const lines = { start: params.range.start.line, end: params.range.end.line };
-      return ctx.buildTokensFromCache(state.locationIndex, state.perLocationCache, gotoTargetsNow(), lines);
+      return ctx.buildTokensFromCache(state.locationIndex, state.perLocationCache, tokenFactsNow(), lines);
     }
     return { data: [] };
   });

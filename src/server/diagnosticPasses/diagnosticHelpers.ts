@@ -32,6 +32,14 @@ export interface DiagnosticInfo {
   deprecated?: boolean;
 }
 
+function holds(
+  b: { line: number; column: number; endLine: number; endColumn: number },
+  at: { line: number; character: number },
+): boolean {
+  return (at.line > b.line || (at.line === b.line && at.character >= b.column))
+    && (at.line < b.endLine || (at.line === b.endLine && at.character < b.endColumn));
+}
+
 /**
  * Everything a diagnostic pass needs to emit diagnostics.
  * All the "how to build and push" infrastructure is here;
@@ -47,6 +55,11 @@ export class DiagnosticCtx {
 
   /** The file's `!@qsp-ignore` comments. */
   private readonly suppressions: Suppressions;
+  /**
+   * Blocks that are only text (arguments nothing runs, see argBlocks.ts):
+   * whatever their words look like, they are not code to check.
+   */
+  textBlocks: ReadonlyArray<{ line: number; column: number; endLine: number; endColumn: number }> = [];
 
   constructor(
     doc: TextDocument | null,
@@ -116,6 +129,7 @@ export class DiagnosticCtx {
 
   push(severity: DiagnosticSeverity, range: Range, message: string, info: DiagnosticInfo): void {
     if (this.errorsOnly && severity !== DiagnosticSeverity.Error) return;
+    if (this.textBlocks.length > 0 && this.textBlocks.some(b => holds(b, range.start))) return;
     // Before the maxPerFile cut, so the note counts only what is really hidden by it.
     if (this.suppressions.isSuppressed(info.code, info.name, range.start.line)) return;
     const d: Diagnostic = { severity, range, message, source: 'qsp', code: info.code };

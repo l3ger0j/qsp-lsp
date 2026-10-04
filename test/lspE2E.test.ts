@@ -63,6 +63,7 @@ import {
   type PublishDiagnosticsParams,
 } from 'vscode-languageserver-protocol';
 import { createQspServer } from '../src/server/common';
+import { TOKEN_TYPES } from '../src/server/semanticTokens';
 import { fsProvider } from '../src/server/nodeHost';
 import { NodeAnalysisCache, analyserSalt, nodeAnalysisCacheStore } from '../src/server/nodeCache';
 import { WASM_PATH } from './testHelpers';
@@ -1028,5 +1029,37 @@ describe('LSP e2e: a local passed to a call, after an edit of its location', () 
     } finally {
       h.shutdown();
     }
+  }, 30_000);
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// A `{…}` passed as an argument is a string the callee gets as $args[N]:
+// highlighted as code only when the callee runs it (`dynamic $args[N]`).
+// ──────────────────────────────────────────────────────────────────────
+
+describe('LSP e2e: blocks passed as arguments', () => {
+  let h: Harness;
+  beforeAll(async () => { h = await startServer(); }, 30_000);
+  afterAll(() => { h?.shutdown(); });
+
+  it('highlights a block nothing runs as a string, and one the callee runs as code', async () => {
+    const uri = 'file:///args.qsps';
+    const text = "# a\ngs 'show', {generic}\ngs 'run', {pl x}\n--- a ---\n# show\npl $args[0]\n--- show ---\n# run\ndynamic $args[0]\n--- run ---\n";
+    h.client.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri, languageId: 'qsp', version: 1, text },
+    });
+    await h.diagnosticsFor(uri);
+    const { data } = await h.client.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } });
+    const lines = text.split('\n');
+    const tokens: Array<{ text: string; type: string }> = [];
+    let line = 0, char = 0;
+    for (let i = 0; i < data.length; i += 5) {
+      line += data[i];
+      char = data[i] === 0 ? char + data[i + 1] : data[i + 1];
+      tokens.push({ text: lines[line].substr(char, data[i + 2]), type: TOKEN_TYPES[data[i + 3]] });
+    }
+    expect(tokens).toContainEqual({ text: '{generic}', type: 'string' });
+    expect(tokens.some(t => t.text.includes('generic') && t.type !== 'string')).toBe(false);
+    expect(tokens).toContainEqual({ text: 'x', type: 'variable' });
   }, 30_000);
 });

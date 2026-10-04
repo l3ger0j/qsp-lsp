@@ -17,6 +17,7 @@ import type {
   QspTreeSitterParser,
   PossibleValueEntry,
   SyntaxError,
+  SymbolLocation,
 } from '../parser';
 import type {
   SymbolAggregates,
@@ -27,6 +28,14 @@ import type {
 // ──────────────────────────────────────────────────────────────────────
 // Per-location cache
 // ──────────────────────────────────────────────────────────────────────
+
+/** What the semantic tokens of a location take from the other locations. */
+export interface TokenFacts {
+  /** Locations something jumps to with `goto`/`gt` (lower-case names). */
+  gotoTargets: ReadonlySet<string>;
+  /** The blocks of a location that are only text (arguments nothing runs), where its symbols put them. */
+  textBlocksOf(entry: PerLocationParseResult): readonly SymbolLocation[];
+}
 
 /** Per-location parse cache entry: one per location of an open document. */
 export interface PerLocationParseResult {
@@ -133,7 +142,7 @@ export interface ServerContext {
   buildTokensFromCache(
     locationIndex: LocationEntry[],
     cache: Map<string, PerLocationParseResult>,
-    gotoTargets?: ReadonlySet<string>,
+    project?: TokenFacts,
     lines?: { start: number; end: number },
   ): SemanticTokens;
   /** Fold ranges (start and end line) of a file parsed location by location, made for the locations that have none yet. */

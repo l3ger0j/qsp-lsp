@@ -22,6 +22,9 @@ const SKIPPED_KEYS = new Set([
   'startRow', 'startCol', 'endRow', 'endCol',
   'uri', 'interfaceHash', 'localsInScopeCache', 'interpolationHostScopes', 'dynamicCodeBlocks',
   'stmtText',
+  // What a location passes as arguments matters to its own file only;
+  // what it runs of its arguments (`runsArgs`) is what callers see.
+  'argBlocks',
 ]);
 // Scope keys are made from offsets in the location (scopeKeyOf), so they
 // change with any edit before them. Only which ones are equal matters:
