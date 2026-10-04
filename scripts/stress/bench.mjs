@@ -16,6 +16,10 @@
 // --tokens   ask for the open file's semantic tokens once its first
 //            diagnostics are in, as VS Code does: the visible lines (a range
 //            request) and the whole file, reporting when each answer came
+// --probe    from the open on, ask for the open file's visible lines'
+//            tokens every 100 ms until the end (edits too), and report how long the
+//            answers waited (median, 90%, longest): how long the server
+//            keeps requests waiting
 // --edits N  then type N characters into the open file, reporting how
 //            long each takes to be re-diagnosed: its diagnostics cleared,
 //            then checked again, and how many other files were re-published
@@ -49,7 +53,7 @@ function parseArgs(argv) {
 const args = parseArgs(process.argv.slice(2));
 const project = args._[0] && path.resolve(args._[0]);
 if (!project || !fs.existsSync(project)) {
-  console.error('usage: bench.mjs <project dir> [--open <file>|none] [--graph] [--tokens] [--edits N] [--edit-in string|value] [--heap-mb N] [--crash <dir>] [--cache <dir>] [--timeout S] [--json out.json] [--max-seconds S] [--max-heap-mb N]');
+  console.error('usage: bench.mjs <project dir> [--open <file>|none] [--graph] [--tokens] [--probe] [--edits N] [--edit-in string|value] [--heap-mb N] [--crash <dir>] [--cache <dir>] [--timeout S] [--json out.json] [--max-seconds S] [--max-heap-mb N]');
   process.exit(2);
 }
 const server = path.join(root, 'out', 'server', 'nodeMain.js');
@@ -215,6 +219,22 @@ if (openFile) {
 }
 for (const f of qspFiles) results.chars += fs.statSync(f).size;
 
+// One probe in flight at a time, the next 100 ms after its answer, as an
+// editor asks again when the user scrolls.
+let probing = Boolean(args.probe && openUri);
+const probeWaits = [];
+const probeLoop = (async () => {
+  while (probing) {
+    const asked = Date.now();
+    await request('textDocument/semanticTokens/range', {
+      textDocument: { uri: openUri }, range: { start: { line: 0, character: 0 }, end: { line: 60, character: 0 } },
+    }).catch(() => undefined);
+    probeWaits.push(Date.now() - asked);
+    if (probeWaits.at(-1) >= 500) console.log(`${elapsed().toFixed(1).padStart(6)}s probe waited ${probeWaits.at(-1)} ms`);
+    await new Promise(r => setTimeout(r, 100));
+  }
+})();
+
 try {
   results.firstDiagnosticsSeconds = await firstDiagnostics;
   let tokensDone = Promise.resolve();
@@ -302,6 +322,12 @@ try {
     results.edits = { count: edits, medianMs: latencies[Math.floor(latencies.length / 2)], maxMs: latencies.at(-1) };
   }
 
+  probing = false;
+  await probeLoop;
+  if (probeWaits.length > 0) {
+    const sorted = [...probeWaits].sort((a, b) => a - b);
+    results.probe = { count: sorted.length, medianMs: sorted[Math.floor(sorted.length / 2)], p90Ms: sorted[Math.floor(sorted.length * 0.9)], maxMs: sorted.at(-1) };
+  }
   results.report = await request('qsp/performanceReport');
   finish(0);
 } catch (e) {
@@ -329,6 +355,7 @@ function finish(code) {
   for (const [kind, t] of Object.entries(results.tokens ?? {})) {
     console.log(`tokens ${kind.padEnd(7)} ${t.seconds.toFixed(1)} s after asking, ${t.tokens} tokens`);
   }
+  if (results.probe) console.log(`probe waits    median ${results.probe.medianMs} ms, 90% ${results.probe.p90Ms} ms, max ${results.probe.maxMs} ms (${results.probe.count})`);
   if (results.edits) console.log(`edits          median ${results.edits.medianMs} ms, max ${results.edits.maxMs} ms (${results.edits.count})`);
   if (results.editsSettled) {
     const { medianMs, maxMs, republishedFiles } = results.editsSettled;
